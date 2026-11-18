@@ -6,28 +6,35 @@ use std::path::PathBuf;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use tokio_rusqlite::rusqlite;
 use yuke_agent::testing::{consumed, end, prompt, settings, step, user_input};
 use yuke_agent::{Access, EventPage, Store, StoreError};
 use yuke_engine::{Answer, Commit};
-use yuke_protocol::{EventNumber, SessionTitle};
-use yuke_store::SqliteStore;
+use yuke_protocol::{EventNumber, SessionEvent, SessionTitle};
+use yuke_store::FileStore;
 
 /// A new empty folder for the test `name`.
-fn folder(name: &str) -> PathBuf {
+fn new_folder(name: &str) -> PathBuf {
     yuke_testing::folder("store", name)
 }
 
-async fn make_store(name: &str) -> std::sync::Arc<SqliteStore> {
-    std::sync::Arc::new(SqliteStore::open(folder(name)).await.unwrap())
+/// The log of session `id` in the store folder `folder`.
+fn log_of(folder: &std::path::Path, id: yuke_protocol::SessionId) -> PathBuf {
+    folder
+        .join("sessions")
+        .join(format!("{:032x}", u128::from_be_bytes(*id.as_bytes())))
+        .join("events.jsonl")
+}
+
+async fn make_store(name: &str) -> std::sync::Arc<FileStore> {
+    std::sync::Arc::new(FileStore::open(new_folder(name)).await.unwrap())
 }
 
 yuke_agent::store_tests!(make_store);
 
 #[tokio::test]
 async fn a_session_survives_a_close_and_an_open_of_the_file() {
-    let folder = folder("a_session_survives_a_close_and_an_open_of_the_file");
-    let first = SqliteStore::open(&folder).await.unwrap();
+    let folder = new_folder("a_session_survives_a_close_and_an_open_of_the_file");
+    let first = FileStore::open(&folder).await.unwrap();
     let opened = first.create_session(&settings("one"), &prompt(), None).await.unwrap();
     let id = opened.id;
     first.set_settings(id, &settings("two")).await.unwrap();
@@ -43,7 +50,7 @@ async fn a_session_survives_a_close_and_an_open_of_the_file() {
     drop(opened);
     drop(first);
 
-    let second = SqliteStore::open(&folder).await.unwrap();
+    let second = FileStore::open(&folder).await.unwrap();
     let opened = second.open(id, Access::Write).await.unwrap();
 
     assert_eq!(
@@ -62,20 +69,24 @@ async fn a_session_survives_a_close_and_an_open_of_the_file() {
 
 #[tokio::test]
 async fn a_queued_write_finishes_before_the_lock_releases() {
-    let folder = folder("a_queued_write_finishes_before_the_lock_releases");
-    let first = SqliteStore::open(&folder).await.unwrap();
-    let second = SqliteStore::open(&folder).await.unwrap();
+    let folder = new_folder("a_queued_write_finishes_before_the_lock_releases");
+    let first = FileStore::open(&folder).await.unwrap();
+    let second = FileStore::open(&folder).await.unwrap();
     let opened = first.create_session(&settings("one"), &prompt(), None).await.unwrap();
     let id = opened.id;
-    // A writer outside the stores holds the database, so the commit of the first store waits on its thread.
-    let blocker = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // A writer outside the stores holds the store lock, so the commit of the first store waits on its thread.
+    let blocker = std::fs::OpenOptions::new()
+        .write(true)
+        .open(folder.join("store.lock"))
+        .unwrap();
+    blocker.lock().unwrap();
 
     let blocks = [yuke_ai::Block::user_text("queued")];
     {
-        let commit = step(&blocks);
+        // A turn end writes the index. A step of a turn writes only the log, so it would not wait.
+        let commit = end(&blocks);
         let mut future = pin!(first.commit(id, &commit, &[]));
-        // The first poll sends the write to the connection. The write stays in the queue after the future drops.
+        // The first poll sends the write to the store thread. The write stays in the queue after the future drops.
         let poll = future.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         assert!(matches!(poll, Poll::Pending), "{poll:?}");
     }
@@ -83,8 +94,8 @@ async fn a_queued_write_finishes_before_the_lock_releases() {
     let during = second.open(id, Access::Write).await;
     // A lease from this open would hold the session, so check it before the next open.
     assert!(matches!(during, Err(StoreError::Owned)), "{during:?}");
-    blocker.execute_batch("COMMIT").unwrap();
-    // A read runs after the queued write on the same connection.
+    blocker.unlock().unwrap();
+    // A read runs after the queued write on the same store thread.
     first.pending(id).await.unwrap();
     let after = second.open(id, Access::Write).await.unwrap();
 
@@ -93,8 +104,8 @@ async fn a_queued_write_finishes_before_the_lock_releases() {
 
 #[tokio::test]
 async fn a_delete_removes_the_folder_of_the_session() {
-    let folder = folder("a_delete_removes_the_folder_of_the_session");
-    let store = SqliteStore::open(&folder).await.unwrap();
+    let folder = new_folder("a_delete_removes_the_folder_of_the_session");
+    let store = FileStore::open(&folder).await.unwrap();
     let id = store
         .create_session(&settings("one"), &prompt(), None)
         .await
@@ -112,8 +123,8 @@ async fn a_delete_removes_the_folder_of_the_session() {
 
 #[tokio::test]
 async fn an_open_for_writing_of_an_unknown_session_makes_no_folder() {
-    let folder = folder("an_open_for_writing_of_an_unknown_session_makes_no_folder");
-    let store = SqliteStore::open(&folder).await.unwrap();
+    let folder = new_folder("an_open_for_writing_of_an_unknown_session_makes_no_folder");
+    let store = FileStore::open(&folder).await.unwrap();
     let id = yuke_protocol::SessionId::generate();
 
     let open = store.open(id, Access::Write).await;
@@ -124,65 +135,112 @@ async fn an_open_for_writing_of_an_unknown_session_makes_no_folder() {
 }
 
 #[tokio::test]
-async fn the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one() {
-    let folder = folder("the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one");
-    drop(SqliteStore::open(&folder).await.unwrap());
-    // This folder has no session row, as after a crash during a delete.
+async fn the_sweep_removes_a_folder_without_a_log_and_keeps_a_locked_one() {
+    let folder = new_folder("the_sweep_removes_a_folder_without_a_log_and_keeps_a_locked_one");
+    drop(FileStore::open(&folder).await.unwrap());
+    // This folder has no log, as after a crash during a delete.
     let left = folder.join("sessions").join("0123456789abcdef0123456789abcdef");
     std::fs::create_dir_all(&left).unwrap();
     std::fs::write(left.join("blob"), b"image").unwrap();
-    // This folder has no session row and a held lock, as during a delete in another process.
+    // This folder has no log, and its lock is held, as during a create in another process.
     let deleting = folder.join("sessions").join("fedcba9876543210fedcba9876543210");
     std::fs::create_dir_all(&deleting).unwrap();
     let lock = std::fs::File::create(deleting.join("lock")).unwrap();
     lock.try_lock().unwrap();
 
-    drop(SqliteStore::open(&folder).await.unwrap());
+    drop(FileStore::open(&folder).await.unwrap());
 
     assert!(!left.exists());
     assert!(deleting.exists());
 }
 
-/// The model, the token usage, and the creation time of each commit event of session `id` in the database of `folder`,
-/// in event-number order, as JSON arrays.
-fn commit_rows(folder: &std::path::Path, id: yuke_protocol::SessionId) -> Vec<String> {
-    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    let mut statement = connection
-        .prepare(
-            "SELECT json_array(model, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, \
-             cache_write_tokens, created_at) FROM events WHERE session_id = ? AND kind = 'commit' ORDER BY seq",
-        )
-        .unwrap();
-    statement
-        .query_map([id.as_bytes()], |row| row.get(0))
+// A delete that a crash stopped after the log went, or a hand that removed the log, must not block a new delete.
+#[tokio::test]
+async fn a_delete_of_a_session_without_its_log_removes_the_session() {
+    let folder = new_folder("a_delete_of_a_session_without_its_log_removes_the_session");
+    let store = FileStore::open(&folder).await.unwrap();
+    let id = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
         .unwrap()
-        .map(Result::unwrap)
-        .collect()
+        .id;
+    std::fs::remove_file(log_of(&folder, id)).unwrap();
+
+    store.delete_session(id).await.unwrap();
+
+    assert!(!log_of(&folder, id).parent().unwrap().exists());
+    assert!(matches!(store.open(id, Access::Read).await, Err(StoreError::NotFound)));
+}
+
+// An index that this yuke cannot read, such as one of another version, must not cost the sessions.
+#[tokio::test]
+async fn a_lost_index_removes_no_session_folder() {
+    let folder = new_folder("a_lost_index_removes_no_session_folder");
+    let store = FileStore::open(&folder).await.unwrap();
+    let id = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    drop(store);
+    let log = std::fs::read(log_of(&folder, id)).unwrap();
+    std::fs::remove_file(folder.join("sessions.jsonl")).unwrap();
+
+    drop(FileStore::open(&folder).await.unwrap());
+
+    assert_eq!(std::fs::read(log_of(&folder, id)).unwrap(), log);
+}
+
+// A change of the event format makes an old line unreadable. The open must fail, not cut the events after it.
+#[tokio::test]
+async fn a_complete_line_that_is_not_an_event_fails_the_open_and_keeps_the_log() {
+    let folder = new_folder("a_complete_line_that_is_not_an_event_fails_the_open_and_keeps_the_log");
+    let store = FileStore::open(&folder).await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = opened.id;
+    for text in ["a", "b"] {
+        store
+            .commit(id, &step(&[yuke_ai::Block::user_text(text)]), &[])
+            .await
+            .unwrap();
+    }
+    drop(opened);
+    let log = log_of(&folder, id);
+    let changed = std::fs::read_to_string(&log)
+        .unwrap()
+        .replacen(r#""kind":"commit""#, r#""kind":"newCommit""#, 1);
+    std::fs::write(&log, &changed).unwrap();
+
+    let written = store.open(id, Access::Write).await;
+
+    assert!(matches!(written, Err(StoreError::Failed(_))), "{written:?}");
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), changed);
 }
 
 #[tokio::test]
-async fn a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commit() {
-    let folder = folder("a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commit");
-    let store = SqliteStore::open(&folder).await.unwrap();
+async fn a_fork_keeps_the_token_usage_of_each_copied_commit() {
+    let folder = new_folder("a_fork_keeps_the_token_usage_of_each_copied_commit");
+    let store = FileStore::open(&folder).await.unwrap();
     let source = store
         .create_session(&settings("one"), &prompt(), None)
         .await
         .unwrap()
         .id;
     let blocks = [yuke_ai::Block::assistant_text("a")];
+    let usage = yuke_ai::Usage {
+        input: Some(10),
+        output: Some(20),
+        reasoning: Some(3),
+        cache_read: Some(4),
+        cache_write: Some(5),
+    };
     let answer = Commit {
         answer: Some(Answer {
             origin: yuke_ai::Origin {
                 model: "test-model".to_owned(),
                 base_url: "https://example.test".to_owned(),
             },
-            usage: yuke_ai::Usage {
-                input: Some(10),
-                output: Some(20),
-                reasoning: Some(3),
-                cache_read: Some(4),
-                cache_write: Some(5),
-            },
+            usage,
             finish_reason: yuke_ai::FinishReason::Stop,
         }),
         ..step(&blocks)
@@ -192,25 +250,23 @@ async fn a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commi
         .commit(source, &end(&[yuke_ai::Block::user_text("b")]), &[])
         .await
         .unwrap();
-    // An old time tells a copied time apart from the time of the fork.
-    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    connection.execute("UPDATE events SET created_at = 1000", []).unwrap();
-
     let fork = store.fork_session(source, None).await.unwrap().id;
 
-    assert_eq!(
-        commit_rows(&folder, fork),
-        [
-            r#"["test-model",10,20,3,4,5,1000]"#,
-            "[null,null,null,null,null,null,1000]",
-        ]
-    );
+    let forked = store.load(fork, EventPage::After(None)).await.unwrap().events;
+    let usages: Vec<_> = forked
+        .iter()
+        .filter_map(|event| match &event.event {
+            SessionEvent::Commit(commit) => commit.commit.answer.as_ref().map(|answer| answer.usage),
+            SessionEvent::Settings(_) => None,
+        })
+        .collect();
+    assert_eq!(usages, [usage]);
 }
 
 #[tokio::test]
 async fn a_failed_copy_of_the_blobs_leaves_no_fork() {
-    let folder = folder("a_failed_copy_of_the_blobs_leaves_no_fork");
-    let store = SqliteStore::open(&folder).await.unwrap();
+    let folder = new_folder("a_failed_copy_of_the_blobs_leaves_no_fork");
+    let store = FileStore::open(&folder).await.unwrap();
     let source = store
         .create_session(&settings("one"), &prompt(), None)
         .await
@@ -226,17 +282,16 @@ async fn a_failed_copy_of_the_blobs_leaves_no_fork() {
 
     assert!(matches!(fork, Err(StoreError::Failed(_))), "{fork:?}");
     assert_eq!(std::fs::read_dir(&sessions).unwrap().count(), 1);
-    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    let rows: i64 = connection
-        .query_row("SELECT count(*) FROM sessions", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(rows, 1);
+    assert_eq!(
+        store.list_sessions(None, None, None, 10).await.unwrap().sessions.len(),
+        1
+    );
 }
 
 #[tokio::test]
 async fn a_fork_copies_only_the_blob_files() {
-    let folder = folder("a_fork_copies_only_the_blob_files");
-    let store = SqliteStore::open(&folder).await.unwrap();
+    let folder = new_folder("a_fork_copies_only_the_blob_files");
+    let store = FileStore::open(&folder).await.unwrap();
     let source = store
         .create_session(&settings("one"), &prompt(), None)
         .await
@@ -260,13 +315,15 @@ async fn a_fork_copies_only_the_blob_files() {
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, [blob.digest.to_string(), "lock".to_owned()]);
+    let mut expected = vec![blob.digest.to_string(), "events.jsonl".to_owned(), "lock".to_owned()];
+    expected.sort();
+    assert_eq!(names, expected);
 }
 
 #[tokio::test]
-async fn a_refused_fork_point_leaves_no_session_row_and_no_folder() {
-    let folder = folder("a_refused_fork_point_leaves_no_session_row_and_no_folder");
-    let store = SqliteStore::open(&folder).await.unwrap();
+async fn a_refused_fork_point_leaves_no_session_and_no_folder() {
+    let folder = new_folder("a_refused_fork_point_leaves_no_session_and_no_folder");
+    let store = FileStore::open(&folder).await.unwrap();
     let source = store
         .create_session(&settings("one"), &prompt(), None)
         .await
@@ -281,17 +338,16 @@ async fn a_refused_fork_point_leaves_no_session_row_and_no_folder() {
 
     assert!(matches!(fork, Err(StoreError::NotACompletedTurn)), "{fork:?}");
     assert_eq!(std::fs::read_dir(folder.join("sessions")).unwrap().count(), 1);
-    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    let rows: i64 = connection
-        .query_row("SELECT count(*) FROM sessions", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(rows, 1);
+    assert_eq!(
+        store.list_sessions(None, None, None, 10).await.unwrap().sessions.len(),
+        1
+    );
 }
 
 #[tokio::test]
-async fn a_create_that_cannot_make_its_folder_leaves_no_session_row() {
-    let folder = folder("a_create_that_cannot_make_its_folder_leaves_no_session_row");
-    let store = SqliteStore::open(&folder).await.unwrap();
+async fn a_create_that_cannot_make_its_folder_leaves_no_session() {
+    let folder = new_folder("a_create_that_cannot_make_its_folder_leaves_no_session");
+    let store = FileStore::open(&folder).await.unwrap();
     // A file in place of the folder of the session folders makes each new folder fail.
     std::fs::remove_dir(folder.join("sessions")).unwrap();
     std::fs::write(folder.join("sessions"), b"").unwrap();
@@ -299,42 +355,29 @@ async fn a_create_that_cannot_make_its_folder_leaves_no_session_row() {
     let created = store.create_session(&settings("one"), &prompt(), None).await;
 
     assert!(matches!(created, Err(StoreError::Failed(_))), "{created:?}");
-    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    let rows: i64 = connection
-        .query_row("SELECT count(*) FROM sessions", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(rows, 0);
+    assert!(folder.join("sessions").is_file());
 }
 
 #[tokio::test]
-async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
-    let folder = folder("a_failed_transaction_returns_no_receipt_and_keeps_the_input");
-    let store = SqliteStore::open(&folder).await.unwrap();
+async fn a_failed_append_to_the_index_returns_no_receipt_and_keeps_the_input() {
+    let folder = new_folder("a_failed_append_to_the_index_returns_no_receipt_and_keeps_the_input");
+    let store = FileStore::open(&folder).await.unwrap();
     let session = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
     let blocks = [yuke_ai::Block::user_text("task")];
     let input = store.accept_input(session.id, user_input("task")).await.unwrap();
-    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    // A deferred constraint lets both statements run, but it makes COMMIT fail.
-    connection
-        .execute_batch(
-            "CREATE TABLE receipt_parent (id INTEGER PRIMARY KEY);
-         CREATE TABLE receipt_child (parent INTEGER REFERENCES receipt_parent(id) DEFERRABLE INITIALLY DEFERRED);
-         CREATE TRIGGER reject_commit AFTER DELETE ON pending_inputs
-         BEGIN INSERT INTO receipt_child VALUES (1); END;",
-        )
-        .unwrap();
+    let index = folder.join("sessions.jsonl");
+    let saved = folder.join("sessions.jsonl.saved");
+    // A folder in place of the index makes the read and the append of the index fail.
+    std::fs::rename(&index, &saved).unwrap();
+    std::fs::create_dir(&index).unwrap();
 
     let error = store
         .commit(session.id, &end(&blocks), &[consumed(input, 1)])
         .await
         .unwrap_err();
-    assert!(
-        std::error::Error::source(&error)
-            .unwrap()
-            .to_string()
-            .contains("FOREIGN KEY constraint failed"),
-        "{error}"
-    );
+    assert!(matches!(error, StoreError::Failed(_)), "{error}");
+    std::fs::remove_dir(&index).unwrap();
+    std::fs::rename(&saved, &index).unwrap();
     assert_eq!(
         store
             .load(session.id, EventPage::After(None))
@@ -349,7 +392,6 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     assert_eq!(pending[0].id, input);
     assert_eq!(pending[0].input, user_input("task"));
 
-    connection.execute_batch("DROP TRIGGER reject_commit;").unwrap();
     let receipt = store
         .commit(session.id, &end(&blocks), &[consumed(input, 1)])
         .await
@@ -359,11 +401,130 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     let id = session.id;
     drop(session);
     drop(store);
-    let reopened = SqliteStore::open(&folder).await.unwrap();
+    let reopened = FileStore::open(&folder).await.unwrap();
     let events = reopened
         .load(id, EventPage::After(None))
         .await
         .map(|loaded| loaded.events)
         .unwrap();
     assert_eq!(events.last().unwrap().event_number, EventNumber(2));
+}
+
+/// The milliseconds since 1970.
+#[tokio::test]
+async fn each_line_of_the_log_holds_the_millisecond_of_its_write() {
+    let folder = new_folder("each_line_of_the_log_holds_the_millisecond_of_its_write");
+    let store = FileStore::open(&folder).await.unwrap();
+    let now_ms = || {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        u64::try_from(since.as_millis()).unwrap()
+    };
+    let before = now_ms();
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = opened.id;
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("a")]), &[])
+        .await
+        .unwrap();
+    let after = now_ms();
+
+    let text = std::fs::read_to_string(log_of(&folder, id)).unwrap();
+    let times: Vec<u64> = text
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).unwrap()["at"]
+                .as_u64()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(times.len(), 2);
+    assert!(times.iter().all(|&at| (before..=after).contains(&at)));
+    drop(opened);
+}
+
+#[tokio::test]
+async fn a_torn_line_of_a_crash_reads_as_no_event_and_the_next_writer_cuts_it() {
+    let folder = new_folder("a_torn_line_of_a_crash_reads_as_no_event_and_the_next_writer_cuts_it");
+    let store = FileStore::open(&folder).await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = opened.id;
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("kept")]), &[])
+        .await
+        .unwrap();
+    drop(opened);
+    let log = log_of(&folder, id);
+    let complete = std::fs::metadata(&log).unwrap().len();
+    let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+    std::io::Write::write_all(&mut file, br#"{"seq":3,"kind":"comm"#).unwrap();
+    drop(file);
+    let torn = std::fs::metadata(&log).unwrap().len();
+
+    let read = store.open(id, Access::Read).await.unwrap();
+    assert_eq!(read.context, [yuke_ai::Block::user_text("kept")]);
+    assert_eq!(std::fs::metadata(&log).unwrap().len(), torn, "a reader cut the log");
+    let written = store.open(id, Access::Write).await.unwrap();
+    assert_eq!(std::fs::metadata(&log).unwrap().len(), complete);
+    let next = store
+        .commit(id, &step(&[yuke_ai::Block::user_text("next")]), &[])
+        .await
+        .unwrap();
+    assert_eq!(next, EventNumber(3));
+    drop(written);
+}
+
+#[tokio::test]
+async fn an_input_that_a_crash_left_in_the_index_after_its_line_is_not_pending_and_the_next_writer_removes_it() {
+    let folder = new_folder("an_input_left_in_the_index_by_a_crash");
+    let store = FileStore::open(&folder).await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = opened.id;
+    let input = store.accept_input(id, user_input("task")).await.unwrap();
+    let index = folder.join("sessions.jsonl");
+    let saved = std::fs::read(&index).unwrap();
+    store
+        .commit(id, &end(&[yuke_ai::Block::user_text("task")]), &[consumed(input, 1)])
+        .await
+        .unwrap();
+    drop(opened);
+    // A crash between the line of the log and the line of the index leaves the input in the index.
+    std::fs::write(&index, &saved).unwrap();
+
+    assert_eq!(store.pending(id).await.unwrap().len(), 1);
+    let loaded = store.load(id, EventPage::After(None)).await.unwrap();
+    assert_eq!(loaded.pending, []);
+    let written = store.open(id, Access::Write).await.unwrap();
+    assert_eq!(store.pending(id).await.unwrap(), []);
+    drop(written);
+}
+
+#[tokio::test]
+async fn a_torn_line_of_the_index_reads_as_no_change_and_the_next_writer_cuts_it() {
+    let folder = new_folder("a_torn_line_of_the_index_reads_as_no_change_and_the_next_writer_cuts_it");
+    let store = FileStore::open(&folder).await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = opened.id;
+    let index = folder.join("sessions.jsonl");
+    let complete = std::fs::metadata(&index).unwrap().len();
+    let mut file = std::fs::OpenOptions::new().append(true).open(&index).unwrap();
+    std::io::Write::write_all(&mut file, br#"{"id":"0","dele"#).unwrap();
+    drop(file);
+
+    let other = FileStore::open(&folder).await.unwrap();
+    assert_eq!(
+        other.list_sessions(None, None, None, 10).await.unwrap().sessions.len(),
+        1
+    );
+    other
+        .rename_session(id, &SessionTitle::new("kept").unwrap())
+        .await
+        .unwrap();
+
+    let bytes = std::fs::read(&index).unwrap();
+    assert!(!bytes[usize::try_from(complete).unwrap()..].starts_with(br#"{"id":"0""#));
+    let summary = store.session_summary(id).await.unwrap();
+    assert_eq!(summary.title.unwrap().to_string(), "kept");
+    drop(opened);
 }

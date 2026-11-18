@@ -5,13 +5,13 @@
 use yuke_agent::{Access, PromptSection, Store};
 use yuke_engine::{Commit, CommitDisplay, TurnEnd};
 use yuke_protocol::{Input, InputKind, InputSource, ModelReference, PendingInput, SessionSettings};
-use yuke_store::SqliteStore;
+use yuke_store::FileStore;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Open the database in the folder, or create it.
+    // Open the store in the folder, or create it.
     let folder = std::env::temp_dir().join("yuke-store-example");
-    let store = SqliteStore::open(&folder).await?;
+    let store = FileStore::open(&folder).await?;
     println!("store: {}", folder.display());
 
     // Create a session. This process owns the session until `opened.lease` drops.

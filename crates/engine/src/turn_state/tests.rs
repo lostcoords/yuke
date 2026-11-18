@@ -243,7 +243,7 @@ fn cancelled_request_keeps_its_text_and_gives_each_call_an_error_result() {
     );
 }
 
-// The protocol sends a commit as this JSON. The SQLite store saves the parts of a commit in columns instead.
+// The protocol sends a commit as this JSON, and the store saves the same JSON in its log.
 // A transparent error gives its cause only through `source`. The saved text must keep that cause.
 #[test]
 fn a_failed_turn_saves_the_causes_of_its_error() {

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use yuke_ai::scripted::ScriptedExchange;
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
-use yuke_store::SqliteStore;
+use yuke_store::FileStore;
 
 use async_trait::async_trait;
 use yuke_engine::Timer;
@@ -94,8 +94,8 @@ impl Place {
     }
 
     /// The store of the place, opened again.
-    pub(crate) async fn store(&self) -> SqliteStore {
-        SqliteStore::open(&self.paths.data).await.unwrap()
+    pub(crate) async fn store(&self) -> FileStore {
+        FileStore::open(&self.paths.data).await.unwrap()
     }
 }
 
