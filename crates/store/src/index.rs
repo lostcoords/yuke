@@ -76,8 +76,8 @@ pub(crate) struct Added {
 pub(crate) struct Entry {
     pub(crate) meta: Meta,
     pub(crate) pending: Vec<PendingInput>,
-    /// The id of the next accepted input: one above each id that a line added. Ids start at 1 and never repeat in a
-    /// session, because the index keeps each line.
+    /// The id of the next accepted input: one above the highest id that a line added. Ids start at 1 and never repeat
+    /// in a session, because the index keeps each line.
     pub(crate) next_input: InputId,
 }
 

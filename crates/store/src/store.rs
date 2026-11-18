@@ -235,7 +235,9 @@ fn make_session(
         Ok(()) => Ok(lock),
         Err(error) => {
             drop(lock);
-            files::remove_session_folder(folder).map_err(failed)?;
+            if files::remove_session_folder(folder).is_err() {
+                // The error of the make tells the cause, so it wins over the error of the removal.
+            }
             Err(error)
         }
     }
