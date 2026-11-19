@@ -4,7 +4,13 @@ description: Install yuke, connect a model, and extend the terminal coding agent
 
 # Documentation
 
-yuke is a fast, hackable coding agent for your terminal. Start with the [Quick start](get-started.md).
+yuke is a fast, hackable coding agent for your terminal. Its terminal user interface (TUI) is built from plugins, and you can change each part of it. Start with the [Quick start](get-started.md).
+
+## Use yuke
+
+- [Quick start](get-started.md): install yuke, connect a model, and run your first task.
+- [Use the TUI](use.md): send messages, mention files, run slash commands, and learn the keys.
+- [Command line](cli.md): each command and flag of `yuke`.
 
 ## Configure
 
@@ -22,7 +28,7 @@ yuke is a fast, hackable coding agent for your terminal. Start with the [Quick s
 ## Extend
 
 - [Your first plugin](first-plugin.md): add a command and check it against the public API.
-- [Plugins](plugins.md): runtime and session entry points, cleanup, events, and services.
-- [UI](ui.md): commands, keys, status items, and styles.
-- [Tools](tools.md): define a model tool and return its result.
+- [Plugins](plugins.md): install plugins, the plugin manifest, entry points, cleanup, events, and services.
+- [TUI plugin API](ui.md): commands, keys, status items, and styles.
+- [Tools](tools.md): define a model tool, and see the built-in tools.
 - [Engine](engine.md): engine hooks and the prompt.
