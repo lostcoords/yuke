@@ -40,8 +40,14 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           # The notes are the lines after the heading `## VERSION` up to the next heading of that level.
+          # GitHub shows each line break of the notes, so the second awk joins the wrapped lines of each paragraph.
           awk -v heading="## ${RELEASE_TAG#v}" '$0 == heading { found = 1; next } found && /^## / { exit } found' \
-            CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+            CHANGELOG.md | awk '
+              NF == 0 { if (line != "") print line; print ""; line = ""; next }
+              /^(#|- )/ { if (line != "") print line; line = $0; next }
+              { sub(/^ +/, ""); line = (line == "" ? $0 : line " " $0) }
+              END { if (line != "") print line }
+            ' > "${RUNNER_TEMP}/notes.md"
           grep -q '[^[:space:]]' "${RUNNER_TEMP}/notes.md" || { echo "CHANGELOG.md has no section ## ${RELEASE_TAG#v}" >&2; exit 1; }
           printf '\nBuilt from commit `%s`.\n' "${GITHUB_SHA}" >> "${RUNNER_TEMP}/notes.md"
       - name: Publish the four tested archives
