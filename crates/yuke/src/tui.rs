@@ -77,8 +77,8 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
         ended: Arc::new(Notify::new()),
     };
     let startup = Startup {
-        cwd,
-        session,
+        folder: cwd,
+        session_id: session,
         version: env!("YUKE_VERSION").to_owned(),
     };
     let ended = serve(&mut host, machine, store, startup, &shutdown).await;

@@ -74,8 +74,8 @@ fn interface(display: Arc<Display>) -> Interface {
     Interface {
         display,
         startup: Startup {
-            cwd: "/".to_owned(),
-            session: None,
+            folder: "/".to_owned(),
+            session_id: None,
             version: "0.0.0".to_owned(),
         },
     }

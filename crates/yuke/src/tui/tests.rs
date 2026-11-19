@@ -116,8 +116,8 @@ async fn started(place: &Place, display: &Arc<Display>) -> App {
 /// [`started`] with `session` as the session of the startup.
 async fn started_on(place: &Place, display: &Arc<Display>, session: Option<SessionId>) -> App {
     let startup = Startup {
-        cwd: "/work".to_owned(),
-        session,
+        folder: "/work".to_owned(),
+        session_id: session,
         version: env!("YUKE_VERSION").to_owned(),
     };
     let machine = crate::app::Machine {

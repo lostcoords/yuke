@@ -26,11 +26,10 @@ pub struct Interface {
 #[serde(rename_all = "camelCase")]
 pub struct Startup {
     /// The folder that yuke started in.
-    #[serde(rename = "folder")]
-    pub cwd: String,
+    pub folder: String,
     /// The session of `--continue` or `--resume`.
-    #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
-    pub session: Option<SessionId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
     /// The version of yuke.
     pub version: String,
 }
