@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use yuke_agent::{
@@ -18,10 +18,10 @@ use yuke_protocol::{
     SessionTitle,
 };
 
-use crate::failed;
 use crate::files::{self, SessionLock};
 use crate::index::{Added, Index, Line, Meta};
 use crate::log;
+use crate::{failed, lock};
 
 /// A [`Store`] in a folder: the index `sessions.jsonl`, the store lock, and a folder for each session.
 pub struct FileStore {
@@ -184,20 +184,16 @@ impl FileStore {
 
     /// The writer of session `id` while a lease of this store holds it.
     fn writer(&self, id: SessionId) -> Option<Arc<Writer>> {
-        self.writers
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&id)
-            .and_then(Weak::upgrade)
+        lock(&self.writers).get(&id).and_then(Weak::upgrade)
     }
 
-    /// A lease of session `id` that holds `lock`, with `next` as the number of the next event.
-    fn lease(&self, id: SessionId, lock: SessionLock, next: u64) -> Lease {
+    /// A lease of session `id` that holds `session_lock`, with `next` as the number of the next event.
+    fn lease(&self, id: SessionId, session_lock: SessionLock, next: u64) -> Lease {
         let writer = Arc::new(Writer {
-            lock,
+            lock: session_lock,
             next: AtomicU64::new(next),
         });
-        let mut writers = self.writers.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut writers = lock(&self.writers);
         // The drop of a lease leaves its entry. Each new lease removes such entries.
         writers.retain(|_, writer| writer.strong_count() > 0);
         writers.insert(id, Arc::downgrade(&writer));

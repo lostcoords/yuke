@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use yuke_protocol::{Input, InputId, ModelReference, PendingInput, SessionId};
@@ -111,9 +110,7 @@ impl Index {
 
     /// The next list position, above each position that this process read or wrote.
     pub(crate) fn next_position(&self) -> u64 {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |time| u64::try_from(time.as_micros()).unwrap_or(u64::MAX));
+        let now = u64::try_from(crate::since_epoch().as_micros()).unwrap_or(u64::MAX);
         now.max(self.newest_position + 1)
     }
 

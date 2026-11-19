@@ -33,6 +33,12 @@ pub fn sse<T: Display>(events: &[T]) -> String {
     output
 }
 
+// Each change of a guarded value is complete before the next statement, so a panic of another holder leaves a valid
+// value.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn message_start() -> Value {
     json!({"type": "message_start", "message": {"usage": {"input_tokens": 0}}})
 }
@@ -455,7 +461,7 @@ impl ScriptedTransport {
     }
 
     fn script(&self) -> MutexGuard<'_, Script> {
-        self.script.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.script)
     }
 
     /// The requests, in send order.
@@ -629,7 +635,7 @@ impl ScriptedExchange {
     }
 
     fn script(&self) -> MutexGuard<'_, ExchangeScript> {
-        self.script.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.script)
     }
 
     /// The requests, in send order.
