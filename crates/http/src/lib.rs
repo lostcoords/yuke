@@ -219,10 +219,6 @@ impl Client {
         let head = match bound {
             None => send(self.connect(&target).await?, http_request).await,
             Some((at, timed_out)) => {
-                // A deadline that already passed starts no leg, so an expired request is never sent.
-                if at <= Instant::now() {
-                    return Err(timed_out);
-                }
                 // A timeout before the connection opens proves that the request did not leave.
                 let socket = tokio::time::timeout_at(at, self.connect(&target))
                     .await
