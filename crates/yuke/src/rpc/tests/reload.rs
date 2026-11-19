@@ -177,9 +177,9 @@ async fn a_session_after_a_reload_has_a_new_provider_and_the_skills_of_a_new_plu
     std::fs::write(
         place.paths.config.join("providers.json"),
         r#"{ "providers": [{
-            "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+            "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
             "endpoints": [{ "protocol": "anthropic_messages" }],
-            "models": [{ "id": "small", "limits": { "max_output_tokens": 4096 } }]
+            "models": [{ "id": "small", "limits": { "maxOutputTokens": 4096 } }]
         }] }"#,
     )
     .unwrap();
@@ -256,9 +256,9 @@ async fn the_apply_of_a_new_plugin_can_call_a_model_of_the_new_providers() {
     std::fs::write(
         place.paths.config.join("providers.json"),
         r#"{ "providers": [{
-            "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+            "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
             "endpoints": [{ "protocol": "anthropic_messages" }],
-            "models": [{ "id": "small", "limits": { "max_output_tokens": 4096 } }]
+            "models": [{ "id": "small", "limits": { "maxOutputTokens": 4096 } }]
         }] }"#,
     )
     .unwrap();

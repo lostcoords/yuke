@@ -20,7 +20,7 @@ use yuke_ai::scripted::{ScriptedTransport, Stalled, counted, failed_reply, text_
 use yuke_ai::{Block, Header, Media, SessionHeader, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::NoWait;
 use yuke_engine::{
-    Commit, CommitDisplay, Driver, Hooks, Model, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd,
+    Commit, CommitDisplay, Driver, Hooks, ModelAccess, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd,
     chain_text,
 };
 use yuke_testing::{assert_in_order, model};
@@ -40,7 +40,7 @@ fn step(blocks: &[Block]) -> Commit<'_> {
 }
 
 /// Run a turn on a stalled transport, and cancel it after its request starts.
-async fn cancel_a_stalled_turn(session: &mut Session, model: &Model) {
+async fn cancel_a_stalled_turn(session: &mut Session, model: &ModelAccess) {
     let token = yuke_engine::CancellationToken::new();
     let mut run = pin!(
         session

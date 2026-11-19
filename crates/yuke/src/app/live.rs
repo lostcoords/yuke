@@ -18,7 +18,7 @@ use tokio::sync::{Notify, oneshot, watch};
 use tokio::task::JoinHandle;
 use yuke_agent::{EventPage, Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
-use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
+use yuke_engine::{CancellationToken, Driver, MediaStore, ModelAccess, Toolset, chain_text};
 use yuke_js::{Handle, RequestFailure, ScriptSession, ScriptTool, SessionHost, ViewEvent, ViewSink};
 use yuke_mcp::{McpTool, OnChange, Servers};
 
@@ -80,7 +80,7 @@ impl LiveSession {
             .open_session(Rc::clone(&host) as Rc<dyn SessionHost>)
             .await
             .map_err(|error| AppError::Internal(chain_text(&error)))?;
-        let servers = start_servers(&host, &session.settings().cwd);
+        let servers = start_servers(&host, &session.settings().folder);
         let parts = Rc::new(Parts {
             session: tokio::sync::Mutex::new(session),
             turn: RefCell::default(),
@@ -668,7 +668,8 @@ impl Output {
         drop(sent);
         self.publish(SessionUpdate::Live(update));
         // The asker closes the question before it stops waiting, so an open question has a receiver.
-        question.answer.send(response).map_err(|_| AppError::NoInteraction(id))
+        drop(question.answer.send(response));
+        Ok(())
     }
 
     /// Tell the observer about the session.
@@ -754,7 +755,7 @@ impl Parts {
                 let tools = script.tools().await;
                 self.servers.ready().await;
                 tools
-            } => toolset_of(tools, self.servers.tools(), &self.host.cwd()),
+            } => toolset_of(tools, self.servers.tools(), &self.host.folder()),
             () = token.cancelled() => Ok(Toolset::new()),
         }
     }
@@ -896,7 +897,7 @@ fn toolset_of(
     folder: &Path,
 ) -> Result<Toolset, String> {
     let mut toolset = Toolset::new();
-    toolset.set_cwd(folder.to_string_lossy());
+    toolset.set_folder(folder.to_string_lossy());
     for (definition, tool) in tools.map_err(|error| chain_text(&error))? {
         toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
     }
@@ -1087,8 +1088,8 @@ impl SessionHost for Host {
         self.parent
     }
 
-    fn cwd(&self) -> PathBuf {
-        self.settings.borrow().cwd.clone()
+    fn folder(&self) -> PathBuf {
+        self.settings.borrow().folder.clone()
     }
 
     fn is_closed(&self) -> bool {
@@ -1156,7 +1157,7 @@ impl SessionHost for Host {
         }
     }
 
-    fn model(&self, reference: &ModelReference) -> Result<Model, Box<dyn std::error::Error + Send + Sync>> {
+    fn model(&self, reference: &ModelReference) -> Result<ModelAccess, Box<dyn std::error::Error + Send + Sync>> {
         Ok(model_of(reference, &self.shared)?)
     }
 
@@ -1205,7 +1206,7 @@ mod tests {
                 model: "MiniMax-M3".to_owned(),
             },
             settings: yuke_ai::RequestSettings::new(),
-            cwd: PathBuf::from("/"),
+            folder: PathBuf::from("/"),
         }
     }
 
@@ -1646,7 +1647,7 @@ mod tests {
                 model: "MiniMax-M3".to_owned(),
             },
             settings: yuke_ai::RequestSettings::new(),
-            cwd: place.work.clone(),
+            folder: place.work.clone(),
         };
         let id = app.sessions().create(first.clone(), None).await.unwrap();
         let other = place.work.join("other");
@@ -1656,14 +1657,14 @@ mod tests {
                 provider: "minimax".to_owned(),
                 model: "MiniMax-M3.1-Flash".to_owned(),
             },
-            cwd: other.clone(),
+            folder: other.clone(),
             ..first
         };
         changed.settings.reasoning.effort = Some(yuke_ai::Effort::High);
 
         app.sessions().set_settings(id, changed.clone()).await.unwrap();
         let live = app.sessions().live(id).unwrap();
-        let named = (live.parts.host.settings(), live.parts.host.cwd());
+        let named = (live.parts.host.settings(), live.parts.host.folder());
         drop(live);
         app.shutdown().await;
 

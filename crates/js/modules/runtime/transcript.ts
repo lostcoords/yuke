@@ -42,7 +42,7 @@ const NO_DISPLAY: Frozen<DisplayBlock[]> = Object.freeze([]);
 /** The fields of a tool entry before the host handles the call. */
 const UNHANDLED = {
   hints: NO_HINTS,
-  cwd: undefined,
+  folder: undefined,
   startedAt: undefined,
   durationMs: undefined,
   output: "",
@@ -185,7 +185,7 @@ export class Transcript {
       }
       this.#saved.push(update);
       if (update.kind === "settings") {
-        this.#settings = { model: update.model, settings: update.settings, cwd: update.cwd };
+        this.#settings = { model: update.model, settings: update.settings, folder: update.folder };
         return;
       }
       for (const input of update.consumed) this.pending.delete(input.id);
@@ -363,7 +363,7 @@ export class Transcript {
           ...called(block),
           status: "waiting",
           ...UNHANDLED,
-          ...(shown === undefined ? {} : { hints: shown.hints, cwd: shown.cwd }),
+          ...(shown === undefined ? {} : { hints: shown.hints, folder: shown.folder }),
         });
       } else if (block.kind === "toolResult") {
         // The results come in the order of the calls. A result whose call is on an older page waits for that page.

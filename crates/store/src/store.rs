@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use yuke_agent::{
@@ -18,10 +18,10 @@ use yuke_protocol::{
     SessionTitle,
 };
 
-use crate::failed;
 use crate::files::{self, SessionLock};
 use crate::index::{Added, Index, Line, Meta};
 use crate::log;
+use crate::{failed, lock};
 
 /// A [`Store`] in a folder: the index `sessions.jsonl`, the store lock, and a folder for each session.
 pub struct FileStore {
@@ -74,9 +74,8 @@ impl State {
     fn locked<T>(&mut self, function: impl FnOnce(&mut Index) -> Result<T, StoreError>) -> Result<T, StoreError> {
         self.lock.lock().map_err(failed)?;
         let result = self.index().and_then(function);
-        if self.lock.unlock().is_err() {
-            // The close of the file at the end of the process releases the lock, so nothing is left to do.
-        }
+        // The close of the file at the end of the process releases the lock, so a failed unlock leaves nothing to do.
+        _ = self.lock.unlock();
         result
     }
 }
@@ -170,9 +169,8 @@ impl FileStore {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         self.jobs
             .send(Box::new(move |state: &mut State| {
-                if sender.send(function(state)).is_err() {
-                    // The caller stopped waiting. The call ran, as a call of a stopped caller does.
-                }
+                // The caller stopped waiting. The call ran, as a call of a stopped caller does.
+                _ = sender.send(function(state));
             }))
             .map_err(|_| failed("the store thread stopped"))?;
         receiver.await.map_err(failed)?
@@ -184,20 +182,16 @@ impl FileStore {
 
     /// The writer of session `id` while a lease of this store holds it.
     fn writer(&self, id: SessionId) -> Option<Arc<Writer>> {
-        self.writers
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&id)
-            .and_then(Weak::upgrade)
+        lock(&self.writers).get(&id).and_then(Weak::upgrade)
     }
 
-    /// A lease of session `id` that holds `lock`, with `next` as the number of the next event.
-    fn lease(&self, id: SessionId, lock: SessionLock, next: u64) -> Lease {
+    /// A lease of session `id` that holds `session_lock`, with `next` as the number of the next event.
+    fn lease(&self, id: SessionId, session_lock: SessionLock, next: u64) -> Lease {
         let writer = Arc::new(Writer {
-            lock,
+            lock: session_lock,
             next: AtomicU64::new(next),
         });
-        let mut writers = self.writers.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut writers = lock(&self.writers);
         // The drop of a lease leaves its entry. Each new lease removes such entries.
         writers.retain(|_, writer| writer.strong_count() > 0);
         writers.insert(id, Arc::downgrade(&writer));
@@ -235,9 +229,8 @@ fn make_session(
         Ok(()) => Ok(lock),
         Err(error) => {
             drop(lock);
-            if files::remove_session_folder(folder).is_err() {
-                // The error of the make tells the cause, so it wins over the error of the removal.
-            }
+            // The error of the make tells the cause, so it wins over the error of the removal.
+            _ = files::remove_session_folder(folder);
             Err(error)
         }
     }
@@ -283,7 +276,7 @@ impl Store for FileStore {
         let line = log::line(1, &log::settings_body(settings, Some(prompt)).map_err(failed)?);
         let meta = Meta {
             model: settings.model.clone(),
-            cwd: settings.cwd.clone(),
+            folder: settings.folder.clone(),
             title: None,
             fork_of: None,
             parent,
@@ -314,11 +307,7 @@ impl Store for FileStore {
         let (opened, lock, cut) = self
             .call(move |state| {
                 let source_meta = meta_of(state.index()?, source)?;
-                let title = source_meta
-                    .title
-                    .as_deref()
-                    .and_then(fork_title_of)
-                    .map(|title| title.to_string());
+                let title = source_meta.title.as_deref().and_then(fork_title_of);
                 let source_log = log::read(&source_folder).map_err(failed)?;
                 let cut = match through {
                     Some(EventNumber(through)) if source_log.ends_completed_turn(through) => through,
@@ -328,7 +317,7 @@ impl Store for FileStore {
                 let settings = settings_of(&source_log, cut)?;
                 let meta = Meta {
                     model: settings.model.clone(),
-                    cwd: settings.cwd.clone(),
+                    folder: settings.folder.clone(),
                     title,
                     fork_of: Some(source),
                     parent: None,
@@ -379,7 +368,7 @@ impl Store for FileStore {
             state.locked(|index| {
                 let mut meta = meta_of(index, id)?;
                 meta.model = settings.model;
-                meta.cwd = settings.cwd;
+                meta.folder = settings.folder;
                 let line = Line {
                     meta: Some(meta),
                     ..Line::new(id)
@@ -391,7 +380,7 @@ impl Store for FileStore {
     }
 
     async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError> {
-        let title = title.to_string();
+        let title = title.clone();
         self.call(move |state| {
             state.locked(|index| {
                 let mut meta = meta_of(index, id)?;
@@ -407,7 +396,7 @@ impl Store for FileStore {
     }
 
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
-        let title = title_of(&input).map(|title| title.to_string());
+        let title = title_of(&input);
         self.call(move |state| {
             state.locked(|index| {
                 let entry = index.get(id).ok_or(StoreError::NotFound)?;
@@ -453,12 +442,12 @@ impl Store for FileStore {
 
     async fn list_sessions(
         &self,
-        cwd: Option<&Path>,
+        folder: Option<&Path>,
         parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
-        let cwd = cwd.map(Path::to_path_buf);
+        let folder = folder.map(Path::to_path_buf);
         let before = after.map_or(u64::MAX, |ListPosition(position)| position);
 
         self.call(move |state| {
@@ -469,7 +458,7 @@ impl Store for FileStore {
                 .iter()
                 .map(|(id, entry)| (id, &entry.meta))
                 .filter(|(_, meta)| meta.parent == parent && meta.position < before)
-                .filter(|(_, meta)| cwd.as_ref().is_none_or(|cwd| meta.cwd == *cwd))
+                .filter(|(_, meta)| folder.as_ref().is_none_or(|folder| meta.folder == *folder))
                 .collect();
             listed.sort_unstable_by_key(|(_, meta)| std::cmp::Reverse(meta.position));
             let next = if listed.len() > limit {
@@ -479,10 +468,7 @@ impl Store for FileStore {
                 None
             };
             Ok(SessionPage {
-                sessions: listed
-                    .into_iter()
-                    .map(|(&id, meta)| summary_of(id, meta))
-                    .collect::<Result<_, _>>()?,
+                sessions: listed.into_iter().map(|(&id, meta)| summary_of(id, meta)).collect(),
                 next,
             })
         })
@@ -490,8 +476,13 @@ impl Store for FileStore {
     }
 
     async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {
-        self.call(move |state| summary_of(id, &state.index()?.get(id).ok_or(StoreError::NotFound)?.meta))
-            .await
+        self.call(move |state| {
+            Ok(summary_of(
+                id,
+                &state.index()?.get(id).ok_or(StoreError::NotFound)?.meta,
+            ))
+        })
+        .await
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
@@ -673,23 +664,18 @@ fn settings_of(log: &log::Log, cut: u64) -> Result<SessionSettings, StoreError> 
 }
 
 /// The summary of session `id` from its facts.
-fn summary_of(id: SessionId, meta: &Meta) -> Result<SessionSummary, StoreError> {
+fn summary_of(id: SessionId, meta: &Meta) -> SessionSummary {
     let bytes = id.as_bytes();
-    Ok(SessionSummary {
+    SessionSummary {
         session_id: id,
         model: meta.model.clone(),
-        cwd: meta.cwd.clone(),
-        title: meta
-            .title
-            .as_deref()
-            .map(SessionTitle::new)
-            .transpose()
-            .map_err(failed)?,
+        folder: meta.folder.clone(),
+        title: meta.title.clone(),
         // A version 7 id starts with the millisecond of its creation, and the list position is the microsecond of the
         // newest activity, so the index stores neither time.
         created_at: u64::from_be_bytes([0, 0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]]),
         updated_at: meta.position / 1000,
         fork_of: meta.fork_of,
         parent: meta.parent,
-    })
+    }
 }

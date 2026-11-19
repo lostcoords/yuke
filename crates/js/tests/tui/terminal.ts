@@ -73,7 +73,7 @@ export function fakeTerminal(): Terminal {
       calls.push(["copy", text]);
     },
     readImage: async () => undefined,
-    startup: () => ({ cwd: "/work", version: "0.0.0" }),
+    startup: () => ({ folder: "/work", version: "0.0.0" }),
   };
   return {
     driver,

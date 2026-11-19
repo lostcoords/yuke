@@ -73,14 +73,14 @@ export class PaneTree {
     this.#host = host;
     this.#active = emptyLeaf();
     this.#root = this.#active;
-    this.view = Object.freeze({
+    this.view = {
       layout: (size: Size): readonly Placement[] => this.#layout(size),
       draw: (canvas: Canvas): void => this.#drawDividers(canvas),
-    });
+    };
   }
 
   /** The handle of the active pane, or `undefined` while an empty pane is active. */
-  get active(): Pane | undefined {
+  get activePane(): Pane | undefined {
     return this.#active.pane;
   }
 
@@ -91,7 +91,6 @@ export class PaneTree {
 
   /** Split the active pane along `direction`. The new pane comes after it (right or below) and gets the focus. */
   split(owner: string, create: ViewFactory, direction: Direction): Pane {
-    if (direction !== "row" && direction !== "column") throw new TypeError("a split direction is row or column");
     const started = this.#startLeaf(owner, create);
     if ("mount" in started) return paneOf(started.mount, emptyView(), () => {});
     this.#insert(started.leaf, direction);
@@ -370,5 +369,5 @@ function firstLeaf(node: Node): Leaf {
 }
 
 function paneOf(mount: Mount, view: View, focus: () => void): Pane {
-  return Object.freeze({ close: mount.close, signal: mount.signal, view, focus });
+  return { close: mount.close, signal: mount.signal, view, focus };
 }

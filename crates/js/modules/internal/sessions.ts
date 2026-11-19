@@ -122,7 +122,7 @@ async function open(
     if (ended.signal.aborted) throw new Error(`the handle of the session ${id} has ended`);
   };
   const close = (): void => end(new DOMException(`the handle of the session ${id} closed`, "AbortError"));
-  return Object.freeze({
+  return {
     id,
     signal: ended.signal,
     async sendMessage(message) {
@@ -135,7 +135,7 @@ async function open(
     },
     close,
     [Symbol.dispose]: close,
-    cancel() {
+    cancelTurn() {
       live();
       sessionCancel(id);
     },
@@ -179,12 +179,12 @@ async function open(
       live();
       return sessionMcpServers(id);
     },
-  } satisfies SessionHandle);
+  } satisfies SessionHandle;
 }
 
 /** The sessions for the plugin `plugin`. Its signal ends each handle that it opened. */
 export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
-  return Object.freeze({
+  return {
     create: (settings, options) => sessionsCreate([settings, options?.parent ?? null]),
     fork: (id, options) => sessionsFork([id, options?.through ?? null]),
     list: (params) => sessionsList(params ?? {}),
@@ -200,13 +200,13 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
     async closeForAll(id) {
       await sessionClose(id);
     },
-  } satisfies Sessions);
+  } satisfies Sessions;
 }
 
 /** The catalog of the providers and their models. */
-export const catalog: Catalog = Object.freeze({
+export const catalog: Catalog = {
   list: (options) => catalogList(options?.all === true),
-} satisfies Catalog);
+} satisfies Catalog;
 
 /** A device login that has started. The user opens the URL and enters the code. */
 export interface LoginInProgress {

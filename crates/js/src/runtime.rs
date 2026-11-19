@@ -229,10 +229,9 @@ impl Runtime {
     /// the frames follow. Until this call, the runtime draws nothing and takes no input, so a reload can load a new
     /// runtime while the old one draws. A second call, or a call without a display, does nothing.
     pub fn show(&mut self, snapshot: Option<String>) {
-        if let Some(show) = self.show.take()
-            && show.send(snapshot).is_err()
-        {
+        if let Some(show) = self.show.take() {
             // The frame loop has ended: the runtime has no display, or it stopped.
+            _ = show.send(snapshot);
         }
     }
 
@@ -312,9 +311,8 @@ impl EngineAccess {
         self.post(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
             tokio::select! {
                 result = f(ctx, registry) => {
-                    if reply.send(result).is_err() {
-                        // The caller has left.
-                    }
+                    // The caller has left.
+                    _ = reply.send(result);
                 }
                 () = reply.closed() => {}
             }
@@ -340,9 +338,8 @@ async fn drive_engine(engine: Rc<Engine>, mut stopped: oneshot::Receiver<()>, re
                 // the next poll too, and a handler that comes in it is in time. A rejection that waits wakes the drive.
                 let mut pending = engine.rejections.pending.borrow_mut();
                 for (_, error, _) in pending.extract_if(.., |(_, _, seen)| *seen) {
-                    if reports.send(Report::Fault(error)).is_err() {
-                        // The owner dropped the receiver, so it ignores faults.
-                    }
+                    // The owner dropped the receiver, so it ignores faults.
+                    _ = reports.send(Report::Fault(error));
                 }
                 if !pending.is_empty() {
                     for (_, _, seen) in pending.iter_mut() {
@@ -372,9 +369,8 @@ impl Engine {
     fn close_sessions(&self, ctx: &Ctx<'_>) {
         let sessions = self.sessions_to_close.take();
         for open in sessions {
-            if crate::session::close_dropped(ctx, &self.registry, open).is_err() {
-                // Only the end of the engine fails the close, and that end drops the plugins too.
-            }
+            // Only the end of the engine fails the close, and that end drops the plugins too.
+            _ = crate::session::close_dropped(ctx, &self.registry, open);
         }
     }
 

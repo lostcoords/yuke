@@ -1,5 +1,7 @@
-//! `yuke plugin`: list, sync, update, find, add, and remove the plugins of `config.json`. It runs no plugin code.
+//! `yuke plugin`: list, sync, check, apply, find, add, and remove the plugins of `config.json`. `yuke plugin update` is
+//! [`check`] and [`apply`]. It runs no plugin code.
 
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -17,13 +19,47 @@ use super::{
 use crate::config::{Config, add_plugin_item, git_source, read_json, remove_plugin_item, without_comments, write_text};
 use crate::paths::Paths;
 
+/// Why a call of the plugin manager failed.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Error {
+    /// The request cannot work, and the caller can fix it: a name that does not exist, a plugin that clashes, or a
+    /// lock entry that does not fit. The text tells why.
+    Invalid(String),
+    /// A file, `git`, or the network failed, or a file of the profile is bad. The text tells why.
+    Internal(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (Error::Invalid(text) | Error::Internal(text)) = self;
+        f.write_str(text)
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// A text from a file or from `git` is a failure of the system, so it is [`Error::Internal`]. A check of the request
+/// builds [`Error::Invalid`] itself.
+impl From<String> for Error {
+    fn from(text: String) -> Error {
+        Error::Internal(text)
+    }
+}
+
+/// The command line prints each failure as its text.
+impl From<Error> for String {
+    fn from(error: Error) -> String {
+        error.to_string()
+    }
+}
+
 /// The plugins of `config.json`, with the state of each one on disk. `running` holds the outcomes of the last load, and
 /// a plugin without one is pending. It uses no network and changes nothing.
 ///
 /// # Errors
 ///
-/// Returns a text for a bad `config.json` or `plugins.lock`.
-pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlugin>, String> {
+/// Returns [`Error::Internal`] for a bad `config.json` or `plugins.lock`.
+pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlugin>, Error> {
     Ok(outcomes(paths)?
         .into_iter()
         .map(|outcome| {
@@ -57,8 +93,8 @@ pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlug
 ///
 /// # Errors
 ///
-/// Returns a text for a failed resolve or fetch.
-pub(crate) async fn find(paths: &Paths, url: &str) -> Result<Vec<FoundPlugin>, String> {
+/// Returns [`Error::Internal`] for a failed resolve or fetch.
+pub(crate) async fn find(paths: &Paths, url: &str) -> Result<Vec<FoundPlugin>, Error> {
     let _held = hold(&paths.data).await?;
     Ok(found(paths, url, None).await?.1)
 }
@@ -91,22 +127,22 @@ async fn found(paths: &Paths, url: &str, reference: Option<&str>) -> Result<(Str
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file, a name that the repository does not have, a plugin that `config.json` has already, or
-/// a failed fetch or install.
+/// Returns [`Error::Invalid`] for a repository that has no plugin, a name that the repository does not have, or a
+/// plugin that `config.json` has already. Returns [`Error::Internal`] for a bad file or a failed fetch or install.
 pub(crate) async fn add(
     paths: &Paths,
     url: &str,
     names: &[String],
     reference: Option<&str>,
     progress: &dyn Fn(&str),
-) -> Result<Vec<AddedPlugin>, String> {
+) -> Result<Vec<AddedPlugin>, Error> {
     let _held = hold(&paths.data).await?;
     let known = outcomes(paths)?;
     let path = paths.config.join("config.json");
     let mut text = match fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("{}: {error}", path.display())),
+        Err(error) => return Err(Error::Internal(format!("{}: {error}", path.display()))),
     };
     let mut lock = Lock::read(&paths.config)?;
     let (commit, found) = found(paths, url, reference).await?;
@@ -115,14 +151,14 @@ pub(crate) async fn add(
         names.join(", ")
     };
     let chosen: Vec<&FoundPlugin> = match (names, found.as_slice()) {
-        (_, []) => return Err(format!("{url} has no {MANIFEST}")),
+        (_, []) => return Err(Error::Invalid(format!("{url} has no {MANIFEST}"))),
         ([], [plugin]) => vec![plugin],
         ([], _) => {
-            return Err(format!(
+            return Err(Error::Invalid(format!(
                 "{url} has {} plugins: {}: name the ones to add",
                 found.len(),
                 found_names()
-            ));
+            )));
         }
         (names, _) => names
             .iter()
@@ -130,9 +166,9 @@ pub(crate) async fn add(
                 found
                     .iter()
                     .find(|plugin| plugin.name == *name)
-                    .ok_or_else(|| format!("{url} has no plugin '{name}': it has {}", found_names()))
+                    .ok_or_else(|| Error::Invalid(format!("{url} has no plugin '{name}': it has {}", found_names())))
             })
-            .collect::<Result<_, _>>()?,
+            .collect::<Result<_, Error>>()?,
     };
     let mut added = Vec::with_capacity(chosen.len());
     for plugin in chosen {
@@ -147,7 +183,9 @@ pub(crate) async fn add(
             .iter()
             .any(|outcome| outcome.name.as_deref() == Some(plugin.name.as_str()))
         {
-            return Err(fail("config.json has a plugin of this name already".to_owned()));
+            return Err(Error::Invalid(fail(
+                "config.json has a plugin of this name already".to_owned(),
+            )));
         }
         install(paths, &source, &commit, progress).await.map_err(fail)?;
         let item = serde_json::to_string(&source).map_err(|error| error.to_string())?;
@@ -171,19 +209,21 @@ pub(crate) async fn add(
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file, or when no plugin of `config.json` has the name.
-pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
+/// Returns [`Error::Invalid`] when no plugin of `config.json` has the name, and [`Error::Internal`] for a bad file.
+pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), Error> {
     let _held = hold(&paths.data).await?;
     let mut lock = Lock::read(&paths.config)?;
     let outcomes = outcomes(paths)?;
     let index = (outcomes.iter())
         .position(|outcome| outcome.name.as_deref() == Some(name))
-        .ok_or_else(|| format!("no plugin of config.json has the name '{name}': see `yuke plugin list`"))?;
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "no plugin of config.json has the name '{name}': see `yuke plugin list`"
+            ))
+        })?;
     let path = paths.config.join("config.json");
     let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let text = remove_plugin_item(&text, index)
-        .ok_or_else(|| format!("{}: the edit did not find the plugin", path.display()))?;
-    write_text(&path, &text)?;
+    write_text(&path, &remove_plugin_item(&text, index))?;
     if let PluginOrigin::Git(source) = &outcomes[index].source {
         lock.commits.remove(source);
         lock.write(&paths.config)?;
@@ -206,9 +246,9 @@ pub(crate) fn outcomes(paths: &Paths) -> Result<Vec<Outcome>, String> {
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file or a lock that does not match with `locked`. After the write of the lock, it returns a
-/// text that names each plugin that did not install.
-pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -> Result<SyncPluginsResult, String> {
+/// Returns [`Error::Invalid`] for a lock that does not match with `locked`, and [`Error::Internal`] for a bad file.
+/// After the write of the lock, it returns [`Error::Internal`] with a text that names each plugin that did not install.
+pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -> Result<SyncPluginsResult, Error> {
     let _held = hold(&paths.data).await?;
     let config = read_config(paths)?;
     let lock = Lock::read(&paths.config)?;
@@ -216,7 +256,9 @@ pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -
     if locked
         && (lock.commits.len() != sources.len() || sources.iter().any(|source| !lock.commits.contains_key(*source)))
     {
-        return Err("plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`".to_owned());
+        return Err(Error::Invalid(
+            "plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`".to_owned(),
+        ));
     }
     let mut fresh = Lock::default();
     let mut failures = Vec::new();
@@ -245,7 +287,7 @@ pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -
     }
     let written = !locked && fresh.write(&paths.config)?;
     if !failures.is_empty() {
-        return Err(failures.join("; "));
+        return Err(Error::Internal(failures.join("; ")));
     }
     Ok(SyncPluginsResult { written })
 }
@@ -256,12 +298,12 @@ pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file, or a name that no installed Git plugin has.
+/// Returns [`Error::Invalid`] for a name that no installed Git plugin has, and [`Error::Internal`] for a bad file.
 pub(crate) async fn check(
     paths: &Paths,
     target: &PluginTarget,
     progress: &dyn Fn(&str),
-) -> Result<CheckPluginsResult, String> {
+) -> Result<CheckPluginsResult, Error> {
     let _held = hold(&paths.data).await?;
     // A plugin that is not installed has no name, so a sync comes before its update.
     let mut targets: Vec<(PluginSource, String, String)> = outcomes(paths)?
@@ -276,9 +318,9 @@ pub(crate) async fn check(
             .iter()
             .find(|name| !targets.iter().any(|(_, _, found)| found == *name))
         {
-            return Err(format!(
+            return Err(Error::Invalid(format!(
                 "no installed Git plugin of config.json has the name '{missing}': see `yuke plugin list`"
-            ));
+            )));
         }
         targets.retain(|(_, _, name)| names.contains(name));
     }
@@ -331,24 +373,28 @@ pub(crate) async fn check(
 ///
 /// # Errors
 ///
-/// Returns a text for a plugin that is not in the lock, a commit that is not a full id, or when the file does not read
-/// or write.
-pub(crate) async fn apply(paths: &Paths, plugins: &[LockedPlugin]) -> Result<(), String> {
+/// Returns [`Error::Invalid`] for a plugin that is not in the lock or a commit that is not a full id, and
+/// [`Error::Internal`] when the file does not read or write.
+pub(crate) async fn apply(paths: &Paths, plugins: &[LockedPlugin]) -> Result<(), Error> {
     let _held = hold(&paths.data).await?;
     let mut lock = Lock::read(&paths.config)?;
     for plugin in plugins {
         let source = &plugin.source;
         // A commit can come from a client, so it gets the check of a lock entry.
         if !git::is_commit(&plugin.commit) {
-            return Err(format!("plugin {source}: '{}' is not a full commit id", plugin.commit));
+            return Err(Error::Invalid(format!(
+                "plugin {source}: '{}' is not a full commit id",
+                plugin.commit
+            )));
         }
         let commit = lock
             .commits
             .get_mut(source)
-            .ok_or_else(|| format!("plugin {source} is not in plugins.lock"))?;
+            .ok_or_else(|| Error::Invalid(format!("plugin {source} is not in plugins.lock")))?;
         commit.clone_from(&plugin.commit);
     }
-    lock.write(&paths.config).map(|_| ())
+    lock.write(&paths.config)?;
+    Ok(())
 }
 
 /// Install the commit `commit` of `source` in `<data>/git`, unless it is there, and check the manifest of its folder. The

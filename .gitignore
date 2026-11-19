@@ -1,6 +1,9 @@
 # Build output can exist in the workspace or in a crate.
 **/target/
 
+# npm installs the site dependencies here.
+website/node_modules/
+
 # rustfmt can create backup files.
 **/*.rs.bk
 
@@ -10,3 +13,6 @@
 
 # macOS creates local directory metadata.
 .DS_Store
+
+# Notes of the maintainers. They are not part of the repository.
+notes/

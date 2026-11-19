@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model: "MiniMax-M3".to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: std::env::current_dir()?,
+        folder: std::env::current_dir()?,
     };
     let opened = store
         .create_session(&settings, &[PromptSection::new("base", "the prompt")], None)

@@ -234,7 +234,7 @@ test("a plugin creates a session, sends input, and sees the turn of that session
           reasoning: {},
           toolChoice: "auto",
         },
-        cwd: folder(),
+        folder: folder(),
       });
       const states: string[] = [];
       const texts: string[] = [];

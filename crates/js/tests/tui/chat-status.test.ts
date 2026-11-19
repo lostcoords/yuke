@@ -52,7 +52,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
     JOB,
     { id: "reader", label: "Read the store", state: "running", kind: "plugin", plugin: "agents" },
   ];
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, sessions, {
     list: async () => ({
       providers: CATALOG.providers.map((provider) => ({
@@ -95,7 +95,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
 });
 
 test("without a context window the context use is a token count", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
@@ -114,7 +114,7 @@ test("an answer without an input count shows no context item", async () => {
       finishReason: "stop",
     },
   });
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions([settings as StoredEvent, unknown]));
   frame.start();
   await waitForSettled();
@@ -126,11 +126,11 @@ test("an answer without an input count shows no context item", async () => {
 
 test("the first send of a new pane shows the jobs of its session once the handle opens", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    cwd: folder(),
+    folder: folder(),
   });
   const sessions = fakeSessions();
   sessions.state.jobs = [JOB];
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w" });
   const chat = await loadChat(frame, sessions);
   await waitForSettled();
   frame.start();
@@ -146,9 +146,9 @@ test("the first send of a new pane shows the jobs of its session once the handle
 
 test("a pane without a session shows the saved pick, and a new pick replaces it", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    cwd: folder(),
+    folder: folder(),
   });
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w" });
   const chat = await loadChat(frame);
   frame.start();
   const first = shownItems(chat);
@@ -168,8 +168,8 @@ test("a pane without a session shows the saved pick, and a new pick replaces it"
 });
 
 test("a saved pick that the catalog no longer has shows nothing", async () => {
-  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"low"}', { cwd: folder() });
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w" });
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"low"}', { folder: folder() });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w" });
   const chat = await loadChat(frame);
   frame.start();
   assertEquals(shownItems(chat), []);
@@ -177,9 +177,9 @@ test("a saved pick that the catalog no longer has shows nothing", async () => {
 
 test("a pane whose session does not open shows no saved pick", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    cwd: folder(),
+    folder: folder(),
   });
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "missing" });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w", sessionId: "missing" });
   const chat = await loadChat(frame);
   frame.start();
   // Activation loaded the pick, so the new pane shows it at once.
@@ -191,7 +191,7 @@ test("a pane whose session does not open shows no saved pick", async () => {
 });
 
 test("the bar of a session of a provider that was not ready at the start shows its level after a catalog change", async () => {
-  using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: "/launch", session: "s1" });
+  using frame = createFrame({ width: 60, height: 10 }, undefined, { folder: "/launch", sessionId: "s1" });
   // The provider is not ready at the start, and a login makes it ready.
   let ready = false;
   const catalog = { list: async () => (ready ? CATALOG : { providers: [] }) };
@@ -211,9 +211,9 @@ test("the bar of a session of a provider that was not ready at the start shows i
 
 test("the bar hides a saved pick of a provider that is not ready, and a new pick after a login shows", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    cwd: folder(),
+    folder: folder(),
   });
-  using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/launch" });
+  using frame = createFrame({ width: 60, height: 12 }, undefined, { folder: "/launch" });
   let state: ProviderState = { kind: "needsLogin" };
   const providers = (): ProviderInfo[] => CATALOG.providers.map((provider) => ({ ...provider, state })) as never;
   const catalog = { list: async () => ({ providers: state.kind === "ready" ? providers() : [] }) };
@@ -239,7 +239,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
 
 test("the folder item shows the folder of the session, and a pane without one shows the start folder with ~ for home", async () => {
   const home = env.get("HOME") ?? "/home";
-  using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: `${home}/launch` });
+  using frame = createFrame({ width: 60, height: 10 }, undefined, { folder: `${home}/launch` });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();

@@ -1,7 +1,9 @@
-// `ChatCompletions` of `yuke:chat` above a bare editor: the rows, the scroll, the selection, the labels, the run, the
+// `ChatCompletions` above a bare editor: the rows, the scroll, the selection, the labels, the run, the
 // order of the providers, and a late list. The slash commands are the provider of the bundled chat.
 
-import { ChatCompletions, type CompletionProvider, type SlashCommands, slashCompletions } from "yuke:chat";
+import type { CompletionProvider } from "yuke:chat";
+import { type SlashCommands, slashCompletions } from "yuke:internal/chat/commands";
+import { ChatCompletions } from "yuke:internal/chat/completions";
 import { assert, assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { type CommandItem, TextEditor } from "yuke:tui";
 import { rows } from "./rows.ts";
@@ -15,13 +17,13 @@ function mountProviders(frame: FrameTest, height: number, providers: readonly Co
   frame.surface("demo").tui.wrapRoot((mount) => {
     list = new ChatCompletions(editor, {
       providers: () => providers,
-      cwd: () => "/w",
+      folder: () => "/w",
       signal: mount.signal,
       enabled: () => true,
-      onChange: () => {
-        changes += 1;
-      },
       onError: (error) => errors.push(error),
+    });
+    list.addChangeListener(() => {
+      changes += 1;
     });
     const view = list.view;
     return {

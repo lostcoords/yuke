@@ -11,7 +11,7 @@ The MCP client of yuke, on [rmcp](https://crates.io/crates/rmcp). Each open sess
   ["mcp-server-git"] } } }`. An entry can have `env`, `cwd` (from the session folder), and `"enabled": false`.
 - `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values, and the folder take the
   value of the environment variable `NAME`. An empty value takes the default.
-- yuke starts stdio servers only. An entry with a `url` fails with a message.
+- yuke starts stdio servers only. An entry with a `url` fails with a notice, and the other entries still start.
 - Each tool of a server is a deferred tool named `mcp__<server>__<tool>`. A name over 64 characters, or a name that an
   earlier tool has, ends in a hash.
 - The system prompt of each turn names each deferred tool in a `deferred_tools` section, so the model knows what

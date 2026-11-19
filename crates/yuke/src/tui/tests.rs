@@ -116,8 +116,8 @@ async fn started(place: &Place, display: &Arc<Display>) -> App {
 /// [`started`] with `session` as the session of the startup.
 async fn started_on(place: &Place, display: &Arc<Display>, session: Option<SessionId>) -> App {
     let startup = Startup {
-        cwd: "/work".to_owned(),
-        session,
+        folder: "/work".to_owned(),
+        session_id: session,
         version: env!("YUKE_VERSION").to_owned(),
     };
     let machine = crate::app::Machine {
@@ -241,7 +241,7 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
     config(r#""no""#);
     let (display, output) = display();
     let mut app = started(&place, &display).await;
-    output.contains("plugin bar did not load").await;
+    output.contains("Plugin bar did not load").await;
     assert!(
         output.rows().iter().all(|row| !row.contains("marked")),
         "{:?}",
@@ -254,7 +254,7 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
 
     config(r#""no""#);
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    output.contains("plugin bar did not load").await;
+    output.contains("Plugin bar did not load").await;
     assert!(
         output.rows().iter().all(|row| !row.contains("marked")),
         "{:?}",
@@ -276,7 +276,7 @@ async fn saved_session(place: &Place) -> SessionId {
                     model: "MiniMax-M3".to_owned(),
                 },
                 settings: yuke_ai::RequestSettings::new(),
-                cwd: place.work.clone(),
+                folder: place.work.clone(),
             },
             None,
         )
@@ -320,7 +320,9 @@ async fn the_startup_gives_the_folder_the_session_and_the_version_of_the_start()
     let app = started_on(&place, &display, Some(id)).await;
     let version = env!("YUKE_VERSION");
     output
-        .shows(&format!(r#"{{"cwd":"/work","session":"{id}","version":"{version}"}}"#))
+        .shows(&format!(
+            r#"{{"folder":"/work","sessionId":"{id}","version":"{version}"}}"#
+        ))
         .await;
     app.shutdown().await;
 }

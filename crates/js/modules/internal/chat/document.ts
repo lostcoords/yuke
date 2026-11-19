@@ -1,5 +1,5 @@
 /**
- * `ChatDocument` of `yuke:chat`: one item for each entry of a transcript, with its folds, and one item after them for a
+ * `ChatDocument`: one item for each entry of a transcript, with its folds, and one item after them for a
  * failure of the running turn. An input without content and a tool search that does not fail have no item. An item
  * stays the same object while its entry, its fold, and its shown duration stay, so the view keeps its rows.
  */
@@ -27,6 +27,18 @@ interface Cached {
   readonly markdown: Markdown | undefined;
 }
 
+/**
+ * The default look of a conversation, as a text document for a `TextView`: user messages, Markdown answers, thoughts
+ * and tool calls that fold, diffs, and the failure of a running turn. Thoughts and tools start folded. The head line
+ * of a running tool shows its duration at the last `project` call. One document serves one session: fold choices go by
+ * entry id, so make a new document when the session changes.
+ *
+ * ```ts
+ * const document = new ChatDocument(`session:${id}`);
+ * const view = new TextView({ document: document.project(chat.transcript) });
+ * chat.addChangeListener(() => view.setDocument(document.project(chat.transcript)));
+ * ```
+ */
 export class ChatDocument implements ChatPresentation {
   /** The fold choices of the pane: `true` is open. An entry without a choice has its default. */
   readonly #folds: Map<string, boolean>;
@@ -35,17 +47,20 @@ export class ChatDocument implements ChatPresentation {
   #document: TextDocument;
 
   /** The document `id` with the fold choices `folds`. */
+  /** The document `id` with the fold choices `folds`: `true` is open. */
   constructor(id: string, folds: Iterable<readonly [string, boolean]> = []) {
     this.#folds = new Map(folds);
     this.#document = Object.freeze({ id, items: [] });
   }
 
   /** The fold choices, for the snapshot of the pane. */
+  /** The fold choices, for a saved state. */
   get folds(): [string, boolean][] {
     return [...this.#folds];
   }
 
   /** Open or fold the entry `id`, a tool or a thought with text to show. Return `false` when that entry has no fold. */
+  /** Open or fold the entry `id`, a tool or a thought with text. `false` when that entry has no fold. */
   toggle(transcript: Transcript, id: string): boolean {
     const entry = transcript.entries.find((candidate) => candidate.id === id);
     if (entry === undefined || !(entry.kind === "tool" || (entry.kind === "reasoning" && hasText(entry)))) {
@@ -56,12 +71,14 @@ export class ChatDocument implements ChatPresentation {
   }
 
   /** Open each shown tool when one of them is folded. Otherwise, fold each one. A later tool starts folded. */
+  /** Open each loaded tool when one of them is folded. Otherwise, fold each one. A later tool starts folded. */
   toggleTools(transcript: Transcript): void {
     const tools = transcript.entries.filter((entry) => entry.kind === "tool" && shown(entry));
     const open = tools.some((entry) => !this.#open(entry));
     for (const entry of tools) this.#folds.set(entry.id, open);
   }
 
+  /** The document of `transcript`. The same document object comes back while no item changed. */
   /** The document of `transcript`. The same document object comes back while no item changed. */
   project(transcript: Transcript): TextDocument {
     const cache = new Map<string, Cached>();

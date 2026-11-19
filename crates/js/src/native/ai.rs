@@ -8,7 +8,7 @@ use std::rc::Rc;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object};
 use serde_json::{Map, Value};
 use yuke_ai::{Block, FinishReason, RequestSettings, ToolDefinition, Usage};
-use yuke_engine::{CancellationToken, Model, chain_text};
+use yuke_engine::{CancellationToken, ModelAccess, chain_text};
 use yuke_protocol::{ModelReference, SessionId};
 
 use super::{Cancelled, Operation};
@@ -86,7 +86,7 @@ fn completion(
 /// What a side request of a round repeats: the request of the round and its context.
 #[derive(Debug)]
 pub(crate) struct Round {
-    pub(crate) model: Model,
+    pub(crate) model: ModelAccess,
     pub(crate) system: String,
     pub(crate) tools: Vec<ToolDefinition>,
     pub(crate) settings: RequestSettings,

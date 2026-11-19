@@ -9,7 +9,6 @@ use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use yuke_agent::{EventPage, NewestTurn, PromptSection};
@@ -242,10 +241,8 @@ pub(crate) fn commit_body(commit: &Commit<'_>, consumed: &[ConsumedInput]) -> se
 /// The line of event `seq` with the fields `body`, a JSON object. The `at` field holds the millisecond of the write,
 /// so a reader of the file, such as `jq`, sees when each event came. The store does not read it.
 pub(crate) fn line(seq: u64, body: &[u8]) -> Vec<u8> {
-    // A clock before 1970 writes 0. No ordering depends on this value.
-    let at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs() * 1000 + u64::from(since.subsec_millis()));
+    // No ordering depends on this value.
+    let at = u64::try_from(crate::since_epoch().as_millis()).unwrap_or(u64::MAX);
     let mut line = format!("{{\"seq\":{seq},\"at\":{at},").into_bytes();
     line.extend_from_slice(body.get(1..).unwrap_or_default());
     line.push(b'\n');

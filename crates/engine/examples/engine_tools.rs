@@ -50,7 +50,7 @@ impl Timer for TokioTimer {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("MINIMAX_API_KEY")?;
-    let model = yuke_engine::Model {
+    let model = yuke_engine::ModelAccess {
         target: yuke_ai::catalog::resolve("minimax/MiniMax-M3")?,
         source: std::sync::Arc::new(yuke_ai::Credential::ApiKey(key.into())),
         context_window: None,

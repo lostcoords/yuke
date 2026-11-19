@@ -10,8 +10,9 @@ use yuke_protocol::{
     ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId, InputKind, InputRemoved,
     InputSource, InteractionClosed, InteractionId, InteractionRequested, InteractionResponse, Job, JobUpdate,
     ListCatalogResult, ListPluginsResult, ListSessionsParams, ListSessionsResult, LiveUpdate, LoginId, LoginOutcome,
-    LoginResult, McpServer, ModelReference, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState,
-    SessionTitle, SessionUpdate, SetApiKeyParams, StateUpdate, StoredEvent, SyncPluginsResult,
+    LoginResult, McpServer, McpServerSource, McpServerState, ModelReference, SessionId, SessionRow, SessionSettings,
+    SessionSnapshot, SessionState, SessionTitle, SessionUpdate, SetApiKeyParams, StateUpdate, StoredEvent,
+    SyncPluginsResult,
 };
 
 use super::{evaluate, folder, load_entry, options, write};
@@ -88,7 +89,7 @@ impl crate::SessionHost for Scripted {
     fn parent(&self) -> Option<SessionId> {
         None
     }
-    fn cwd(&self) -> PathBuf {
+    fn folder(&self) -> PathBuf {
         self.folder.clone()
     }
     fn is_closed(&self) -> bool {
@@ -130,7 +131,7 @@ impl crate::SessionHost for Scripted {
     ) -> Result<serde_json::Value, crate::RequestFailure> {
         Err(crate::RequestFailure::NoClient)
     }
-    fn model(&self, _: &ModelReference) -> Result<yuke_engine::Model, SessionsError> {
+    fn model(&self, _: &ModelReference) -> Result<yuke_engine::ModelAccess, SessionsError> {
         Err("unused".into())
     }
     fn settings(&self) -> SessionSettings {
@@ -145,7 +146,7 @@ fn settings() -> SessionSettings {
             model: "MiniMax-M3".to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: PathBuf::from("/work"),
+        folder: PathBuf::from("/work"),
     }
 }
 
@@ -271,11 +272,16 @@ impl Sessions for Scripted {
     fn jobs(&self, _: SessionId) -> Result<Vec<Job>, SessionsError> {
         Ok(Vec::new())
     }
-    async fn stop_job(&self, _: SessionId, _: &str) -> Result<(), SessionsError> {
+    async fn stop_job(&self, id: SessionId, job: &str) -> Result<(), SessionsError> {
+        self.record(format!("stop job {id} {job}"));
         Ok(())
     }
     fn mcp_servers(&self, _: SessionId) -> Result<Vec<McpServer>, SessionsError> {
-        Ok(Vec::new())
+        Ok(vec![McpServer {
+            name: "git".to_owned(),
+            source: McpServerSource::User,
+            state: McpServerState::Connected { tools: 3 },
+        }])
     }
     async fn close(&self, id: SessionId) -> Result<(), SessionsError> {
         self.record(format!("close {id}"));
@@ -478,7 +484,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
                delivering = true;
                if (event.kind === 'update') {{
                  updates.push(event.update.kind === 'state' ? event.update.state : 'follow-up');
-                 if (!called) {{ called = true; handle.cancel(); }}
+                 if (!called) {{ called = true; handle.cancelTurn(); }}
                }}
                delivering = false;
              }} }});",
@@ -503,6 +509,35 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
     expected.push("follow-up");
     assert_eq!(all, expected);
     assert!(!recursed);
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_handle_stops_a_job_and_lists_the_mcp_servers_of_its_session() {
+    let scripted = Rc::new(Scripted::default());
+    let runtime = started(
+        "a_handle_stops_a_job_and_lists_the_mcp_servers_of_its_session",
+        &scripted,
+    )
+    .await;
+
+    open(&runtime, "undefined").await;
+    let servers = evaluate::<String>(
+        &runtime,
+        "await handle.stopJob('explorer'); return JSON.stringify(handle.mcpServers());",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        servers,
+        r#"[{"name":"git","source":"user","state":{"kind":"connected","tools":3}}]"#
+    );
+    let stops: Vec<String> = scripted
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("stop job"))
+        .collect();
+    assert_eq!(stops, [format!("stop job {} explorer", session())]);
 }
 
 #[tokio::test(flavor = "local")]
@@ -628,7 +663,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              const removed = await handle.removeInput(input);
              await handle.sendMessage({{ content: [{{ kind: 'userText', text: 'Review @main.rs' }}], modelContent: [{{ kind: 'userText', text: 'Review main.rs.' }}] }});
              await handle.notifyModel({{ display: 'shown', text: 'told' }});
-             handle.cancel();
+             handle.cancelTurn();
              handle.moveJobsToBackground();
              await sessions.rename(id, '  renamed   session ');
              await sessions.fork(id);

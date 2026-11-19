@@ -120,7 +120,7 @@ pub struct CallDisplay {
     pub hints: ToolHints,
     /// The working folder of the call. A relative path of the call starts there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
+    pub folder: Option<String>,
 }
 
 /// The display of one tool result of a commit.

@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use yuke_ai::scripted::{ScriptedTransport, overloaded_reply, text_reply, tool_reply};
 use yuke_ai::{AnthropicWire, Block, Content, FinishReason, Request, RequestSettings, Target, ToolDefinition, Wire};
 use yuke_engine::NoWait;
-use yuke_engine::{CancellationToken, Driver, Hooks, Model, RoundPlan, RoundStart, Toolset};
+use yuke_engine::{CancellationToken, Driver, Hooks, ModelAccess, RoundPlan, RoundStart, Toolset};
 use yuke_testing::{definition, model, model_of, target};
 
 use crate::support::{Recorder, Script, block_on};
 
 /// The model, the settings, the system prompt, the tools, and the context of the newest round start.
-type Start = (Model, RequestSettings, String, Vec<ToolDefinition>, Vec<Block>);
+type Start = (ModelAccess, RequestSettings, String, Vec<ToolDefinition>, Vec<Block>);
 
 /// Keeps the newest round start.
 #[derive(Default)]

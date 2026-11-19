@@ -154,7 +154,7 @@ export interface ToolContext {
    * The workspace folder of the call: the folder of the session at the start of the call. Relative paths and commands
    * start here.
    */
-  readonly cwd: string;
+  readonly folder: string;
   /**
    * Aborts when the turn cancels the call, and when the call ends. The reason is a `DOMException` named `AbortError`.
    * After a cancel, the host still waits until `execute` settles. Its result goes into the context of the session, and

@@ -38,8 +38,8 @@ export function defineTool<const S extends ObjectSchema>(
   };
   return register(description, (request) =>
     hostOperation(async (signal, abort) => {
-      const { arguments: args, sessionId, callId, cwd, output, call } = request;
-      const context: ToolContext = { sessionId, callId, cwd, signal, output, jobs: jobsOf(signal) };
+      const { arguments: args, sessionId, callId, folder, output, call } = request;
+      const context: ToolContext = { sessionId, callId, folder, signal, output, jobs: jobsOf(signal) };
       bindCall(context, call);
       try {
         return answerOf(await execute(checkArguments(inputSchema, args) as Infer<S>, context));

@@ -77,10 +77,15 @@ fn the_frontmatter_takes_plain_quoted_and_block_values() {
         }
     );
     assert_eq!(
-        fields("---\r\ndescription: \"Say \\\"hi\\\"\\tnow \\u00e9\"\r\n---\r\n")
+        fields("---\r\ndescription: \"Say \\\"hi\\\"\\tnow\\n\\\\\"\r\n---\r\n")
             .description
             .unwrap(),
-        "Say \"hi\"\tnow \u{e9}"
+        "Say \"hi\"\tnow\n\\"
+    );
+    // An escape that yuke does not know keeps the raw text of the value.
+    assert_eq!(
+        fields("---\ndescription: \"caf\\u00e9\"\n---\n").description.unwrap(),
+        "\"caf\\u00e9\""
     );
     assert_eq!(
         fields("---\ndescription: 'It''s fine'\n---\n").description.unwrap(),
@@ -118,14 +123,9 @@ fn each_bad_skill_is_skipped_with_its_reason() {
             "the description is missing",
         ),
         (
-            "upper",
-            skill_file("Upper", "A skill."),
-            "the name 'Upper' has a character other than a-z, 0-9, and -",
-        ),
-        (
-            "dashes",
-            skill_file("a--b", "A skill."),
-            "the name 'a--b' starts or ends with -, or holds --",
+            "nameless",
+            "---\nname:\ndescription: A skill.\n---\n".to_owned(),
+            "the name is missing",
         ),
         (
             "long",
@@ -149,22 +149,16 @@ fn each_bad_skill_is_skipped_with_its_reason() {
 }
 
 #[test]
-fn a_name_that_differs_from_its_folder_loads_with_a_warning_and_no_name_takes_the_folder_name() {
+fn a_name_is_free_text_and_no_name_takes_the_folder_name() {
     let root = folder("names");
     let skills = root.join("skills");
-    let twin = write(&skills, "twin", &skill_file("alpha", "A skill."));
+    write(&skills, "twin", &skill_file("Alpha & Co", "A skill."));
     write(&skills, "plain", "---\ndescription: No name.\n---\n");
 
     let catalog = catalog(&[skills]);
 
-    assert_eq!(named(&catalog), [("alpha", "A skill."), ("plain", "No name.")]);
-    assert_eq!(
-        catalog.warnings,
-        [format!(
-            "The skill at {} has the name 'alpha', which is not the name of its folder",
-            twin.display()
-        )]
-    );
+    assert_eq!(named(&catalog), [("Alpha & Co", "A skill."), ("plain", "No name.")]);
+    assert_eq!(catalog.warnings, Vec::<String>::new());
 }
 
 #[test]

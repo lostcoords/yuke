@@ -357,7 +357,7 @@ fn a_commit_reads_back_from_its_json() {
                             }),
                             preview: Preview::None,
                         },
-                        cwd: Some("/repo".to_owned()),
+                        folder: Some("/repo".to_owned()),
                     }],
                     results: vec![ResultDisplay {
                         block_index: 1,
@@ -373,7 +373,7 @@ fn a_commit_reads_back_from_its_json() {
                 },
                 ..Commit::blocks(&[][..])
             },
-            r#"{"blocks":[],"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"cwd":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}],"durationMs":40}]}}"#,
+            r#"{"blocks":[],"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"folder":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}],"durationMs":40}]}}"#,
         ),
     ];
     for (commit, json) in cases {

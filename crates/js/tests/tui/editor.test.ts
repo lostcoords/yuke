@@ -134,7 +134,7 @@ test("a frame shows the prompt, the text, a label, the selection, and the cursor
   surface.tui.widgets.addWatcher((mount) => {
     const extension = mount.widget.extend(mount.signal);
     extension.setAppearance({ cursorShape: "block" });
-    return () => extension.dispose();
+    return () => extension.close();
   });
   const cells = frame.draw().cells[1];
   assertEquals(row(cells, 1, 11), "> hi [p]  ");

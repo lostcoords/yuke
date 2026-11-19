@@ -19,8 +19,8 @@ pub use auth::{
     CancelLoginParams, LoginFinishedParams, LoginOutcome, LoginParams, LoginResult, LogoutParams, SetApiKeyParams,
 };
 pub use catalog::{
-    ListCatalogParams, ListCatalogResult, Modality, ModelInfo, PriceBand, ProviderCredential, ProviderInfo,
-    ProviderState, ReasoningChoice, ReasoningLevel,
+    ListCatalogParams, ListCatalogResult, ModelInfo, ProviderCredential, ProviderInfo, ProviderState, ReasoningChoice,
+    ReasoningSelection,
 };
 pub use event::{CommitEvent, SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, JobId, LoginId, SessionId};
@@ -45,7 +45,7 @@ pub use plugin::{
     PluginChange, PluginLoad, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget, RemovePluginParams,
     SyncPluginsResult,
 };
-pub use session::{InvalidSessionTitle, ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle};
+pub use session::{ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle, SessionTitleError};
 pub use update::{
     BlockPosition, BlockStarted, BlockStopped, DraftCommitted, DraftDiscardReason, DraftDiscarded, DraftModelUpdate,
     DraftStarted, InputAccepted, InputRemoved, InteractionClosed, InteractionRequested, JobUpdate, LiveUpdate,

@@ -157,7 +157,7 @@ const session: PluginSession = async (scope) => {
 // @ts-expect-error: a cleanup is a function.
 const valued: PluginSession = () => 5;
 const plain: PluginSession = async (scope) => {
-  await Promise.resolve(scope.cwd);
+  await Promise.resolve(scope.folder);
 };
 const quiet: PluginSession = (scope) => {
   scope.notify("info", "x");
@@ -207,17 +207,17 @@ export async function drive(sessions: Sessions): Promise<void> {
 // `yuke:fs` takes a base folder and a signal, and its failure has a code.
 async function files(): Promise<void> {
   const fs = await import("yuke:fs");
-  const text: string = await fs.readTextFile("state.json", { cwd: ctx.dataDir, signal: ctx.signal });
-  const bytes: Uint8Array = await fs.readFile("data.bin", { cwd: ctx.dataDir, position: 0, length: 4 });
+  const text: string = await fs.readTextFile("state.json", { folder: ctx.dataDir, signal: ctx.signal });
+  const bytes: Uint8Array = await fs.readFile("data.bin", { folder: ctx.dataDir, position: 0, length: 4 });
   // A module finds the files beside it through `import.meta`. A built-in module has no folder.
   const here: string | undefined = import.meta.dirname;
   // @ts-expect-error: `dirname` can be undefined.
   const folder: string = import.meta.dirname;
   const url: string = import.meta.url;
-  const info: Date | null = (await fs.stat("prompt.md", { cwd: here ?? ctx.dataDir })).mtime;
-  await fs.writeTextFile("state.json", text, { cwd: ctx.dataDir, atomic: true, mode: 0o600 });
+  const info: Date | null = (await fs.stat("prompt.md", { folder: here ?? ctx.dataDir })).mtime;
+  await fs.writeTextFile("state.json", text, { folder: ctx.dataDir, atomic: true, mode: 0o600 });
   // @ts-expect-error: the data of `writeFile` is bytes.
-  await fs.writeFile("data.bin", "text", { cwd: ctx.dataDir });
+  await fs.writeFile("data.bin", "text", { folder: ctx.dataDir });
   void bytes;
   void info;
   void folder;
@@ -325,9 +325,9 @@ const remove: () => void = s.addHook("prompt.build", (event) => {
   return { sections: { ...event.sections, rules: "Be brief." } };
 });
 remove();
-s.addHook("prompt.build", async ({ sections }): Promise<PromptBuildAnswer> => {
+s.addHook("prompt.build", async (event): Promise<PromptBuildAnswer> => {
   await Promise.resolve();
-  const { environment: _, ...rest } = sections;
+  const { environment: _, ...rest } = event.sections;
   return { sections: rest };
 });
 // @ts-expect-error: an answer is an object.
@@ -347,22 +347,22 @@ s.addHook("tool.before", (event) => {
   if (event.call.name === "exec") return { deny: "exec needs the user" };
   return undefined;
 });
-s.addHook("tool.before", async ({ call }): Promise<ToolBeforeAnswer | undefined> => {
+s.addHook("tool.before", async (event): Promise<ToolBeforeAnswer | undefined> => {
   await Promise.resolve();
-  return call.callId === "" ? { deny: "no id" } : undefined;
+  return event.call.callId === "" ? { deny: "no id" } : undefined;
 });
 // @ts-expect-error: a denial names its reason as a string.
 s.addHook("tool.before", () => ({ deny: true }));
 
 // A `tool.after` handler gets the call and the result, and answers the changed fields or nothing.
-s.addHook("tool.after", ({ call, result }) => {
-  assert<Equal<typeof result, ToolCallResult>>();
+s.addHook("tool.after", (event) => {
+  assert<Equal<typeof event.result, ToolCallResult>>();
   // @ts-expect-error: a handler changes the result through its answer.
-  result.text = "";
-  if (call.name !== "read") return undefined;
+  event.result.text = "";
+  if (event.call.name !== "read") return undefined;
   return {
-    text: result.text.slice(0, 100),
-    media: [...result.media.slice(1), { mimeType: "image/png", path: "a.png" }],
+    text: event.result.text.slice(0, 100),
+    media: [...event.result.media.slice(1), { mimeType: "image/png", path: "a.png" }],
   };
 });
 s.addHook("tool.after", async (): Promise<ToolAfterAnswer | undefined> => {
@@ -372,8 +372,8 @@ s.addHook("tool.after", async (): Promise<ToolAfterAnswer | undefined> => {
 // An optional field takes `undefined` as missing, as the runtime does.
 declare const maybe: boolean | undefined;
 s.addHook("tool.after", () => ({ text: undefined, isError: maybe, media: undefined }));
-s.addHook("tool.after", ({ result }) => ({
-  media: [{ id: "0", mimeType: undefined, size: undefined }, ...result.media],
+s.addHook("tool.after", (event) => ({
+  media: [{ id: "0", mimeType: undefined, size: undefined }, ...event.result.media],
 }));
 s.tools.add({
   name: "maybe",
@@ -384,7 +384,7 @@ s.tools.add({
   execute: () => ({ text: "x", isError: maybe, media: undefined }),
 });
 // A copy of an item keeps it, and so does its id alone.
-s.addHook("tool.after", ({ result }) => ({ media: [...result.media.map((item) => ({ ...item })), { id: "ab" }] }));
+s.addHook("tool.after", (event) => ({ media: [...event.result.media.map((item) => ({ ...item })), { id: "ab" }] }));
 // @ts-expect-error: an answer has no field outside text, isError, and media.
 s.addHook("tool.after", () => ({ content: "x" }));
 const mixed = { id: "ab", mimeType: "image/png", bytes: new Uint8Array() };
@@ -411,9 +411,9 @@ s.addHook("round.before", () => ({ replace: { head: [{ text: "x" }], keep: 0 } }
 s.addHook("round.before", () => ({ model: { model: "x" } }));
 
 // A round.after handler reads the reason and the count, and answers a stop or a continue.
-s.addHook("round.after", ({ finishReason, continues }): RoundAfterAnswer | undefined => {
-  if (finishReason === undefined) return undefined;
-  return continues < 3 ? { continue: "Run the tests." } : { stop: true };
+s.addHook("round.after", (event): RoundAfterAnswer | undefined => {
+  if (event.finishReason === undefined) return undefined;
+  return event.continues < 3 ? { continue: "Run the tests." } : { stop: true };
 });
 // @ts-expect-error: an answer is a stop or a continue, not both.
 s.addHook("round.after", () => ({ stop: true, continue: "x" }));

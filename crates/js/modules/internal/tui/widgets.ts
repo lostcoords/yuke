@@ -29,11 +29,38 @@ export interface WidgetHost {
 
 type KeyPhase = "beforeDefault" | "beforeKeymap";
 
+/** A value that the newest `set` gives. The remover of a `set` takes only its own value away, so the one before shows. */
+class Layers<T> {
+  readonly #entries: { readonly value: T }[] = [];
+  readonly #none: T;
+
+  constructor(none: T) {
+    this.#none = none;
+  }
+
+  get value(): T {
+    return this.#entries.at(-1)?.value ?? this.#none;
+  }
+
+  /** Add a layer of `value`. The remover gives `true` when it changed the value that shows. */
+  set(value: T): () => boolean {
+    const entry = { value };
+    this.#entries.push(entry);
+    return () => {
+      const at = this.#entries.indexOf(entry);
+      if (at < 0) return false;
+      const shown = this.#entries.at(-1) === entry;
+      this.#entries.splice(at, 1);
+      return shown;
+    };
+  }
+}
+
 /** The part of one extension, and its dispose. */
 interface Part<P> {
-  contexts: readonly string[];
-  appearance: TextAppearance;
-  decorations: readonly Decoration<P>[];
+  readonly contexts: Layers<readonly string[]>;
+  readonly appearance: Layers<TextAppearance>;
+  readonly decorations: Layers<readonly Decoration<P>[]>;
   disposed: boolean;
   dispose: () => void;
 }
@@ -75,9 +102,9 @@ export class TextSupport<P, E> {
   /** A new extension. The abort of `signal` disposes it. With an aborted signal, each call of it does nothing. */
   extend(signal: AbortSignal): TextExtension<P, E> {
     const part: Part<P> = {
-      contexts: [],
-      appearance: {},
-      decorations: [],
+      contexts: new Layers([]),
+      appearance: new Layers({}),
+      decorations: new Layers([]),
       disposed: signal.aborted,
       dispose: () => {
         if (part.disposed) return;
@@ -90,7 +117,7 @@ export class TextSupport<P, E> {
         removeWhere(this.#mice, ours);
         removeWhere(this.#pastes, ours);
         removeWhere(this.#listeners, ours);
-        if (part.contexts.length > 0) this.#host?.contextsChanged();
+        if (part.contexts.value.length > 0) this.#host?.contextsChanged();
         this.#host?.requestFrame();
       },
     };
@@ -104,22 +131,35 @@ export class TextSupport<P, E> {
       list.push(handler);
       return () => removeWhere(list, (entry) => entry === handler);
     };
-    return Object.freeze({
-      setContexts: (atoms: readonly string[]): void => {
-        if (part.disposed) return;
-        part.contexts = Object.freeze([...atoms]);
+    return {
+      setContexts: (atoms: readonly string[]): (() => void) => {
+        if (part.disposed) return () => {};
+        const remove = part.contexts.set(Object.freeze([...atoms]));
         this.#host?.contextsChanged();
         this.#host?.requestFrame();
+        return () => {
+          if (part.disposed || !remove()) return;
+          this.#host?.contextsChanged();
+          this.#host?.requestFrame();
+        };
       },
-      setAppearance: (appearance: TextAppearance): void => {
-        if (part.disposed) return;
-        part.appearance = Object.freeze({ ...appearance });
+      setAppearance: (appearance: TextAppearance): (() => void) => {
+        if (part.disposed) return () => {};
+        const remove = part.appearance.set(Object.freeze({ ...appearance }));
         this.#host?.requestFrame();
+        return () => {
+          if (!part.disposed && remove()) this.#host?.requestFrame();
+        };
       },
-      setDecorations: (decorations: readonly Decoration<P>[]): void => {
-        if (part.disposed) return;
-        part.decorations = Object.freeze(decorations.map((decoration) => Object.freeze({ ...decoration })));
+      setDecorations: (decorations: readonly Decoration<P>[]): (() => void) => {
+        if (part.disposed) return () => {};
+        const remove = part.decorations.set(
+          Object.freeze(decorations.map((decoration) => Object.freeze({ ...decoration }))),
+        );
         this.#host?.requestFrame();
+        return () => {
+          if (!part.disposed && remove()) this.#host?.requestFrame();
+        };
       },
       addKeyHandler: (handler: (event: KeyEvent) => boolean, phase: KeyPhase = "beforeDefault"): (() => void) => {
         return add(this.#keys[phase], handler);
@@ -127,8 +167,8 @@ export class TextSupport<P, E> {
       addMouseHandler: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler),
       addPasteHandler: (handler: (event: PasteEvent) => boolean): (() => void) => add(this.#pastes, handler),
       addChangeListener: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener),
-      dispose: part.dispose,
-    });
+      close: part.dispose,
+    };
   }
 
   /** Ask the core for a frame after a change of the widget. Before the widget is placed, do nothing. */
@@ -143,17 +183,17 @@ export class TextSupport<P, E> {
 
   /** The context atoms of the extensions, in the order of the extensions. */
   contexts(): string[] {
-    return this.#parts.flatMap((part) => part.contexts);
+    return this.#parts.flatMap((part) => part.contexts.value);
   }
 
   /** `base` with the fields of each extension over it, the newest last. */
   appearance(base: TextAppearance = {}): TextAppearance {
-    return Object.assign({}, base, ...this.#parts.map((part) => part.appearance));
+    return Object.assign({}, base, ...this.#parts.map((part) => part.appearance.value));
   }
 
   /** The decorations of the extensions, the newest last, so a widget that draws them in order lets the newest win. */
   decorations(): Decoration<P>[] {
-    return this.#parts.flatMap((part) => part.decorations);
+    return this.#parts.flatMap((part) => part.decorations.value);
   }
 
   /** Give a key to the handlers of `phase`, the newest first. `true` when one takes it. */
@@ -283,12 +323,12 @@ export class PlacedWidgets {
       const found = registered.get(entry.view);
       if (found === undefined || this.#mounted.has(entry.view)) continue;
       const controller = new AbortController();
-      const mount = Object.freeze({
+      const mount = {
         widget: found.widget,
         pane: entry.pane,
         group: found.support.group,
         signal: controller.signal,
-      });
+      };
       this.#mounted.set(entry.view, { mount, controller, layer: entry.layer });
       added.push(mount);
     }

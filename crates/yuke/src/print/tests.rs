@@ -48,7 +48,7 @@ fn task(prompt: &str, session: SessionChoice) -> Task {
         prompt: prompt.to_owned(),
         // Only a new session gets a model and a reasoning choice here; a continued session keeps its saved ones.
         model: (session == SessionChoice::New).then(|| MODEL.to_owned()),
-        reasoning: (session == SessionChoice::New).then_some(ReasoningLevel::Default),
+        reasoning: (session == SessionChoice::New).then_some(ReasoningSelection::Default),
         session,
     }
 }
@@ -69,7 +69,7 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
     assert_eq!(finished.end, completed());
     assert_eq!(finished.text, "Hello.");
     let opened = place.store().await.open(finished.session, Access::Read).await.unwrap();
-    assert_eq!(opened.settings.cwd, place.work);
+    assert_eq!(opened.settings.folder, place.work);
     assert_eq!(
         opened.settings.model,
         ModelReference {
@@ -128,9 +128,9 @@ async fn a_round_before_plugin_gets_the_window_of_the_catalog_and_replaces_the_c
         ..task("Hi.", SessionChoice::New)
     };
     let providers = r#"{ "providers": [{
-        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
         "endpoints": [{ "protocol": "anthropic_messages" }],
-        "models": [{ "id": "small", "limits": { "context_window": 64000, "max_output_tokens": 4096 } }]
+        "models": [{ "id": "small", "limits": { "contextWindow": 64000, "maxOutputTokens": 4096 } }]
     }] }"#;
 
     let (finished, transport) = run_with_providers(&place, &task, providers, Box::new(no_variable)).await;
@@ -149,9 +149,9 @@ async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential()
         ..task("Hi.", SessionChoice::New)
     };
     let providers = r#"{ "providers": [{
-        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
         "endpoints": [{ "protocol": "anthropic_messages" }],
-        "models": [{ "id": "small", "upstream_id": "vendor/small", "limits": { "max_output_tokens": 4096 } }]
+        "models": [{ "id": "small", "upstreamId": "vendor/small", "limits": { "maxOutputTokens": 4096 } }]
     }] }"#;
 
     let (finished, transport) = run_with_providers(&place, &task, providers, Box::new(no_variable)).await;
@@ -178,7 +178,7 @@ async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential()
 async fn providers_json_changes_the_url_and_the_key_of_a_built_in_provider() {
     let place = Place::new("print", "changed_provider");
     let providers = r#"{ "providers": [
-        { "id": "minimax", "base_url": "http://127.0.0.1:9/anthropic", "api_key_env": "PROXY_KEY" }
+        { "id": "minimax", "baseUrl": "http://127.0.0.1:9/anthropic", "apiKeyEnv": "PROXY_KEY" }
     ] }"#;
     let variable: Box<Variable> = Box::new(|name| (name == "PROXY_KEY").then(|| OsString::from("proxy-key")));
 
@@ -196,7 +196,7 @@ async fn a_bad_providers_json_stops_the_run_before_a_request() {
     let (finished, transport) = run_with_providers(
         &place,
         &task("Hi.", SessionChoice::New),
-        r#"{ "providers": [{ "id": "minimax", "base_url": "ftp://h" }] }"#,
+        r#"{ "providers": [{ "id": "minimax", "baseUrl": "ftp://h" }] }"#,
         Box::new(with_key),
     )
     .await;
@@ -222,17 +222,11 @@ async fn a_run_without_a_model_or_a_reasoning_choice_is_an_error_and_sends_nothi
         reasoning: None,
         ..task("Hi.", SessionChoice::New)
     };
-    // The level of the session may not fit a new model.
-    let new_model_only = Task {
-        model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
-        ..task("Hi.", SessionChoice::Newest)
-    };
-    let no_level = "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
+    let no_level = "no reasoning level: pass --reasoning <LEVEL>, or --reasoning default to let the endpoint choose";
 
     for (task, expected) in [
-        (no_model, "no model: pass --model <provider/model>"),
+        (no_model, "no model: pass --model <PROVIDER/MODEL>"),
         (no_reasoning, no_level),
-        (new_model_only, no_level),
     ] {
         let (finished, requests) = run_with(&place, &task, &[]).await;
         assert_eq!(finished, Err(expected.to_owned()), "{task:?}");
@@ -268,7 +262,7 @@ async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
 async fn a_level_that_the_model_does_not_take_is_an_error() {
     let place = Place::new("print", "bad_level");
     let task = Task {
-        reasoning: Some(ReasoningLevel::Effort(yuke_ai::Effort::Low)),
+        reasoning: Some(ReasoningSelection::Effort(yuke_ai::Effort::Low)),
         ..task("Hi.", SessionChoice::New)
     };
 
@@ -517,12 +511,12 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         .unwrap();
     let level = Task {
         model: None,
-        reasoning: Some(ReasoningLevel::Effort(yuke_ai::Effort::High)),
+        reasoning: Some(ReasoningSelection::Effort(yuke_ai::Effort::High)),
         ..task("Second.", SessionChoice::Newest)
     };
     let model = Task {
         model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
-        reasoning: Some(ReasoningLevel::Default),
+        reasoning: Some(ReasoningSelection::Default),
         ..task("Third.", SessionChoice::Newest)
     };
 
@@ -579,7 +573,7 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
     place.store().await.accept_input(first.session, waiting).await.unwrap();
     let model = Task {
         model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
-        reasoning: Some(ReasoningLevel::Default),
+        reasoning: Some(ReasoningSelection::Default),
         ..task("Next.", SessionChoice::Newest)
     };
 

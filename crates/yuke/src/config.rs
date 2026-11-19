@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::Path;
 
-use serde::de::{DeserializeOwned, Error as _};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use yuke_protocol::{PluginOrigin, PluginSource};
 
@@ -29,7 +29,8 @@ pub(crate) struct Config {
 }
 
 /// One item of `plugins`: a folder path, or an object with `path` or `git` and optional `options`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(from = "ConfigPluginForm")]
 pub(crate) struct ConfigPlugin {
     /// Where the plugin comes from.
     pub(crate) source: PluginOrigin,
@@ -51,46 +52,52 @@ pub(crate) fn git_source(url: String, folder: Option<&str>, reference: Option<St
     }
 }
 
-impl<'de> Deserialize<'de> for ConfigPlugin {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Full {
-            path: Option<String>,
-            git: Option<String>,
-            folder: Option<String>,
-            #[serde(rename = "ref")]
-            reference: Option<String>,
-            #[serde(default)]
-            options: Map<String, Value>,
-        }
-        match Value::deserialize(deserializer)? {
-            Value::String(path) => Ok(Self {
+/// The forms of one item of `plugins` in `config.json`. Serde cannot say which field of an object broke the rules, so
+/// the error lists the forms.
+#[derive(Deserialize)]
+#[serde(
+    untagged,
+    deny_unknown_fields,
+    expecting = "a plugin is a folder path or an object. An object has \"path\" or \"git\", and \"options\". A Git \
+                 object also takes \"folder\" and \"ref\""
+)]
+enum ConfigPluginForm {
+    Folder(String),
+    Path {
+        path: String,
+        #[serde(default)]
+        options: Map<String, Value>,
+    },
+    Git {
+        git: String,
+        folder: Option<String>,
+        #[serde(rename = "ref")]
+        reference: Option<String>,
+        #[serde(default)]
+        options: Map<String, Value>,
+    },
+}
+
+impl From<ConfigPluginForm> for ConfigPlugin {
+    fn from(form: ConfigPluginForm) -> ConfigPlugin {
+        match form {
+            ConfigPluginForm::Folder(path) => ConfigPlugin {
                 source: PluginOrigin::Folder(path),
                 options: Map::new(),
-            }),
-            // The error of serde names the bad field or the unknown field.
-            value @ Value::Object(_) => {
-                let full = Full::deserialize(value).map_err(D::Error::custom)?;
-                let source = match (full.path, full.git) {
-                    (Some(_), Some(_)) => return Err(D::Error::custom("a plugin has \"path\" or \"git\", not both")),
-                    (None, None) => return Err(D::Error::custom("a plugin needs \"path\" or \"git\"")),
-                    (Some(_), None) if full.folder.is_some() || full.reference.is_some() => {
-                        return Err(D::Error::custom(
-                            "\"folder\" and \"ref\" go with \"git\", not with \"path\"",
-                        ));
-                    }
-                    (Some(path), None) => PluginOrigin::Folder(path),
-                    (None, Some(url)) => PluginOrigin::Git(git_source(url, full.folder.as_deref(), full.reference)),
-                };
-                Ok(Self {
-                    source,
-                    options: full.options,
-                })
-            }
-            _ => Err(D::Error::custom(
-                "a plugin is a folder path or an object with \"path\" or \"git\"",
-            )),
+            },
+            ConfigPluginForm::Path { path, options } => ConfigPlugin {
+                source: PluginOrigin::Folder(path),
+                options,
+            },
+            ConfigPluginForm::Git {
+                git,
+                folder,
+                reference,
+                options,
+            } => ConfigPlugin {
+                source: PluginOrigin::Git(git_source(git, folder.as_deref(), reference)),
+                options,
+            },
         }
     }
 }
@@ -341,11 +348,14 @@ pub(crate) fn add_plugin_item(text: &str, item: &str) -> String {
 
 /// `text`, the text of `config.json`, without the item `index` of `plugins` and one comma beside it. An item on lines of
 /// its own goes with those lines and with a comment after it on its last line. The other comments and the layout stay.
-/// `None` when `plugins` has no such item.
-pub(crate) fn remove_plugin_item(text: &str, index: usize) -> Option<String> {
+///
+/// # Panics
+///
+/// Panics when `plugins` has no item `index`.
+pub(crate) fn remove_plugin_item(text: &str, index: usize) -> String {
     let blank = without_comments(text);
-    let (_, items) = places(&blank).plugins?;
-    let item = items.get(index)?.clone();
+    let (_, items) = places(&blank).plugins.unwrap_or_default();
+    let item = items[index].clone();
     // The comma after the item, else the comma before the last item.
     let comma = match items.get(index + 1) {
         Some(next) => blank[item.end..next.start].find(',').map(|at| item.end + at),
@@ -366,7 +376,7 @@ pub(crate) fn remove_plugin_item(text: &str, index: usize) -> Option<String> {
     for cut in cuts {
         text.replace_range(cut, "");
     }
-    Some(text)
+    text
 }
 
 #[cfg(test)]
@@ -420,19 +430,17 @@ mod tests {
                 .to_string()
         };
 
-        assert_eq!(
-            error(json!(1)),
-            "a plugin is a folder path or an object with \"path\" or \"git\""
-        );
-        assert_eq!(error(json!({ "options": {} })), "a plugin needs \"path\" or \"git\"");
-        assert_eq!(
-            error(json!({ "path": "./a", "git": "https://host/repo" })),
-            "a plugin has \"path\" or \"git\", not both"
-        );
-        assert_eq!(
-            error(json!({ "path": "./a", "ref": "main" })),
-            "\"folder\" and \"ref\" go with \"git\", not with \"path\""
-        );
+        let forms = "a plugin is a folder path or an object. An object has \"path\" or \"git\", and \"options\". A Git \
+                     object also takes \"folder\" and \"ref\"";
+        for plugin in [
+            json!(1),
+            json!({ "options": {} }),
+            json!({ "path": "./a", "git": "https://host/repo" }),
+            json!({ "path": "./a", "ref": "main" }),
+            json!({ "git": "https://host/repo", "fold": "a" }),
+        ] {
+            assert_eq!(error(plugin.clone()), forms, "{plugin}");
+        }
     }
 
     #[test]
@@ -492,12 +500,12 @@ mod tests {
             "{ \"plugins\": [\n    \"./a\", // the a plugin\n    // the b plugin\n    \"./b\", // last\n    {\"git\":\"https://h/r\"}\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(text, 0).as_deref(),
-            Some("{ \"plugins\": [\n    // the b plugin\n    \"./b\" // last\n  ] }")
+            remove_plugin_item(text, 0),
+            "{ \"plugins\": [\n    // the b plugin\n    \"./b\" // last\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(text, 1).as_deref(),
-            Some("{ \"plugins\": [\n    \"./a\" // the a plugin\n    // the b plugin\n  ] }")
+            remove_plugin_item(text, 1),
+            "{ \"plugins\": [\n    \"./a\" // the a plugin\n    // the b plugin\n  ] }"
         );
     }
 
@@ -506,19 +514,17 @@ mod tests {
         let text = "{ \"plugins\": [\n    \"./a\", // first\n    \"./b\",\n    \"./c\"\n  ] }";
 
         assert_eq!(
-            remove_plugin_item(text, 1).as_deref(),
-            Some("{ \"plugins\": [\n    \"./a\", // first\n    \"./c\"\n  ] }")
+            remove_plugin_item(text, 1),
+            "{ \"plugins\": [\n    \"./a\", // first\n    \"./c\"\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(text, 2).as_deref(),
-            Some("{ \"plugins\": [\n    \"./a\", // first\n    \"./b\"\n  ] }")
+            remove_plugin_item(text, 2),
+            "{ \"plugins\": [\n    \"./a\", // first\n    \"./b\"\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(r#"{ "plugins": ["./a"] }"#, 0).as_deref(),
-            Some(r#"{ "plugins": [] }"#)
+            remove_plugin_item(r#"{ "plugins": ["./a"] }"#, 0),
+            r#"{ "plugins": [] }"#
         );
-        assert_eq!(remove_plugin_item(text, 3), None);
-        assert_eq!(remove_plugin_item("{}", 0), None);
     }
 
     #[test]

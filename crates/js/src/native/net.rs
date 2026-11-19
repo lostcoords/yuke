@@ -63,8 +63,9 @@ pub(crate) struct Listener {
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        if self.socket.is_some() && std::fs::remove_file(&self.path).is_err() {
+        if self.socket.is_some() {
             // The runtime shuts down or no plugin holds the listener, so no caller can get the failure.
+            _ = std::fs::remove_file(&self.path);
         }
     }
 }

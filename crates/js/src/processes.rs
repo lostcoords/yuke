@@ -245,7 +245,7 @@ impl Processes {
             label,
             command,
             log: log.clone(),
-            folder: owner.cwd(),
+            folder: owner.folder(),
             owner,
         };
         tokio::task::spawn_local(task.run(Mode::Job { timeout }, answer));
@@ -412,9 +412,8 @@ impl CommandTask {
 
 /// Give a call its answer. A dropped call gets no answer, and the task still owns the command.
 fn reply(answer: oneshot::Sender<Result<Answer, String>>, value: Result<Answer, String>) {
-    if answer.send(value).is_err() {
-        // The call has left.
-    }
+    // The call has left.
+    _ = answer.send(value);
 }
 
 /// What a job start gives: the id of the job and its log file.
@@ -548,9 +547,8 @@ async fn stop_group(group: Pid, child: &mut Child) -> io::Result<ExitStatus> {
 /// Kill each process that remains in `group` after the wait reaped its leader. macOS can refuse this kill with `EPERM`
 /// although no process of the group remains, so a refusal is no failure: a process that the kill misses ends by itself.
 fn kill_rest_of_group(group: Pid) {
-    if signal_group(group, Signal::KILL).is_err() {
-        // A refused kill leaves nothing that the caller can do.
-    }
+    // A refused kill leaves nothing that the caller can do.
+    _ = signal_group(group, Signal::KILL);
 }
 
 /// Whether `group` still holds a process. Only `ESRCH` says that it holds none. A refused check, for example of a
@@ -776,12 +774,14 @@ async fn read_output(
         // Only an incomplete character at the end waits for the next read.
         let (text, rest) = crate::bytes::decode(&partial, false, true).unwrap_or_default();
         partial.drain(..partial.len() - rest);
-        if !text.is_empty() && chunks.send(text).is_err() {
+        if !text.is_empty() {
             // The call has left. The capture still keeps the output.
+            _ = chunks.send(text);
         }
     }
-    if !partial.is_empty() && chunks.send(String::from_utf8_lossy(&partial).into_owned()).is_err() {
+    if !partial.is_empty() {
         // The call has left.
+        _ = chunks.send(String::from_utf8_lossy(&partial).into_owned());
     }
     Ok(())
 }
@@ -855,8 +855,9 @@ impl Capture {
     fn finish(&mut self) -> String {
         let mut tail: Vec<u8> = self.tail.iter().copied().collect();
         if self.cut == 0 {
-            if self.file.take().is_some() && std::fs::remove_file(&self.path).is_err() {
+            if self.file.take().is_some() {
                 // The folder of the consumer keeps the file until the consumer removes the folder.
+                _ = std::fs::remove_file(&self.path);
             }
             // The head and the tail are one text, so a character across their border stays whole.
             let mut whole = std::mem::take(&mut self.head);

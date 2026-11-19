@@ -3,8 +3,18 @@
  * row. It wraps a text with a style and a link for each range of its source.
  */
 
+import type { ComposerView } from "yuke:chat";
 import { wrap } from "yuke:internal/tui/text";
-import { fit, measure, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
+import {
+  type CanvasStyle,
+  fit,
+  measure,
+  type OffsetRange,
+  type Segment,
+  type TextItem,
+  type TextRow,
+  type TextSection,
+} from "yuke:tui";
 
 /** The style groups of the chat. The default theme gives their look. */
 export const STYLE = {
@@ -41,9 +51,7 @@ const GAP: TextSection = Object.freeze({
 });
 
 /** A range of a source text with its style and its link. */
-export interface Range {
-  readonly from: number;
-  readonly to: number;
+export interface StyledRange extends OffsetRange {
   readonly style?: string | undefined;
   readonly link?: string | undefined;
 }
@@ -77,7 +85,7 @@ export function styledRows(text: string, width: number, style: string | undefine
  * The rows of `text` at `width`, indented. `ranges` are in source order and do not overlap. A segment ends at each
  * bound of a range, and it takes the style and the link of its range. Text outside each range has neither.
  */
-export function rangedRows(text: string, width: number, ranges: readonly Range[]): TextRow[] {
+export function rangedRows(text: string, width: number, ranges: readonly StyledRange[]): TextRow[] {
   const triples = wrap(text, Math.max(1, width - 2));
   const rows: TextRow[] = [];
   for (let at = 0; at < triples.length; at += 3) {
@@ -131,4 +139,25 @@ export function shifted(row: TextRow, by: number): TextRow {
       : { ...segment, source: { ...segment.source, from: segment.source.from + by, to: segment.source.to + by } },
   );
   return { segments, join: row.join };
+}
+
+/** One row of `composerRows`. The chat cuts a longer text to the width and ends it with `…`. */
+export interface ComposerRow {
+  readonly text: string;
+  readonly style?: CanvasStyle | undefined;
+}
+
+/**
+ * A view of plain text rows, for `addComposerView`. Each layout and draw calls `source`, so keep it cheap. With less
+ * room, the first rows show.
+ */
+export function composerRows(source: (width: number) => readonly ComposerRow[]): ComposerView {
+  return {
+    heightFor: (width) => source(width).length,
+    draw: (canvas) => {
+      for (const [row, entry] of source(canvas.width).entries()) {
+        canvas.text(0, row, clipped(entry.text, canvas.width), entry.style);
+      }
+    },
+  };
 }

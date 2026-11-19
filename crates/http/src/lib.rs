@@ -51,15 +51,15 @@ impl ClientOptions {
 
 /// The error that [`Client::new`] returns when the user agent is not a valid header value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InvalidUserAgent;
+pub struct UserAgentError;
 
-impl fmt::Display for InvalidUserAgent {
+impl fmt::Display for UserAgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the user agent is not a valid header value")
     }
 }
 
-impl std::error::Error for InvalidUserAgent {}
+impl std::error::Error for UserAgentError {}
 
 /// One request. The client owns the framing headers:
 /// - It sets `host` and `connection: close`.
@@ -192,9 +192,9 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidUserAgent`] if the user agent is not a valid header value.
-    pub fn new(options: ClientOptions) -> Result<Self, InvalidUserAgent> {
-        let user_agent = HeaderValue::try_from(options.user_agent).map_err(|_| InvalidUserAgent)?;
+    /// Returns [`UserAgentError`] if the user agent is not a valid header value.
+    pub fn new(options: ClientOptions) -> Result<Self, UserAgentError> {
+        let user_agent = HeaderValue::try_from(options.user_agent).map_err(|_| UserAgentError)?;
         Ok(Client {
             idle_timeout: options.idle_timeout,
             user_agent,
@@ -219,10 +219,6 @@ impl Client {
         let head = match bound {
             None => send(self.connect(&target).await?, http_request).await,
             Some((at, timed_out)) => {
-                // A deadline that already passed starts no leg, so an expired request is never sent.
-                if at <= Instant::now() {
-                    return Err(timed_out);
-                }
                 // A timeout before the connection opens proves that the request did not leave.
                 let socket = tokio::time::timeout_at(at, self.connect(&target))
                     .await
@@ -499,9 +495,6 @@ impl Target {
         };
         let authority = uri.authority().ok_or(Error::BadUrl)?;
         let host = authority.host();
-        if host.is_empty() {
-            return Err(Error::BadUrl);
-        }
         let host_and_port = authority
             .as_str()
             .rsplit_once('@')

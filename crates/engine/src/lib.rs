@@ -17,7 +17,7 @@ mod turn_state;
 
 pub use drive::{Driver, Inbox, Journal, NoWait, Observer, Timer, Turn, TurnError, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, RoundStart, ToolDecision};
-pub use model::{CredentialSource, Model, RoundError};
+pub use model::{CredentialSource, ModelAccess, RoundError};
 pub use tokio_util::sync::CancellationToken;
 pub use tool::{
     Concurrency, DisplayBlock, MediaStore, Preview, Subject, SubjectKind, TOOL_NAME_MAX, Tool, ToolContent,

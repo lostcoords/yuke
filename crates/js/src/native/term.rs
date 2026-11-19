@@ -11,7 +11,7 @@ use crate::tools::Json;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use rquickjs::function::Opt;
-use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
+use rquickjs::{Coerced, Ctx, Function, Object, Persistent, TypedArray, Value};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
 use yuke_term::{
@@ -140,7 +140,7 @@ fn add_drawing<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -
         Function::new(
             ctx.clone(),
             move |ctx: Ctx<'js>, cursor: Opt<Value<'js>>| -> rquickjs::Result<_> {
-                let cursor = cursor_of(&ctx, cursor.0)?;
+                let cursor = cursor_of(cursor.0)?;
                 held.display(&ctx)?.frame().screen.cursor(cursor);
                 Ok(())
             },
@@ -452,10 +452,9 @@ fn paint<'js>(ctx: &Ctx<'js>, display: &Display, draw: &Function<'js>, faults: &
 /// Send the throw of a handler as a fault. The loop goes on, so one broken handler does not stop the interface.
 fn report(ctx: &Ctx<'_>, result: rquickjs::Result<()>, faults: &mpsc::UnboundedSender<Report>) {
     // The main loop reports each interrupt once, so a handler reports only its throw.
-    if let Err(Error::Script(error)) = caught(ctx, result)
-        && faults.send(Report::Fault(error)).is_err()
-    {
+    if let Err(Error::Script(error)) = caught(ctx, result) {
         // The owner dropped the receiver, so it ignores faults.
+        _ = faults.send(Report::Fault(error));
     }
 }
 
@@ -514,14 +513,11 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: DisplayInput) -> 
         DisplayInput::Redraw => return None,
         DisplayInput::Event(Event::SchemeChanged) => {
             let mut frame = display.frame();
-            if frame
+            // The background stays as it is, and the next frame meets the same broken output.
+            _ = frame
                 .output
                 .write_all(BACKGROUND_QUERY)
-                .and_then(|()| frame.output.flush())
-                .is_err()
-            {
-                // The background stays as it is, and the next frame meets the same broken output.
-            }
+                .and_then(|()| frame.output.flush());
             return None;
         }
     };
@@ -640,26 +636,20 @@ fn units(text: &str) -> i32 {
     small(text.encode_utf16().count())
 }
 
-/// The cursor of `{ column, row, shape? }`. `undefined` or a cell outside the grid range gives `None`.
-fn cursor_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<Option<Cursor>> {
-    let Some(value) = value.filter(|value| !value.is_undefined()) else {
+/// The cursor of `{ column, row, shape? }`. `undefined`, a value that is no object, or a cell outside the grid range
+/// gives `None`. A missing or unknown shape keeps the shape of the terminal.
+fn cursor_of(value: Option<Value<'_>>) -> rquickjs::Result<Option<Cursor>> {
+    let Some(object) = value.and_then(Value::into_object) else {
         return Ok(None);
     };
-    let Some(object) = value.as_object() else {
-        return Err(throw(ctx, ErrorClass::TypeError, "a cursor is an object"));
-    };
-    let shape = match object.get::<_, Option<String>>("shape")?.as_deref() {
+    let shape = match object.get::<_, Value>("shape")?.into_string() {
+        Some(shape) => match shape.to_string()?.as_str() {
+            "block" => CursorShape::Block,
+            "underline" => CursorShape::Underline,
+            "bar" => CursorShape::Bar,
+            _ => CursorShape::Default,
+        },
         None => CursorShape::Default,
-        Some("block") => CursorShape::Block,
-        Some("underline") => CursorShape::Underline,
-        Some("bar") => CursorShape::Bar,
-        Some(other) => {
-            return Err(throw(
-                ctx,
-                ErrorClass::TypeError,
-                &format!("a cursor shape is block, underline, or bar, not {other}"),
-            ));
-        }
     };
     Ok(match (cell(object.get("column")?), cell(object.get("row")?)) {
         (Some(column), Some(row)) => Some(Cursor { column, row, shape }),
@@ -667,13 +657,11 @@ fn cursor_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result
     })
 }
 
-/// The style of a `term` call: `fg`, `bg`, `ul`, `bold`, `dim`, `italic`, `reverse`, and `underline`.
+/// The style of a `term` call: `fg`, `bg`, `ul`, `bold`, `dim`, `italic`, `reverse`, and `underline`. A value that is
+/// no object gives the default style, and a flag is on when its value is truthy.
 fn style_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<Style> {
-    let Some(object) = value.filter(|value| !value.is_undefined() && !value.is_null()) else {
+    let Some(object) = value.and_then(Value::into_object) else {
         return Ok(Style::default());
-    };
-    let Some(object) = object.as_object() else {
-        return Err(throw(ctx, ErrorClass::TypeError, "a style is an object"));
     };
     let mut attributes = Attributes::NONE;
     for (name, attribute) in [
@@ -683,18 +671,8 @@ fn style_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<
         ("underline", Attributes::UNDERLINE),
         ("reverse", Attributes::REVERSE),
     ] {
-        let flag: Value<'js> = object.get(name)?;
-        match flag.as_bool() {
-            Some(true) => attributes |= attribute,
-            Some(false) => {}
-            None if flag.is_undefined() => {}
-            None => {
-                return Err(throw(
-                    ctx,
-                    ErrorClass::TypeError,
-                    &format!("the style field {name} is a boolean"),
-                ));
-            }
+        if object.get::<_, Coerced<bool>>(name)?.0 {
+            attributes |= attribute;
         }
     }
     Ok(Style {

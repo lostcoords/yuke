@@ -1,12 +1,14 @@
 ---
-description: Add commands, keys, status items, and styles with the public terminal API.
+description: Add commands, keys, status items, and styles to the TUI with the public plugin API.
 ---
 
-# Terminal UI
+# TUI plugin API
 
-Use `ctx.get("tui")` in the `apply` export of a plugin. It returns a `Tui` from `yuke:tui`, or `undefined` outside the terminal interface, so check it before terminal work. It needs no `uses` entry. Imports from `yuke:tui` start no terminal work in any mode.
+This page is for plugin authors. To use the TUI, see [Use the TUI](use.md).
 
-This page covers commands, keys, status items, and styles. For dialogs, views, panes, and the `chat` service, read `types/tui.d.ts` and `types/chat.d.ts`. See [Find the API](plugins.md#find-the-api).
+Use `ctx.get("tui")` in the `apply` export of a plugin. It returns a `Tui` from `yuke:tui`, or `undefined` outside the TUI, so check it before TUI work. It needs no `uses` entry. Imports from `yuke:tui` start no terminal work in any mode.
+
+This page covers commands, keys, status items, and styles. For dialogs (`tui.dialog`, `tui.prompt`, and `tui.confirm`), views, panes, and the `chat` service, read `types/tui.d.ts` and `types/chat.d.ts`. See [Find the API](plugins.md#find-the-api).
 
 ## Commands
 
@@ -38,15 +40,17 @@ Call `tui.keys.add(spec, command, options?)`. It returns a remover. A binding na
 
 `options.in` names one context atom, such as `composer`, `transcript`, or `chat`. The default is `root`. The deepest active atom wins. Between equal matches, the newest binding wins.
 
+See [Use the TUI](use.md#keys) for the default keys of yuke.
+
 ## Status items
 
-Call `tui.status.set(id, entry)` to add or replace an item. It returns a remover. An entry has `text`, `side` (`"left"` or `"right"`), and `order`, and can have `priority` and `style`. A lower `order` comes first on that side. A bare id gets the plugin prefix. Update the item when its text changes. The bundled `bar` plugin draws the items.
+Call `tui.status.set(id, entry)` to add or replace an item. It returns a remover. An entry has `text`, `side` (`"left"` or `"right"`), and `order`, and can have `priority` and `style`. A lower `order` comes first on that side. A bare id gets the plugin prefix. Update the item when its text changes. The remover deletes the item. The bundled `bar` plugin draws the items.
 
 ## Styles and themes
 
 `tui.styles.add(groups)` changes style groups and returns a remover. A later call wins per field. A `null` field removes that field. A style can use palette names such as `accent` and `danger`.
 
-Register a theme with `tui.styles.addTheme(name, theme)`. Activate it with `tui.styles.setTheme(name)`. `tui.styles.theme` reads the active name. The active theme wins per field over `styles.add`. `tui.background` reads `"dark"` or `"light"`.
+Register a theme with `tui.styles.addTheme(name, theme)`. Activate it with `tui.styles.setTheme(name)`. The last call wins, and the remover that it returns brings back the theme before it. `tui.styles.theme` reads the active name. The active theme wins per field over `styles.add`. `tui.background` reads `"dark"` or `"light"`.
 
 Use `ctx.addListener("theme.changed", listener)` for later changes. The listener gets `{ name, background }`. The event does not replay the initial state, so read it directly.
 
@@ -54,4 +58,4 @@ See [Themes](themes.md) for complete theme examples.
 
 ## Cleanup
 
-The plugin owns its TUI registrations. When the plugin stops, yuke removes them. Each remover that a registration returns removes it early. See [Plugins](plugins.md#lifecycle) for the lifecycle.
+The plugin owns its registrations in the TUI. When the plugin stops, yuke removes them. Each remover that a registration returns removes it early. See [Plugins](plugins.md#lifecycle) for the lifecycle.

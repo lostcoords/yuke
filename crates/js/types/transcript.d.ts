@@ -63,7 +63,7 @@ declare module "yuke:transcript" {
    * - `done`: `result` holds the result. The saved result replaces the live result. It also clears `output`.
    *
    * `hints` tell how to show the call. A streamed call has the default hints, and the saved answer gives the hints of
-   * its tool before the call starts. `cwd` is the folder where the call ran, the start of a relative path of the
+   * its tool before the call starts. `folder` is the folder where the call ran, the start of a relative path of the
    * call. `display` is what to show in place of the result text, and it is empty for a result without one. The model
    * sees neither.
    *
@@ -78,7 +78,7 @@ declare module "yuke:transcript" {
     arguments: string;
     status: "preparing" | "waiting" | "running" | "done";
     hints: ToolHints;
-    cwd: string | undefined;
+    folder: string | undefined;
     startedAt: number | undefined;
     durationMs: number | undefined;
     output: string;

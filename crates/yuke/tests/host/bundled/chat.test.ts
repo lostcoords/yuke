@@ -30,7 +30,7 @@ const greeter: PluginSession = (s) => {
 
 /** A frame with a chat pane on the session `id` of `sessions`. */
 async function chatFrame(sessions: Sessions, id: string): Promise<FrameTest> {
-  const frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: id });
+  const frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w", sessionId: id });
   const surface = frame.surface("chat");
   const services: Record<string, unknown> = {
     tui: surface.tui,
@@ -107,9 +107,9 @@ test("the first send of a pane with a saved choice creates its session and gets 
     replies: [reply.text("Hi there.")],
   });
   await writeTextFile("choice.json", '{"model":{"provider":"minimax","model":"MiniMax-M3"},"reasoning":"high"}', {
-    cwd: folder(),
+    folder: folder(),
   });
-  const startup = { cwd: folder() };
+  const startup = { folder: folder() };
   using frame = createFrame({ width: 30, height: 10 }, undefined, startup);
   const surface = frame.surface("chat");
   const known = services as { readonly sessions: Sessions; readonly catalog: unknown };
@@ -157,7 +157,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   await held.sendMessage({ content: [{ kind: "userText", text: "Read the store." }] });
   await held.waitForIdle();
 
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: parent.id });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w", sessionId: parent.id });
   const surface = frame.surface("chat");
   const services: Record<string, unknown> = {
     tui: surface.tui,

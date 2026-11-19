@@ -1,11 +1,11 @@
 /**
- * This module holds `ChatQuestions` of `yuke:chat` and the view of a request of a plugin. The view shows one question
+ * This module holds `ChatQuestions` and the view of a request of a plugin. The view shows one question
  * at a time: a head row with the plugin, the header, and the counts, then the question and its options. A question
  * without options is a one-line field, and it masks a secret.
  */
 
-import type { ChatQuestion, ChatQuestionsOptions, ChatSession } from "yuke:chat";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
+import type { ChatSession } from "yuke:internal/chat/session";
 import { sourceName } from "yuke:internal/source-name";
 import type { Frozen } from "yuke:plugins";
 import type { InteractionId, InteractionResponse, Question, QuestionAnswer } from "yuke:protocol";
@@ -232,6 +232,35 @@ function ask(
   return { view, rows };
 }
 
+/** The view of a request, which takes the keys, and the most rows that it needs. */
+export interface ChatQuestion {
+  readonly view: View;
+  readonly rows: number;
+}
+
+export interface ChatQuestionsOptions {
+  /** Its abort ends the watch of the chat session. */
+  readonly signal: AbortSignal;
+  /** Gets the failure of an answer, as after an answer of another client. The question then takes an answer again. */
+  readonly onError: (error: unknown) => void;
+}
+
+/**
+ * The first open request of a plugin in a chat session, as a view with one page per question. Up and Down move,
+ * Space ticks, Enter answers and goes to the next page, and the last Enter sends. Left or Shift+Tab goes back. A
+ * question without options and with `other` is a field, and `secret` masks that field. The owner binds the cancel key
+ * to `cancel()`. A caller places the view, as the chat does in the place of the composer. A view answers once, and a
+ * refused answer can come again. The others wait in order. A request of an ended handle shows after the next open.
+ *
+ * ```ts
+ * const questions = new ChatQuestions(chat, {
+ *   signal: mount.signal,
+ *   onError: (error) => ctx.notify("error", String(error)),
+ * });
+ * place(questions.current); // a request that is open already
+ * questions.addChangeListener(() => place(questions.current));
+ * ```
+ */
 export class ChatQuestions {
   readonly #chat: ChatSession;
   readonly #options: ChatQuestionsOptions;
@@ -247,14 +276,17 @@ export class ChatQuestions {
     this.#sync();
   }
 
+  /** The view of the first open request, or `undefined` without one. */
   get current(): ChatQuestion | undefined {
     return this.#current?.asked;
   }
 
+  /** Answer the shown request with a cancel. */
   cancel(): void {
     this.#answer({ kind: "cancelled" });
   }
 
+  /** Call `listener` after each change of `current`. */
   addChangeListener(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);

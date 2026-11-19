@@ -13,8 +13,8 @@ use yuke_ai::{
     ToolDefinition, ToolResult,
 };
 use yuke_engine::{
-    CancellationToken, DisplayBlock, Hooks, Model, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision,
-    ToolOutcome,
+    CancellationToken, DisplayBlock, Hooks, ModelAccess, RoundDecision, RoundError, RoundPlan, RoundStart,
+    ToolDecision, ToolOutcome,
 };
 use yuke_protocol::{Input, InputId, InputKind, InputSource, PendingInput, SessionId};
 
@@ -274,7 +274,7 @@ impl<'js> IntoJs<'js> for Decision {
 
 /// Store each item of `media` in the session of `script`, as for a tool result or a hook answer.
 async fn stored(script: &ScriptSession, media: Vec<MediaFile>) -> Result<Vec<Media>, TestError> {
-    store_media(&*script.host, media, &script.host.cwd()).await
+    store_media(&*script.host, media, &script.host.folder()).await
 }
 
 /// Read the bytes of each item of `media` of the session `id` from the store.
@@ -293,7 +293,7 @@ fn read(host: &dyn TestHost, id: SessionId, media: Vec<Media>) -> Result<Vec<Out
 /// The round of `event` with its own copies of the parts that [`RoundStart`] borrows.
 struct OwnedRound {
     context: Vec<Block>,
-    model: Model,
+    model: ModelAccess,
     settings: RequestSettings,
     system: String,
     tools: Vec<ToolDefinition>,

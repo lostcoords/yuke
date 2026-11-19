@@ -324,7 +324,7 @@ pub struct Toolset {
     hints: Vec<ToolHints>,
     /// The working folder of the tools, for a frontend that opens a relative path of a call. The engine does not read
     /// it.
-    cwd: Option<String>,
+    folder: Option<String>,
 }
 
 impl fmt::Debug for Toolset {
@@ -342,18 +342,18 @@ impl Toolset {
             definitions: Vec::new(),
             handlers: Vec::new(),
             hints: Vec::new(),
-            cwd: None,
+            folder: None,
         }
     }
 
     /// Set the working folder of the tools. Each call carries it to the frontend.
-    pub fn set_cwd(&mut self, cwd: impl Into<String>) {
-        self.cwd = Some(cwd.into());
+    pub fn set_folder(&mut self, folder: impl Into<String>) {
+        self.folder = Some(folder.into());
     }
 
     /// The working folder of the tools, if the caller set one.
-    pub(crate) fn cwd(&self) -> Option<&str> {
-        self.cwd.as_deref()
+    pub(crate) fn folder(&self) -> Option<&str> {
+        self.folder.as_deref()
     }
 
     /// The hints of the tool `name`, or the default hints for a name that no tool has.

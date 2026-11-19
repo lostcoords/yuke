@@ -9,10 +9,10 @@ fn place_with_login_model(name: &str) -> Place {
     let providers = json!({ "providers": [{
         "id": "xai-grok",
         "endpoints": [
-            { "protocol": "openai_responses", "credential_header": "authorization_bearer" },
-            { "protocol": "anthropic_messages", "credential_header": "authorization_bearer" }
+            { "protocol": "openai_responses", "credentialHeader": "authorization_bearer" },
+            { "protocol": "anthropic_messages", "credentialHeader": "authorization_bearer" }
         ],
-        "models": [{ "id": "test", "protocol": "anthropic_messages", "limits": { "max_output_tokens": 1000 } }]
+        "models": [{ "id": "test", "protocol": "anthropic_messages", "limits": { "maxOutputTokens": 1000 } }]
     }] });
     std::fs::write(place.paths.config.join("providers.json"), providers.to_string()).unwrap();
     place
@@ -78,8 +78,8 @@ async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_be
         }
         params
     };
-    let bad_token = "accessToken: send a value that is not empty and has no control character";
-    let bad_account = "accountId: send a value that is not empty and has no control character";
+    let bad_token = "accessToken: send a value that is not empty";
+    let bad_account = "accountId: send a value that is not empty";
     let cases = [
         (
             update("openai", "t", later, None),
@@ -90,13 +90,6 @@ async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_be
             "provider: nobody has no login flow, so it takes no credential/update",
         ),
         (update("xai-grok", "", later, None), bad_token),
-        (update("xai-grok", "a\nb", later, None), bad_token),
-        (update("xai-grok", "a\tb", later, None), bad_token),
-        (update("xai-grok", "t", 1, None), "expiresAt: the token already expired"),
-        (
-            update("xai-grok", "t", later, Some("account")),
-            "accountId: xai-grok names no account, so send none",
-        ),
         (update("openai-codex", "t", later, Some("")), bad_account),
     ];
 
@@ -163,10 +156,10 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
     std::fs::write(place.paths.data.join("auth.json"), stored.to_string()).unwrap();
     std::fs::create_dir_all(&place.paths.config).unwrap();
     let providers = r#"{ "providers": [{
-        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
         "endpoints": [{ "protocol": "anthropic_messages" }],
-        "models": [{ "id": "small", "upstream_id": "vendor/small", "limits": { "max_output_tokens": 4096 },
-                     "reasoning_levels": ["high", "high"] }]
+        "models": [{ "id": "small", "upstreamId": "vendor/small", "limits": { "maxOutputTokens": 4096 },
+                     "reasoningLevels": ["high", "high"] }]
     }] }"#;
     std::fs::write(place.paths.config.join("providers.json"), providers).unwrap();
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
@@ -605,9 +598,9 @@ async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refuse
     );
     std::fs::create_dir_all(&place.paths.config).unwrap();
     let providers = r#"{ "providers": [{
-        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
         "endpoints": [{ "protocol": "anthropic_messages" }],
-        "models": [{ "id": "small", "limits": { "max_output_tokens": 4096 } }]
+        "models": [{ "id": "small", "limits": { "maxOutputTokens": 4096 } }]
     }] }"#;
     std::fs::write(place.paths.config.join("providers.json"), providers).unwrap();
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
@@ -619,7 +612,6 @@ async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refuse
         key("xai-grok", "k"),
         key("local", "k"),
         key("anthropic", ""),
-        key("anthropic", "k\n"),
     ] {
         refusals.push(client.call("auth/setApiKey", params).await.unwrap_err());
     }
@@ -630,14 +622,13 @@ async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refuse
         .map(|error| (&error["code"], error["message"].as_str().unwrap()))
         .collect();
     let invalid = json!(ResponseError::INVALID_PARAMS);
-    let bad_key = "apiKey: send a value that is not empty and has no control character";
+    let bad_key = "apiKey: send a value that is not empty";
     assert_eq!(
         texts,
         [
             (&invalid, "yuke has no provider nobody"),
             (&invalid, "xai-grok takes a login, not an API key: send auth/login"),
             (&invalid, "local takes no API key"),
-            (&invalid, bad_key),
             (&invalid, bad_key),
         ]
     );

@@ -1,8 +1,8 @@
 //! The `yuke` program. It has three modes: the terminal interface (no mode flag), the protocol server (`--rpc`), and
-//! one task with no view (`-p`). `--rpc` serves stdin and stdout.
-//! `--rpc --listen` serves a Unix socket. `--rpc --connect` joins stdin and stdout to such a socket. `-p` writes the
-//! answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider, and
-//! `yuke logout` removes its stored login or API key.
+//! one task with no view (`-p`). `--rpc` serves stdin and stdout. `--rpc --listen` serves a Unix socket. `--rpc
+//! --connect` joins stdin and stdout to such a socket. `-p` writes the answer to stdout, and the end of the turn picks
+//! the exit status. `yuke login` logs in to a provider, and `yuke logout` removes its stored login or API key.
+//! `yuke test` runs the plugin tests, and `yuke plugin` manages the plugins of `config.json`.
 
 mod app;
 mod auth;
@@ -30,7 +30,7 @@ use clap::{Parser, Subcommand};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, TurnEnd, chain_text};
-use yuke_protocol::{CheckPluginsResult, LockedPlugin, PluginLog, PluginTarget, ReasoningLevel, SessionId};
+use yuke_protocol::{CheckPluginsResult, LockedPlugin, PluginLog, PluginTarget, ReasoningSelection, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
@@ -74,14 +74,14 @@ struct Cli {
     #[arg(long, requires = "prompt")]
     json: bool,
 
-    /// The model, as provider/model. A new session needs it.
-    #[arg(long, value_name = "PROVIDER/MODEL", requires = "prompt")]
+    /// The model, as provider/model. A new session needs it. It needs --reasoning too, because the level of a saved
+    /// session may not fit a new model.
+    #[arg(long, value_name = "PROVIDER/MODEL", requires_all = ["prompt", "reasoning"])]
     model: Option<String>,
 
-    /// The reasoning level: default, off, or an effort such as low or high. A new session needs it, and so does
-    /// --model on a continued session.
+    /// The reasoning level: default, off, or an effort such as low or high. A new session needs it.
     #[arg(long, value_name = "LEVEL", requires = "prompt")]
-    reasoning: Option<ReasoningLevel>,
+    reasoning: Option<ReasoningSelection>,
 
     /// Resume the session with this id, in any folder.
     #[arg(short = 'r', long, value_name = "ID", conflicts_with = "continue_newest")]
@@ -95,13 +95,14 @@ struct Cli {
 /// A command of `yuke`.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Log in to PROVIDER, and save the grant.
+    /// Log in to PROVIDER with a device code, and save the login in auth.json. A provider with an API key has no
+    /// login: run /login in yuke, or set its environment variable.
     Login {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
     },
-    /// Remove the stored login or API key of PROVIDER from auth.json. yuke revokes no token at the provider, and a
-    /// running server keeps a token of credential/update.
+    /// Remove the login or API key that /login stored for PROVIDER from auth.json. A key in an environment variable
+    /// stays. yuke revokes no token at the provider, and a running server keeps a token of credential/update.
     Logout {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
@@ -331,9 +332,8 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
     };
     // The steps of the work go to stderr, so stdout keeps only the result.
     let progress = |text: &str| {
-        if writeln!(io::stderr(), "{text}…").is_err() {
-            // A step that does not show changes nothing of the work.
-        }
+        // A step that does not show changes nothing of the work.
+        _ = writeln!(io::stderr(), "{text}…");
     };
     match command {
         PluginCommand::List => say(&plugin_list(&paths)?)?,
@@ -740,7 +740,7 @@ mod tests {
                 task: Task {
                     prompt: "Hi.".to_owned(),
                     model: Some("a/b".to_owned()),
-                    reasoning: Some(ReasoningLevel::Effort(yuke_ai::Effort::Xhigh)),
+                    reasoning: Some(ReasoningSelection::Effort(yuke_ai::Effort::Xhigh)),
                     session: SessionChoice::Newest,
                 },
                 json: true,
@@ -749,10 +749,18 @@ mod tests {
         let Ok(Mode::Print { task, .. }) = mode(&["-p", "Hi.", "--reasoning", "default"]) else {
             panic!("no print mode");
         };
-        assert_eq!(task.reasoning, Some(ReasoningLevel::Default));
+        assert_eq!(task.reasoning, Some(ReasoningSelection::Default));
         assert_eq!(
             mode(&["-p", "Hi.", "--reasoning", "extreme"]),
             Err(ErrorKind::ValueValidation)
+        );
+    }
+
+    #[test]
+    fn a_model_needs_a_reasoning_level() {
+        assert_eq!(
+            mode(&["-p", "Hi.", "--model", "a/b"]),
+            Err(ErrorKind::MissingRequiredArgument)
         );
     }
 

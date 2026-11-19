@@ -4,7 +4,7 @@
  * - `session(s)` runs once per session, for the tools and hooks of that session.
  * - `optionsSchema` is the `ObjectSchema` of the options that the user gives in `config.json`. Without it, the plugin
  *   takes no options. Type the contexts with `PluginContext<Infer<typeof optionsSchema>>`.
- * - The declarations need TypeScript 5.4 or later.
+ * - The declarations need TypeScript 7.0.2 or later.
  *
  * Errors:
  * - A cancellation aborts a signal with a `DOMException` named `AbortError`.
@@ -25,6 +25,7 @@ import type {
   InteractionId,
   InteractionResponse,
   Job,
+  JobId,
   ListCatalogResult,
   ListSessionsParams,
   ListSessionsResult,
@@ -161,7 +162,7 @@ export interface SessionHandle extends Disposable {
    */
   readonly close: () => void;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
-  readonly cancel: () => void;
+  readonly cancelTurn: () => void;
   /** Move each tool call that waits for a job, such as a running command, to the background. The turn goes on. */
   readonly moveJobsToBackground: () => void;
   /** Whether `moveJobsToBackground` moves a job now. */
@@ -186,7 +187,7 @@ export interface SessionHandle extends Disposable {
   /** The running background jobs, oldest first. */
   readonly jobs: () => readonly Job[];
   /** Stop the job `jobId`, and wait for its end. */
-  readonly stopJob: (jobId: string) => Promise<void>;
+  readonly stopJob: (jobId: JobId) => Promise<void>;
   /** The MCP servers of the session and their states. */
   readonly mcpServers: () => readonly McpServer[];
 }
@@ -253,8 +254,8 @@ export interface PluginContext<O = Record<string, never>> {
    * - A throw gives a notice, and the listener stays. The abort of `ctx.signal` removes it.
    *
    * ```ts
-   * ctx.addListener("session.update", ({ sessionId, update }) => {
-   *   if (update.kind === "state") report(sessionId, update.state);
+   * ctx.addListener("session.update", (data) => {
+   *   if (data.update.kind === "state") report(data.sessionId, data.update.state);
    * });
    * ```
    */
@@ -737,7 +738,7 @@ export interface SessionContext<O = Record<string, never>> {
   /** The parent session. A fork has no parent. */
   readonly parent: SessionId | undefined;
   /** The workspace folder of the session at its open. A tool reads the folder of each call from its context. */
-  readonly cwd: string;
+  readonly folder: string;
   /** A frozen copy of the settings of the session now. Each read gives a new copy. */
   readonly settings: Frozen<SessionSettings>;
   /** The options of the plugin. They are the same object as `options` of `PluginContext`. */

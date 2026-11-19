@@ -159,7 +159,7 @@ export class Core {
     this.#addCommands();
   }
 
-  /** Give each later change of `tui.focused` to `listener`. */
+  /** Give each later change of `tui.focusedView` to `listener`. */
   addFocusListener(listener: (change: FocusChange) => void): () => void {
     const entry = { listener };
     this.#focusListeners.add(entry);

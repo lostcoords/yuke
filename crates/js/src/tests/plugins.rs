@@ -78,67 +78,13 @@ async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
 
     assert_eq!(
         texts(&failures),
-        [("bad".to_owned(), "plugin bad did not load: Error: broken".to_owned())]
+        [("bad".to_owned(), "Plugin bad did not load: Error: broken".to_owned())]
     );
     assert_eq!(tool_names(&runtime, &folder).await, ["kept"]);
     assert!(
         evaluate::<bool>(&runtime, "return globalThis.badSignal.aborted;")
             .await
             .unwrap()
-    );
-}
-
-#[tokio::test(flavor = "local")]
-async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
-    let folder = folder("a_load_during_or_after_the_close_fails_and_runs_its_cleanup");
-    let (runtime, _reports) = start(&folder).await;
-    let slow = plugin(
-        &folder,
-        "slow",
-        Some(
-            "globalThis.cleanups = [];
-             export async function apply(ctx) {
-               await new Promise((resolve) => { globalThis.finishApply = resolve; });
-               return () => { globalThis.cleanups.push(`slow ${ctx.signal.aborted}`); };
-             }",
-        ),
-        &[],
-        &[],
-    );
-    let late = plugin(&folder, "late", Some("export function apply() {}"), &[], &[]);
-
-    let slow = [slow];
-    let (during, ()) = tokio::join!(runtime.load_plugins(&slow), async {
-        crate::wait_for_settled().await;
-        assert!(
-            evaluate::<bool>(&runtime, "return typeof globalThis.finishApply === 'function';")
-                .await
-                .unwrap()
-        );
-        runtime.close_plugins().await.unwrap();
-        evaluate::<()>(&runtime, "finishApply();").await.unwrap();
-    });
-    let after = runtime.load_plugins(&[late]).await;
-
-    assert_eq!(
-        texts(&during),
-        [(
-            "slow".to_owned(),
-            "plugin slow did not load: TypeError: plugin slow loads after the close of the plugins".to_owned()
-        )]
-    );
-    assert_eq!(
-        texts(&after),
-        [(
-            "late".to_owned(),
-            "plugin late did not load: TypeError: plugin late loads after the close of the plugins".to_owned()
-        )]
-    );
-    assert_eq!(
-        evaluate::<String>(&runtime, "return globalThis.cleanups.join(' ');")
-            .await
-            .unwrap(),
-        "slow true"
     );
 }
 

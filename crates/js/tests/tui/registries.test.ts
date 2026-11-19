@@ -495,6 +495,21 @@ test("a theme changes nothing until it is active, and its groups win over each s
   );
 });
 
+test("the remover of a theme choice brings back the theme before it, and an older remover leaves a newer choice", () => {
+  const { styles } = themed();
+  styles.addTheme("nord", {});
+  styles.addTheme("dusk", {});
+  const removeNord = styles.setTheme("nord");
+  const removeDusk = styles.setTheme("dusk");
+  const names = [styles.theme];
+  removeNord();
+  names.push(styles.theme);
+  removeDusk();
+  removeDusk();
+  names.push(styles.theme);
+  assertEquals(names, ["dusk", "dusk", "default"]);
+});
+
 test("a group that a theme does not name follows the palette of the theme, also through a link", () => {
   const { styles } = themed();
   styles.add({

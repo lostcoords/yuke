@@ -8,7 +8,7 @@ export type ListSessionsParams = {
 /**
  * Only the sessions whose newest settings name this folder. Without it, the list has the sessions of every folder.
  */
-cwd?: string, 
+folder?: string, 
 /**
  * Only the children of this session. Without it, the list has the sessions without a parent.
  */
@@ -18,7 +18,7 @@ parent?: SessionId,
  */
 limit?: number, 
 /**
- * The `nextCursor` of the page before, with the same `cwd` and `parent`. Without it, the page starts at the newest
+ * The `nextCursor` of the page before, with the same `folder` and `parent`. Without it, the page starts at the newest
  * session.
  */
 cursor?: string, };

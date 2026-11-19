@@ -336,14 +336,14 @@ test("the folder of a session stays while a call reads the folder of its start",
   const where: PluginSession = (s) => {
     s.tools.add({
       ...tool("where"),
-      execute: (_args, context) => `${s.cwd} ${context.cwd}`,
+      execute: (_args, context) => `${s.folder} ${context.folder}`,
     } as Tool);
   };
   await using host = await createHost({ plugins: [{ name: "where", session: where }] });
   const session = await host.openSession();
   await mkdir(`${folder()}/moved`);
 
-  await session.setSettings({ ...session.settings, cwd: `${folder()}/moved` });
+  await session.setSettings({ ...session.settings, folder: `${folder()}/moved` });
 
   assertEquals((await session.call("where", {})).text, `${folder()} ${folder()}/moved`);
 });

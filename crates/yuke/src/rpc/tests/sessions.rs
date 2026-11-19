@@ -193,10 +193,10 @@ async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
     std::fs::write(&file, "notes").unwrap();
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     let mut new = settings(&place);
-    new["cwd"] = json!(file);
+    new["folder"] = json!(file);
     let mut changed = settings(&place);
     changed["sessionId"] = session;
-    changed["cwd"] = json!(file);
+    changed["folder"] = json!(file);
 
     let created = client.call("session/new", new).await;
     let refused = client.call("session/setSettings", changed).await;
@@ -218,7 +218,7 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
     place.plugin(
         "loud",
         "export function apply(ctx) { ctx.notify('info', 'hello'); }
-         export function session(s) { s.notify('info', `opened in ${s.cwd}`); }",
+         export function session(s) { s.notify('info', `opened in ${s.folder}`); }",
     );
     std::fs::write(
         place.paths.config.join("config.json"),
@@ -270,7 +270,7 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
     assert_eq!(notice["params"]["source"], "host:yuke");
     let message = notice["params"]["text"].as_str().unwrap();
     assert!(
-        message.starts_with("plugin broken did not load: Error: no luck"),
+        message.starts_with("Plugin broken did not load: Error: no luck"),
         "{message}"
     );
     client.end().await;
@@ -333,7 +333,7 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
             model: model.to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: place.work.clone(),
+        folder: place.work.clone(),
     };
     let session = Session::create(
         Arc::clone(&store),
@@ -615,7 +615,7 @@ async fn the_list_and_a_get_give_each_saved_session_with_its_state() {
     assert_eq!(states(&listed), expected);
     assert_eq!(row["state"], "closed");
     assert_eq!(row["title"], "waiting");
-    assert_eq!(row["cwd"], json!(place.work));
+    assert_eq!(row["folder"], json!(place.work));
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
 }
 
@@ -673,22 +673,22 @@ async fn a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit(
     let work = json!(place.work);
 
     let first = client
-        .call("session/list", json!({ "cwd": work, "limit": 2 }))
+        .call("session/list", json!({ "folder": work, "limit": 2 }))
         .await
         .unwrap();
     let cursor = first["nextCursor"].clone();
     let second = client
-        .call("session/list", json!({ "cwd": work, "limit": 2, "cursor": cursor }))
+        .call("session/list", json!({ "folder": work, "limit": 2, "cursor": cursor }))
         .await
         .unwrap();
     let elsewhere = client
-        .call("session/list", json!({ "cwd": "/elsewhere" }))
+        .call("session/list", json!({ "folder": "/elsewhere" }))
         .await
         .unwrap();
     let mut refused = Vec::new();
     for params in [
         json!({ "cursor": "-1" }),
-        json!({ "cwd": work, "cursor": "not a cursor" }),
+        json!({ "folder": work, "cursor": "not a cursor" }),
         json!({ "cursor": "18446744073709551616" }),
         json!({ "limit": 0 }),
         json!({ "limit": 101 }),

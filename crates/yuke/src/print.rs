@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use yuke_protocol::{
-    CommitEvent, Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ReasoningLevel,
-    ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams,
-    StateUpdate, StoredEvent,
+    CommitEvent, Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams,
+    ReasoningSelection, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate,
+    SessionUpdateParams, StateUpdate, StoredEvent,
 };
 
 use serde::Serialize;
@@ -27,10 +27,10 @@ pub(crate) struct Task {
     /// The input of the turn.
     pub(crate) prompt: String,
     /// The model as `provider/model`. A new session needs it. For an existing session, it replaces the model of the
-    /// session, and the run then needs a reasoning choice too.
+    /// session, and the command line then needs a reasoning level too.
     pub(crate) model: Option<String>,
-    /// The reasoning choice. A new session needs it. For an existing session, it replaces the level of the session.
-    pub(crate) reasoning: Option<ReasoningLevel>,
+    /// The reasoning level. A new session needs it. For an existing session, it replaces the level of the session.
+    pub(crate) reasoning: Option<ReasoningSelection>,
     /// The session of the turn.
     pub(crate) session: SessionChoice,
 }
@@ -108,7 +108,7 @@ async fn run_turn(
 ) -> Result<Finished, String> {
     let id = match task.session {
         SessionChoice::New => {
-            let selector = task.model.as_deref().ok_or("no model: pass --model <provider/model>")?;
+            let selector = task.model.as_deref().ok_or("no model: pass --model <PROVIDER/MODEL>")?;
             let choice = task.reasoning.ok_or(NO_REASONING)?;
             let settings = new_settings(&app.providers(), selector, choice, cwd)?;
             app.sessions()
@@ -169,16 +169,16 @@ async fn run_turn(
     })
 }
 
-/// The error of a run that needs a reasoning choice and has none.
+/// The error of a run that needs a reasoning level and has none.
 const NO_REASONING: &str =
-    "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
+    "no reasoning level: pass --reasoning <LEVEL>, or --reasoning default to let the endpoint choose";
 
 /// The settings of a new session in `cwd` with the model `selector` of `providers` and the reasoning `choice`. The app
 /// builds the system prompt.
 fn new_settings(
     providers: &Providers,
     selector: &str,
-    choice: ReasoningLevel,
+    choice: ReasoningSelection,
     cwd: &Path,
 ) -> Result<SessionSettings, String> {
     let (model, reasoning) = choose(providers, selector, choice)?;
@@ -188,16 +188,12 @@ fn new_settings(
             reasoning,
             ..yuke_ai::RequestSettings::new()
         },
-        cwd: cwd.to_owned(),
+        folder: cwd.to_owned(),
     })
 }
 
-/// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event. A
-/// new model needs a reasoning choice too, because the level of the session may not fit it.
+/// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event.
 async fn existing_session(task: &Task, id: SessionId, app: &App) -> Result<SessionId, String> {
-    if task.model.is_some() && task.reasoning.is_none() {
-        return Err(NO_REASONING.to_owned());
-    }
     let changed = |saved: &SessionSettings, providers: &Providers| {
         let Some(choice) = task.reasoning else {
             return Ok(None);
@@ -223,15 +219,15 @@ async fn existing_session(task: &Task, id: SessionId, app: &App) -> Result<Sessi
 fn choose(
     providers: &Providers,
     selector: &str,
-    choice: ReasoningLevel,
+    choice: ReasoningSelection,
 ) -> Result<(ModelReference, yuke_ai::ReasoningSettings), String> {
     let entry = providers
         .lookup(selector)
         .map_err(|error| format!("{selector}: {error}"))?;
     let level = match choice {
-        ReasoningLevel::Default => None,
-        ReasoningLevel::Off => Some(yuke_ai::catalog::ReasoningLevel::Off),
-        ReasoningLevel::Effort(effort) => Some(yuke_ai::catalog::ReasoningLevel::Effort(effort)),
+        ReasoningSelection::Default => None,
+        ReasoningSelection::Off => Some(yuke_ai::catalog::ReasoningLevel::Off),
+        ReasoningSelection::Effort(effort) => Some(yuke_ai::catalog::ReasoningLevel::Effort(effort)),
     };
     let reasoning = match level {
         Some(level) => entry

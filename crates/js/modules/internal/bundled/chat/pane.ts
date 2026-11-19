@@ -5,28 +5,26 @@
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
-import {
-  ChatCompletions,
-  ChatComposer,
-  ChatDocument,
-  type ChatPane,
-  type ChatPresentation,
-  type ChatPresentationOptions,
-  ChatQuestions,
-  type ChatReadOnly,
-  ChatSession,
-  ChatWorking,
-  type CompletionProvider,
-  type ComposerContext,
-  type ComposerFrame,
-  type ComposerPlace,
-  type ComposerView,
+import type {
+  ChatPane,
+  ChatPresentation,
+  ChatPresentationOptions,
+  ChatReadOnly,
+  CompletionProvider,
+  ComposerContext,
+  ComposerFrame,
+  ComposerPlace,
+  ComposerView,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { commandWordLength } from "yuke:internal/chat/commands";
-import { EMPTY } from "yuke:internal/chat/composer";
-import { inputText } from "yuke:internal/chat/document";
+import { ChatCompletions } from "yuke:internal/chat/completions";
+import { ChatComposer, EMPTY } from "yuke:internal/chat/composer";
+import { ChatDocument, inputText } from "yuke:internal/chat/document";
+import { ChatQuestions } from "yuke:internal/chat/questions";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
+import { ChatSession } from "yuke:internal/chat/session";
+import { ChatWorking } from "yuke:internal/chat/working";
 import { failureOf } from "yuke:internal/failure";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
@@ -274,7 +272,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       // A relative target starts in the folder of its tool call, else in the folder of the session, else at the start.
       const entry = transcript.entries.find((candidate) => candidate.id === position.item);
-      const folder = (entry?.kind === "tool" ? entry.cwd : undefined) ?? transcript.settings?.cwd ?? tui.startup.cwd;
+      const folder =
+        (entry?.kind === "tool" ? entry.folder : undefined) ?? transcript.settings?.folder ?? tui.startup.folder;
       const absolute = /^[a-z][a-z0-9+.-]*:/i.test(link) || link.startsWith("/");
       const target = absolute ? link : `${folder.replace(/\/$/, "")}/${link}`;
       tui.clipboard.writeText(target);
@@ -291,12 +290,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // A question takes the place of the list, and a pane without a row above the frame shows no list.
   const completions = new ChatCompletions(composer, {
     providers: () => chat.completionProviders(),
-    cwd: () => chatSession.transcript.settings?.cwd ?? nextFolder ?? tui.startup.cwd,
+    folder: () => chatSession.transcript.settings?.folder ?? nextFolder ?? tui.startup.folder,
     signal: mount.signal,
     enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
-    onChange: () => tui.requestFrame(),
     onError: (error) => ctx.notify("error", `A completion failed: ${failureOf(error)}`),
   });
+  completions.addChangeListener(() => tui.requestFrame());
   // The word of a draft that Enter runs as a command gets its style, so a user sees it before the key.
   const composerExtension = composer.extend(mount.signal);
   const markCommand = (): void => {
@@ -353,7 +352,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     return {
       model: { provider: chosen.provider, model: chosen.model.id },
       settings: { reasoning: reasoning.settings, toolChoice: "auto" },
-      cwd: nextFolder ?? tui.startup.cwd,
+      folder: nextFolder ?? tui.startup.folder,
     };
   };
 
@@ -486,7 +485,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const row = await ctx.get("sessions").get(id);
       if (mount.signal.aborted || chatSession.id !== id) return;
       // A refused title stays in the field with its error.
-      await tui.input({
+      await tui.prompt({
         title: "Rename session",
         text: row.title ?? "",
         signal: mount.signal,
@@ -527,7 +526,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     get composer() {
       return composer;
     },
-    get session() {
+    get sessionId() {
       return chatSession.id;
     },
     get transcript() {
@@ -612,10 +611,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     width: number,
   ) => {
     let at = row;
-    return views.map(({ view: shown, height }) => {
-      const rect = { column: 0, row: at, width, height };
-      at += height;
-      return { view: shown, rect };
+    return views.map((entry) => {
+      const rect = { column: 0, row: at, width, height: entry.height };
+      at += entry.height;
+      return { view: entry.view, rect };
     });
   };
   /** The frame around the input: its view places the input, so a click and the cursor stay local to the input. */
@@ -672,7 +671,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const workingRow = working.active && free > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need. When rows run out, the strip keeps the
       // newest messages.
-      const list = chatComposer.waiting;
+      const list = chatComposer.waitingMessages;
       const above = Math.max(0, free - workingRow);
       shown = list.slice(Math.max(0, list.length - above));
       // Plugin views get the rows that the strip leaves, at most half the rows above the frame.
@@ -794,7 +793,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (occupied()) return;
     // The server keeps a session with a turn or a job open after the pane lets go of it.
     const running = working.active || (chatSession.handle?.jobs().length ?? 0) > 0;
-    nextFolder = chatSession.transcript.settings?.cwd ?? nextFolder;
+    nextFolder = chatSession.transcript.settings?.folder ?? nextFolder;
     chatComposer.setDraft(EMPTY);
     chatSession.leave();
     if (running) ctx.notify("info", "The session is still running: use /sessions to check it");
@@ -807,7 +806,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     newSession,
     status: () => ({
       bound: chatSession.id !== undefined,
-      nextFolder: nextFolder ?? tui.startup.cwd,
+      nextFolder: nextFolder ?? tui.startup.folder,
       settings: chatSession.transcript.settings,
       usage: chatSession.transcript.usage,
       // A plugin shows its own jobs, as a subagent list does, so the bar counts only the commands.
@@ -826,14 +825,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     olderMessage,
     newerMessage: () => chatComposer.newerMessage(),
     clear: () => {
-      if (composer.state.text === "") chatSession.handle?.cancel();
+      if (composer.state.text === "") chatSession.handle?.cancelTurn();
       else chatComposer.setDraft(EMPTY);
     },
     moveJobsToBackground: () => chatSession.handle?.moveJobsToBackground(),
     interrupt: () => {
       const back = locked()?.back;
       if (view.selection !== undefined) view.selection = undefined;
-      else if (back === undefined) chatSession.handle?.cancel();
+      else if (back === undefined) chatSession.handle?.cancelTurn();
       else {
         show(back).catch((error: unknown) => {
           if (!mount.signal.aborted) ctx.notify("error", `The session ${back} did not open: ${String(error)}`);

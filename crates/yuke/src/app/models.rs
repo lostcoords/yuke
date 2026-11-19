@@ -9,7 +9,7 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use yuke_agent::{Store, blob_of};
 use yuke_ai::{BlobStore, Block, Digest, Media, Request};
-use yuke_engine::{CancellationToken, Driver, Model};
+use yuke_engine::{CancellationToken, Driver, ModelAccess};
 use yuke_js::{CompleteAnswer, CompleteRequest, Models, SideRequest};
 use yuke_protocol::SessionId;
 
@@ -79,7 +79,7 @@ impl Models for PluginModels {
 /// Send `request` to `model` through the transport of `shared`. Answer with the text, the finish, and the usage of the
 /// answer.
 async fn send(
-    model: &Model,
+    model: &ModelAccess,
     request: Request<'_>,
     shared: &Shared,
     cancel: &CancellationToken,
@@ -328,7 +328,7 @@ mod tests {
         let settings = yuke_protocol::SessionSettings {
             model: reference.clone(),
             settings: yuke_ai::RequestSettings::new(),
-            cwd: std::env::temp_dir(),
+            folder: std::env::temp_dir(),
         };
         let session = app.shared.store.create_session(&settings, &[], None).await.unwrap();
         let blob = app

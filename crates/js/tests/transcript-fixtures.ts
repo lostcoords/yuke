@@ -20,7 +20,7 @@ export const settings: SessionSettings = {
     reasoning: {},
     toolChoice: "auto",
   },
-  cwd: "/w",
+  folder: "/w",
 };
 
 /** The saved event `seq` with the commit fields of `fields`, which consumed `consumed`. */

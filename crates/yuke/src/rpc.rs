@@ -40,9 +40,6 @@ const OUTGOING_LIMIT: usize = 8192;
 /// The size at which a write stops taking queued lines. A single longer line still goes out whole.
 const BATCH_BYTES: usize = 64 * 1024;
 
-/// The wait after a failed accept, so an error that repeats does not spin the server or fill stderr.
-const ACCEPT_RETRY: Duration = Duration::from_secs(1);
-
 /// The input and the output of one client.
 pub(crate) struct Stream {
     input: Box<dyn AsyncRead + Unpin>,
@@ -71,7 +68,8 @@ pub(crate) enum Clients {
 pub(crate) struct Socket {
     listener: UnixListener,
     path: PathBuf,
-    lock: File,
+    /// The open file holds the lock. The close of the file releases it.
+    _lock: File,
 }
 
 impl Socket {
@@ -107,26 +105,21 @@ impl Socket {
         let socket = Socket {
             listener: UnixListener::bind(path).map_err(failure)?,
             path: path.to_path_buf(),
-            lock,
+            _lock: lock,
         };
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(failure)?;
         Ok(socket)
     }
 
-    /// The next client. A failed accept waits and tries again.
-    async fn accept(&self) -> Stream {
-        loop {
-            match self.listener.accept().await {
-                Ok((stream, _)) => {
-                    let (input, output) = stream.into_split();
-                    return Stream::new(input, output);
-                }
-                Err(error) => {
-                    warn(&format!("{}: {error}", self.path.display()));
-                    tokio::time::sleep(ACCEPT_RETRY).await;
-                }
-            }
-        }
+    /// The next client.
+    async fn accept(&self) -> Result<Stream, String> {
+        let (stream, _) = self
+            .listener
+            .accept()
+            .await
+            .map_err(|error| format!("{}: {error}", self.path.display()))?;
+        let (input, output) = stream.into_split();
+        Ok(Stream::new(input, output))
     }
 }
 
@@ -134,10 +127,6 @@ impl Drop for Socket {
     fn drop(&mut self) {
         if let Err(error) = std::fs::remove_file(&self.path) {
             warn(&format!("{}: {error}", self.path.display()));
-        }
-        // A job process holds a copy of the file until its exec, and the copy keeps the lock. So the unlock is explicit.
-        if self.lock.unlock().is_err() {
-            // The close of the file releases the lock when no copy lives, so nothing is left to do.
         }
     }
 }
@@ -148,7 +137,7 @@ impl Drop for Socket {
 ///
 /// # Errors
 ///
-/// Returns a text for the user when the server cannot start.
+/// Returns a text for the user when the server cannot start, or when the socket stops to accept clients.
 pub(crate) async fn serve(
     machine: Machine,
     drain_limit: Duration,
@@ -183,17 +172,24 @@ pub(crate) async fn serve(
         attachments: HashMap::new(),
     };
     tokio::pin!(shutdown);
+    let mut failure = None;
     // Each request runs to its end before the next client or the shutdown, because the methods of the app are not cancel
     // safe. The answers of the client wait behind it too, so a method must not wait for a plugin request.
     loop {
         tokio::select! {
             () = &mut shutdown => break,
-            stream = accept(socket.as_ref()) => {
-                if let Some(old) = current.take() {
-                    old.retire(&active, drain_limit);
+            stream = accept(socket.as_ref()) => match stream {
+                Ok(stream) => {
+                    if let Some(old) = current.take() {
+                        old.retire(&active, drain_limit);
+                    }
+                    current = Some(Connection::open(stream, &active));
                 }
-                current = Some(Connection::open(stream, &active));
-            }
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            },
             line = next_line(&mut current) => match (line, current.as_mut()) {
                 (Some(line), Some(connection)) => server.handle(connection, &line).await,
                 _ if socket.is_none() => break,
@@ -212,11 +208,11 @@ pub(crate) async fn serve(
     if let Some(connection) = current {
         connection.close(drain_limit).await;
     }
-    Ok(())
+    failure.map_or(Ok(()), Err)
 }
 
 /// The next client of `socket`. With no socket, it never comes.
-async fn accept(socket: Option<&Socket>) -> Stream {
+async fn accept(socket: Option<&Socket>) -> Result<Stream, String> {
     match socket {
         Some(socket) => socket.accept().await,
         None => std::future::pending().await,
@@ -598,9 +594,8 @@ impl ActiveClient {
             ResponseOutcome::Result(value) => Ok(value),
             ResponseOutcome::Error(error) => Err(error),
         };
-        if sender.send(answer).is_err() {
-            // The plugin stopped waiting, and its cancel comes next.
-        }
+        // The plugin stopped waiting, and its cancel comes next.
+        _ = sender.send(answer);
     }
 }
 

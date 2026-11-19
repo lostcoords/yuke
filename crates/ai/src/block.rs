@@ -51,7 +51,7 @@ pub struct Origin {
 
 impl Origin {
     /// The same origin, borrowed.
-    pub fn as_borrowed(&self) -> OriginRef<'_> {
+    pub(crate) fn as_borrowed(&self) -> OriginRef<'_> {
         OriginRef {
             model: &self.model,
             base_url: &self.base_url,
@@ -128,7 +128,9 @@ impl From<ReasoningReplayRef<'_>> for ReasoningReplay {
 
 /// A kind of content: what an attachment holds, and what a model reads or writes. `Other` is a media type that no
 /// protocol names, and no model lists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
 pub enum Modality {
     /// Text.
     Text,
@@ -349,7 +351,7 @@ impl TextPhase {
     }
 
     /// The phase of the OpenAI Responses name `name`, or `None` for a name that the library does not know.
-    pub fn from_responses(name: &str) -> Option<Self> {
+    pub(crate) fn from_responses(name: &str) -> Option<Self> {
         match name {
             "commentary" => Some(Self::Commentary),
             "final_answer" => Some(Self::FinalAnswer),
@@ -420,7 +422,7 @@ pub struct Reasoning {
 impl Reasoning {
     /// The state a request to `target` may carry: the state of the same model at the same host in the protocol of
     /// `target`, or `None`. One host can serve one model over two protocols.
-    pub fn replay_to(&self, target: &Target) -> Option<(ReplayKind, &str)> {
+    pub(crate) fn replay_to(&self, target: &Target) -> Option<(ReplayKind, &str)> {
         let replay = self.replay.as_ref()?;
         // An empty encrypted content carries nothing. An empty Anthropic signature still replays.
         let empty = replay.kind == ReplayKind::ResponsesEncrypted && replay.data.is_empty();

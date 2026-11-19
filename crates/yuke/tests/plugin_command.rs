@@ -84,7 +84,7 @@ fn list_shows_why_a_plugin_does_not_load_and_how_to_install_a_missing_one() {
     std::fs::create_dir_all(root.join("config/yuke/broken")).unwrap();
     std::fs::write(
         root.join("config/yuke/broken/plugin.json"),
-        r#"{ "name": "broken", "extensions": { "sh.yuke": { "entry": "main.py" } } }"#,
+        r#"{ "name": "broken", "extensions": { "sh.yuke": { "activation": {} } } }"#,
     )
     .unwrap();
     std::fs::write(
@@ -96,12 +96,16 @@ fn list_shows_why_a_plugin_does_not_load_and_how_to_install_a_missing_one() {
     let listed = yuke(&root, &["list"]);
 
     assert_eq!(listed.status.code(), Some(0));
+    let manifest = root.join("config/yuke/broken/plugin.json").canonicalize().unwrap();
     assert_eq!(
         texts(&listed).0,
-        "NAME    STATE          SOURCE\n\
+        format!(
+            "NAME    STATE          SOURCE\n\
          broken  failed         ./broken\n\
-         \x20       plugin broken did not load: entry: 'main.py' is not a .ts or a .js file\n\
+         \x20       Plugin broken did not load: {manifest}: extensions.\"sh.yuke\": unknown field `activation`, expected one of `entry`, `uses`, `provides`\n\
          sun     not installed  https://h/tools (folder plugins/sun)\n\
-         `yuke plugin sync` installs the plugins that are not installed.\n"
+         `yuke plugin sync` installs the plugins that are not installed.\n",
+            manifest = manifest.display()
+        )
     );
 }

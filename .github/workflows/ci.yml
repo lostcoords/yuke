@@ -57,6 +57,20 @@ jobs:
         if: ${{ !cancelled() }}
         run: mise exec -- python3 tools/test-builder.py
 
+      - name: Check the API documentation
+        if: ${{ !cancelled() }}
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: mise exec -- cargo doc --workspace --locked --no-deps --all-features
+
+      # Build each crate with its own features only, so a feature that another crate turns on hides no gap.
+      - name: Check each crate alone
+        if: ${{ !cancelled() }}
+        run: |
+          for manifest in crates/*/Cargo.toml; do
+            mise exec -- cargo check --manifest-path "$manifest" --locked --all-targets
+          done
+
   test:
     name: Test (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}

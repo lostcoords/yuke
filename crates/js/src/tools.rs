@@ -38,7 +38,7 @@ pub trait SessionHost: MediaStore {
     fn parent(&self) -> Option<yuke_protocol::SessionId>;
 
     /// The working folder of the session now. Relative paths and commands of the tools start here.
-    fn cwd(&self) -> PathBuf;
+    fn folder(&self) -> PathBuf;
 
     /// Whether the session closed. A close must set this before it stops the jobs of the session. A job start then fails.
     fn is_closed(&self) -> bool;
@@ -82,7 +82,7 @@ pub trait SessionHost: MediaStore {
     fn model(
         &self,
         reference: &yuke_protocol::ModelReference,
-    ) -> Result<yuke_engine::Model, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<yuke_engine::ModelAccess, Box<dyn std::error::Error + Send + Sync>>;
 
     /// The settings of the session now. A saved change of the settings takes effect at once.
     fn settings(&self) -> yuke_protocol::SessionSettings;
@@ -314,7 +314,7 @@ impl fmt::Debug for ScriptTool {
         f.debug_struct("ScriptTool")
             .field("id", &self.id)
             .field("concurrency", &self.concurrency)
-            .field("folder", &self.host.cwd())
+            .field("folder", &self.host.folder())
             .finish_non_exhaustive()
     }
 }
@@ -384,7 +384,7 @@ impl ScriptTool {
         output: mpsc::UnboundedSender<String>,
     ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         // One folder for the whole call: the context, the commands, and the media paths of the answer.
-        let folder = self.host.cwd();
+        let folder = self.host.folder();
         let Some(folder_text) = folder.to_str().map(str::to_owned) else {
             return Err(Error::Folder(folder).into());
         };
@@ -401,9 +401,8 @@ impl ScriptTool {
                 let output = caught(
                     &ctx,
                     Function::new(ctx.clone(), move |text: String| {
-                        if output.send(text).is_err() {
-                            // The call has answered, so a late text has no reader.
-                        }
+                        // The call has answered, so a late text has no reader.
+                        _ = output.send(text);
                     }),
                 )?;
                 // A cancel of the call stops its commands. The guard also stops them when the call ends or drops.
@@ -417,7 +416,7 @@ impl ScriptTool {
                     arguments: JsonText(arguments),
                     session_id,
                     call_id,
-                    cwd: folder_text,
+                    folder: folder_text,
                     output,
                     call,
                 };
@@ -514,7 +513,7 @@ struct CallRequest<'js> {
     session_id: String,
     call_id: String,
     /// The working folder of the session at the start of the call.
-    cwd: String,
+    folder: String,
     /// Sends one text of the call to the consumer.
     output: Function<'js>,
     /// The natives that need the session or the life of the call.

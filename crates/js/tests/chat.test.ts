@@ -1,7 +1,10 @@
-// The tests use the blocks of `yuke:chat` without a pane. They cover the sessions, the pages, the composer, the
+// The tests use the chat blocks without a pane. They cover the sessions, the pages, the composer, the
 // questions, and the working row.
 
-import { ChatComposer, ChatQuestions, ChatSession, ChatWorking } from "yuke:chat";
+import { ChatComposer } from "yuke:internal/chat/composer";
+import { ChatQuestions } from "yuke:internal/chat/questions";
+import { ChatSession } from "yuke:internal/chat/session";
+import { ChatWorking } from "yuke:internal/chat/working";
 import type { Sessions } from "yuke:plugins";
 import type { StoredEvent } from "yuke:protocol";
 import { assertEquals, test, waitForSettled } from "yuke:test";
@@ -263,7 +266,10 @@ test("older recalls the newest waiting message, and gives taken when a turn took
   const text = editor.state.text;
   sessions.state.removed = false;
   const taken = await composer.olderMessage();
-  assertEquals([recalled, text, taken, composer.waiting.map((entry) => entry[0])], [undefined, "newest", "taken", [5]]);
+  assertEquals(
+    [recalled, text, taken, composer.waitingMessages.map((entry) => entry[0])],
+    [undefined, "newest", "taken", [5]],
+  );
 });
 
 test("the questions show the first open one, a cancel answers it once, and a refused answer goes to failed and stays open", async () => {

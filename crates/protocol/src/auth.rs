@@ -45,7 +45,7 @@ pub struct LogoutParams {
 pub struct SetApiKeyParams {
     /// The id of a provider with an API key variable, as `catalog/list` gives it.
     pub provider: String,
-    /// The API key. It is not empty and has no control character.
+    /// The API key. It is not empty.
     pub api_key: String,
 }
 

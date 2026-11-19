@@ -118,7 +118,7 @@ declare module "yuke:test" {
 
   /**
    * A frame test of `size`. `create` makes the root view. Without it, the root is the pane tree. `startup` is the
-   * `tui.startup` of each surface. The default is `{ cwd: "/" }`, and a missing `version` is `0.0.0`.
+   * `tui.startup` of each surface. The default is `{ folder: "/" }`, and a missing `version` is `0.0.0`.
    */
   export function createFrame(
     size: Size,
@@ -381,7 +381,7 @@ declare module "yuke:test" {
   /** The decision of the host at each hook point, after each handler ran. */
   export interface HookResults {
     readonly "tool.before": "run" | { readonly deny: string };
-    readonly "tool.after": ToolOutcome;
+    readonly "tool.after": TestToolResult;
     readonly "round.before": RoundPlan;
     readonly "round.retry": RoundPlan | undefined;
     readonly "round.after": "proceed" | "stop";
@@ -399,8 +399,8 @@ declare module "yuke:test" {
     readonly bytes: Uint8Array;
   }
 
-  /** The result of a tool call. */
-  export interface ToolOutcome {
+  /** The result of a tool call as the host gives it back: a `ToolCallResult` with the bytes of its media. */
+  export interface TestToolResult {
     readonly text: string;
     readonly isError: boolean;
     readonly media: readonly TestMedia[];
@@ -408,8 +408,8 @@ declare module "yuke:test" {
     readonly display: readonly DisplayBlock[];
   }
 
-  /** The result of `call`. */
-  export interface CallOutcome extends ToolOutcome {
+  /** The result of `call`: the result of the tool, and the live texts of the call. */
+  export interface TestCallResult extends TestToolResult {
     /** The live texts of the call, in order. */
     readonly output: readonly string[];
   }
@@ -436,7 +436,7 @@ declare module "yuke:test" {
       options?: OperationOptions,
     ) => Promise<HookResults[K]>;
     /** Call the tool `tool` with `args`, as a turn does. */
-    readonly call: (tool: string, args: unknown, options?: OperationOptions) => Promise<CallOutcome>;
+    readonly call: (tool: string, args: unknown, options?: OperationOptions) => Promise<TestCallResult>;
     /** The settings of the session now. */
     readonly settings: SessionSettings;
     /** Save `settings` as the settings of the session. It fails while a turn runs or input waits. */

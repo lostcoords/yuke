@@ -123,7 +123,7 @@ interface OpenRequest {
   readonly open: number;
   readonly sessionId: string;
   readonly parent: string | undefined;
-  readonly cwd: string;
+  readonly folder: string;
   readonly ask: Ask;
   readonly request: SendRequest;
   /** The settings of the session now. */
@@ -136,9 +136,9 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession(request: OpenRequest): void {
-  const { open, sessionId, parent, cwd, ask, settings, startJob } = request;
+  const { open, sessionId, parent, folder, ask, settings, startJob } = request;
   const scopes = sessionExports.map((entry) =>
-    start(open, sessionId, parent, cwd, ask, request.request, settings, startJob, entry),
+    start(open, sessionId, parent, folder, ask, request.request, settings, startJob, entry),
   );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
@@ -318,7 +318,7 @@ async function sideRequest(
   options: SideRequestOptions,
 ): Promise<TextAnswer> {
   const { prompt, blockCount: blocks = head.length + kept, maxOutputTokens, signal } = options;
-  const request = { head: jsonCopy(head), kept, blocks, prompt, maxOutputTokens };
+  const request = { head, kept, blocks, prompt, maxOutputTokens };
   return Object.freeze(await underStop(signal, () => round.sideRequest(request)));
 }
 
@@ -356,7 +356,7 @@ function startRoundPlan<K extends RoundPoint>(
       (handler) => {
         // The event shows the context that this handler sees, also after the answers of the later handlers.
         const seen = { head, kept };
-        const tokens = () => round.tokens(jsonCopy(seen.head), seen.kept);
+        const tokens = () => round.tokens(seen.head, seen.kept);
         // `inputTokens` counts the old context, so after a replacement only the estimate of each block holds.
         const replaced = seen.head.length > 0 || seen.kept !== blocks;
         const event = Object.freeze({
@@ -368,7 +368,7 @@ function startRoundPlan<K extends RoundPoint>(
           blockTokens: tokens,
           blocks: () => {
             const before = round.context();
-            return [...jsonCopy(seen.head), ...before.slice(before.length - seen.kept)];
+            return [...seen.head, ...before.slice(before.length - seen.kept)];
           },
           sideRequest: (options: SideRequestOptions) => sideRequest(round, seen.head, seen.kept, options),
           signal,
@@ -378,7 +378,7 @@ function startRoundPlan<K extends RoundPoint>(
       (answer, plugin) => {
         if (answer.replace !== undefined) {
           const keep = answer.replace.keep;
-          const given = jsonCopy(answer.replace.head);
+          const given = answer.replace.head;
           // A keep past the kept blocks also keeps the end of the earlier head.
           const keeps = Math.min(keep, head.length + kept);
           head = keeps <= kept ? given : [...given, ...head.slice(head.length - (keeps - kept))];
@@ -391,7 +391,7 @@ function startRoundPlan<K extends RoundPoint>(
         if (answer.settings !== undefined) {
           plan.settings = {
             plugin,
-            changes: { ...plan.settings?.changes, ...jsonCopy(answer.settings) },
+            changes: { ...plan.settings?.changes, ...answer.settings },
           };
         }
         answered = true;
@@ -622,7 +622,7 @@ function start(
   open: number,
   sessionId: string,
   parent: string | undefined,
-  cwd: string,
+  folder: string,
   ask: Ask,
   send: SendRequest,
   settings: () => SessionSettings,
@@ -714,16 +714,16 @@ function start(
     );
     return await outcome.promise;
   };
-  const s: SessionContext<Options> = Object.freeze({
+  const s: SessionContext<Options> = {
     sessionId,
     parent,
-    cwd,
+    folder,
     get settings(): SessionSettings {
       return frozen(settings());
     },
     options,
     signal,
-    tools: Object.freeze({
+    tools: {
       add<const S extends ObjectSchema>(tool: Tool<S>): () => void {
         if (scope.closed) throw new TypeError(`plugin ${plugin} defines a tool after the end of its session`);
         const registration = defineTool(tool, { open, plugin }, (call) => ({
@@ -746,12 +746,12 @@ function start(
         scope.toolChanges.push(id);
         return () => unregister([id]);
       },
-    }),
-    jobs: Object.freeze({
+    },
+    jobs: {
       async start(job: JobOptions, work: JobWork): Promise<void> {
         await runJob(job, work, undefined);
       },
-    }),
+    },
     addHook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {
       if (scope.closed) throw new TypeError(`plugin ${plugin} adds a hook after the end of its session`);
       const handlers: SessionHooks[K][] = scope.hooks[point];
@@ -793,7 +793,7 @@ function start(
       if (ended.aborted) return undefined;
       return await underSignal(ended, () => ask(plugin, { kind: "questions", questions: [...questions] }));
     },
-  });
+  };
   scope.settled = (async () => {
     try {
       return await session(s);

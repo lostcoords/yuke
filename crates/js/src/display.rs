@@ -26,10 +26,10 @@ pub struct Interface {
 #[serde(rename_all = "camelCase")]
 pub struct Startup {
     /// The folder that yuke started in.
-    pub cwd: String,
+    pub folder: String,
     /// The session of `--continue` or `--resume`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session: Option<SessionId>,
+    pub session_id: Option<SessionId>,
     /// The version of yuke.
     pub version: String,
 }
@@ -147,9 +147,8 @@ impl Display {
     }
 
     pub(crate) fn ask(&self, request: DisplayRequest) {
-        if self.requests.send(request).is_err() {
-            // The host dropped the receiver, so it answers no request.
-        }
+        // The host dropped the receiver, so it answers no request.
+        _ = self.requests.send(request);
     }
 
     pub(crate) fn take_inputs(&self) -> VecDeque<DisplayInput> {

@@ -10,7 +10,7 @@ import { rows } from "./rows.ts";
 /** Save the pick `p/m` at the level high, so a send needs no picker. */
 async function savedPick(): Promise<void> {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    cwd: folder(),
+    folder: folder(),
   });
 }
 
@@ -33,11 +33,11 @@ const SAVED = [
 
 test("/new empties the pane, ends the old handle, and shows the header with the saved model and the old folder", async () => {
   await savedPick();
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
-  const view = chat.tui.panes.active?.view as View;
+  const view = chat.tui.panes.activePane?.view as View;
   const before = items(chat);
   frame.key("/ n e w enter");
   await waitForSettled();
@@ -48,7 +48,7 @@ test("/new empties the pane, ends the old handle, and shows the header with the 
     [
       before,
       items(chat),
-      chat.chat.session(view),
+      chat.chat.sessionIdOf(view),
       chat.opened.map((open) => [open.id, open.signal.aborted]),
       shown.includes("old answer"),
       shown.includes("m high · /w"),
@@ -75,7 +75,7 @@ test("/new empties the pane, ends the old handle, and shows the header with the 
 
 test("the next message after /new creates a session in the folder of the old session", async () => {
   await savedPick();
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const sessions = fakeSessions(SAVED);
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -85,13 +85,13 @@ test("the next message after /new creates a session in the folder of the old ses
   await waitForSettled();
 
   assertEquals(
-    [sessions.created.map((settings) => settings.cwd), chat.opened.map((open) => open.id), sessions.inputs],
+    [sessions.created.map((settings) => settings.folder), chat.opened.map((open) => open.id), sessions.inputs],
     [["/w"], ["s1", "s-new"], [[{ kind: "userText", text: "hi" }]]],
   );
 });
 
 test("ctrl+k n empties a draft", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
@@ -100,13 +100,13 @@ test("ctrl+k n empties a draft", async () => {
   frame.draw();
 
   assertEquals(
-    [chat.chat.session(chat.tui.panes.active?.view as View), rows(frame.frame).at(-2)],
+    [chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View), rows(frame.frame).at(-2)],
     [undefined, "Message…"],
   );
 });
 
 test("a pane with a session lists /new, and a pane without a session does not", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
@@ -122,7 +122,7 @@ test("a pane with a session lists /new, and a pane without a session does not", 
 });
 
 test("ctrl+k n during a send keeps the session and its handle", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const sessions = fakeSessions(SAVED);
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -136,13 +136,16 @@ test("ctrl+k n during a send keeps the session and its handle", async () => {
   await waitForSettled();
 
   assertEquals(
-    [chat.chat.session(chat.tui.panes.active?.view as View), chat.opened.map((open) => [open.id, open.signal.aborted])],
+    [
+      chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View),
+      chat.opened.map((open) => [open.id, open.signal.aborted]),
+    ],
     ["s1", [["s1", false]]],
   );
 });
 
 test("/new during a turn leaves the turn running and says so", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const sessions = fakeSessions(SAVED);
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -155,7 +158,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
 
   assertEquals(
     [
-      chat.chat.session(chat.tui.panes.active?.view as View),
+      chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View),
       sessions.state.cancels,
       chat.notices,
       shown.includes("Type / for commands"),
@@ -166,7 +169,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
 });
 
 test("/new with a running job of a subagent says that the work goes on", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const sessions = fakeSessions(SAVED);
   sessions.state.jobs = [{ id: "reader", label: "Read the store", state: "running", kind: "plugin", plugin: "agents" }];
   const chat = await loadChat(frame, sessions);
@@ -180,14 +183,14 @@ test("/new with a running job of a subagent says that the work goes on", async (
 
 test("a reload after /new keeps the folder of the old session", async () => {
   await savedPick();
-  using before = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using before = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   await loadChat(before, fakeSessions(SAVED));
   before.start();
   await waitForSettled();
   before.key("/ n e w enter");
   await waitForSettled();
   const snapshot = before.snapshot();
-  using after = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start" });
+  using after = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start" });
   const sessions = fakeSessions();
   const chat = await loadChat(after, sessions);
   after.start(snapshot);
@@ -196,11 +199,11 @@ test("a reload after /new keeps the folder of the old session", async () => {
   after.key("h i enter");
   await waitForSettled();
 
-  assertEquals([shown, sessions.created.map((settings) => settings.cwd)], [["chat:folder", "/w"], ["/w"]]);
+  assertEquals([shown, sessions.created.map((settings) => settings.folder)], [["chat:folder", "/w"], ["/w"]]);
 });
 
 test("a draft that a pane left before /new does not come back after a later return", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();

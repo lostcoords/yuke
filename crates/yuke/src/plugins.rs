@@ -152,7 +152,7 @@ impl Outcome {
     pub(crate) fn failure_text(&self) -> Option<String> {
         Some(match self.failure.as_ref()? {
             Failure::NotInstalled => format!(
-                "plugin {} did not load: it is not installed: /plugins or `yuke plugin sync` installs it",
+                "Plugin {} did not load: it is not installed · /plugins or `yuke plugin sync` installs it",
                 self.label()
             ),
             Failure::Invalid(text) => text.clone(),
@@ -247,7 +247,7 @@ fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data
                     None
                 }
                 Err(error) => Some(Failure::Invalid(format!(
-                    "plugin {} did not load: {error}",
+                    "Plugin {} did not load: {error}",
                     outcome.label()
                 ))),
             };
@@ -360,23 +360,7 @@ fn plugin_of(root: &Path, manifest: Manifest, data: &Path, options: Map<String, 
             .map_err(|error| format!("{}: extensions.\"{EXTENSION}\": {error}", path.display()))?,
         None => YukeFields::default(),
     };
-    let entry = match fields.entry {
-        None => None,
-        Some(entry) => {
-            let path = Path::new(&entry);
-            // The loader reads a module by these two extensions.
-            if !path
-                .extension()
-                .is_some_and(|extension| extension == "ts" || extension == "js")
-            {
-                return Err(format!("entry: '{entry}' is not a .ts or a .js file"));
-            }
-            Some(root.join(path))
-        }
-    };
-    if entry.is_none() && !fields.provides.is_empty() {
-        return Err("provides: a plugin without an entry cannot provide a service".to_owned());
-    }
+    let entry = fields.entry.map(|entry| root.join(entry));
     Ok(Plugin {
         data_dir: data.join("plugins").join(&manifest.name),
         name: manifest.name,
@@ -390,24 +374,14 @@ fn plugin_of(root: &Path, manifest: Manifest, data: &Path, options: Map<String, 
     })
 }
 
-/// Check the Agent Plugins name rule: 1 to 64 lowercase letters, digits, `-`, and `.`, a letter or a digit at each end,
-/// and no `--` or `..`.
+/// Check that `name` is one folder name, because the data folder of the plugin is `<data>/plugins/<name>`.
 pub(crate) fn valid_name(name: &str) -> Result<(), String> {
-    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.';
-    let ends = |c: Option<char>| c.is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
-    let valid = (1..=64).contains(&name.len())
-        && name.chars().all(allowed)
-        && ends(name.chars().next())
-        && ends(name.chars().last())
-        && !name.contains("--")
-        && !name.contains("..");
-    if valid {
-        Ok(())
-    } else {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
         Err(format!(
-            "name: '{name}' must be 1 to 64 lowercase letters, digits, '-', or '.', start and end with a letter or a \
-             digit, and have no '--' or '..'"
+            "name: '{name}' must be a folder name: not empty, not '.' or '..', and with no '/' or '\\'"
         ))
+    } else {
+        Ok(())
     }
 }
 

@@ -1,12 +1,6 @@
-/** This module holds `ChatCompletions` of `yuke:chat`: the list of the completions of the draft of a composer. */
+/** This module holds `ChatCompletions`: the list of the completions of the draft of a composer. */
 
-import type {
-  ChatCompletionsOptions,
-  CompletionContext,
-  CompletionItem,
-  CompletionList,
-  CompletionProvider,
-} from "yuke:chat";
+import type { CompletionContext, CompletionItem, CompletionList, CompletionProvider } from "yuke:chat";
 import { EMPTY } from "yuke:internal/chat/composer";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
 import { type Canvas, measure, strokeOf, type TextEditor, type View } from "yuke:tui";
@@ -14,9 +8,41 @@ import { type Canvas, measure, strokeOf, type TextEditor, type View } from "yuke
 /** The most rows of the list. */
 const ROWS = 6;
 
+export interface ChatCompletionsOptions {
+  /** The providers to ask, the first one first. The first list with an item shows. */
+  readonly providers: () => readonly CompletionProvider[];
+  /** The folder of `CompletionContext.folder`. */
+  readonly folder: () => string;
+  /** Its abort removes the watch of the editor and aborts the open ask. */
+  readonly signal: AbortSignal;
+  /** While this gives `false`, the list shows nothing and takes no key. */
+  readonly enabled: () => boolean;
+  /** Gets the throw or the rejection of a provider. The ask then goes on to the next provider. */
+  readonly onError: (error: unknown) => void;
+}
+
+/**
+ * The list of the completions of the draft of a composer. Each change of the draft or of the caret asks the
+ * providers again and aborts the ask before it. While an ask waits, the list shows nothing. Up and Down move the
+ * selection. Tab writes the selected item. Enter runs it, or writes it when it has no `run`. Esc hides the list until
+ * the next edit. A draft without a list stays a message, so Enter sends it.
+ *
+ * ```ts
+ * const completions = new ChatCompletions(editor, {
+ *   providers: () => providers,
+ *   folder: () => sessionFolder,
+ *   signal: mount.signal,
+ *   enabled: () => true,
+ *   onError: (error) => ctx.notify("error", String(error)),
+ * });
+ * completions.addChangeListener(() => tui.requestFrame());
+ * // in layout: { view: completions.view, rect: { column: 0, row: editorRow - completions.rows, width, height: completions.rows } }
+ * ```
+ */
 export class ChatCompletions {
   readonly #editor: TextEditor;
   readonly #options: ChatCompletionsOptions;
+  readonly #listeners = new Set<() => void>();
   /** The list of the last answer, or `undefined` while no provider gave one. */
   #list: CompletionList | undefined;
   #ask: AbortController | undefined;
@@ -35,10 +61,18 @@ export class ChatCompletions {
     this.#start();
   }
 
+  /** The count of rows that the list needs now: at most 6, and 0 without a list. */
   get rows(): number {
     return Math.min(ROWS, this.#items().length);
   }
 
+  /** Call `listener` when a list comes later than the change of the draft, so the owner asks for a frame. */
+  addChangeListener(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  /** The view of the list. A place with fewer rows than `rows` scrolls the list to the selected item. */
   readonly view: View = {
     draw: (canvas: Canvas): void => {
       const items = this.#items();
@@ -82,7 +116,7 @@ export class ChatCompletions {
     const context: CompletionContext = {
       text: this.#editor.state.text,
       caret: this.#editor.caret,
-      cwd: this.#options.cwd(),
+      folder: this.#options.folder(),
       signal: AbortSignal.any([ask.signal, this.#options.signal]),
     };
     this.#next(this.#options.providers(), 0, context);
@@ -107,7 +141,7 @@ export class ChatCompletions {
               return;
             }
             this.#list = list;
-            this.#options.onChange();
+            for (const listener of [...this.#listeners]) listener();
           },
           (error: unknown) => {
             if (context.signal.aborted) return;

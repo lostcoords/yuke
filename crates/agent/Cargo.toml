@@ -1,10 +1,11 @@
 [package]
 name = "yuke-agent"
-version = "0.0.1-dev"
+version.workspace = true
 description = "Durable sessions that run yuke-engine turns and save each commit in a store."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [features]
@@ -20,6 +21,8 @@ yuke-engine = { path = "../engine" }
 yuke-protocol = { path = "../protocol" }
 
 [dev-dependencies]
+# The integration tests use the shared fixtures of the `testing` feature.
+yuke-agent = { path = ".", features = ["testing"] }
 yuke-ai = { path = "../ai", default-features = false, features = ["scripted"] }
 yuke-testing = { path = "../testing" }
 tokio = { version = "1.53", features = ["macros", "rt"] }

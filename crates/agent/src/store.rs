@@ -80,7 +80,7 @@ pub trait Store: Send + Sync {
     async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError>;
 
     /// The saved facts of at most `limit` sessions after `after`, newest first: the newest turn start, turn end, or
-    /// settings change orders them. A fork saves its copied events anew, so it comes first. With `cwd`, only the
+    /// settings change orders them. A fork saves its copied events anew, so it comes first. With `folder`, only the
     /// sessions whose newest settings name that folder count. With `parent`, only the sessions of that parent count, and
     /// `None` takes the sessions without a parent. `None` for `after` starts at the newest session.
     ///
@@ -89,7 +89,7 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::Failed`] when the load fails.
     async fn list_sessions(
         &self,
-        cwd: Option<&Path>,
+        folder: Option<&Path>,
         parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,

@@ -203,10 +203,9 @@ async fn fire(ctx: Ctx<'_>, timers: Rc<Timers>, faults: mpsc::UnboundedSender<Re
         for id in timers.due_ids(Instant::now()) {
             let Some(timer) = timers.start(id) else { continue };
             // The main loop reports each interrupt once, so a callback reports only its throw.
-            if let Err(Error::Script(error)) = call(&ctx, &timer)
-                && faults.send(Report::Fault(error)).is_err()
-            {
+            if let Err(Error::Script(error)) = call(&ctx, &timer) {
                 // The owner dropped the receiver, so it ignores faults.
+                _ = faults.send(Report::Fault(error));
             }
             // The promise reactions of a callback run before the next callback, as on the web.
             while ctx.execute_pending_job() {}

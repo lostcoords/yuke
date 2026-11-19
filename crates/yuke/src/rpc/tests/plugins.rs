@@ -30,7 +30,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     let notice = started.iter().find(|message| message["method"] == "notice").unwrap();
     assert_eq!(
         notice["params"]["text"],
-        "plugin clock did not load: it is not installed: /plugins or `yuke plugin sync` installs it"
+        "Plugin clock did not load: it is not installed · /plugins or `yuke plugin sync` installs it"
     );
     let source = json!({ "git": url, "folder": "plugins/clock" });
     assert_eq!(
@@ -67,7 +67,24 @@ async fn a_plugin_that_does_not_load_at_the_start_lists_as_failed_with_its_reaso
     assert_eq!(listed["plugins"][1]["load"], json!({ "kind": "loaded" }));
     assert_eq!(listed["plugins"][0]["load"]["kind"], "failed");
     let error = listed["plugins"][0]["load"]["error"].as_str().unwrap();
-    assert!(error.starts_with("plugin broken did not load: Error: no"), "{error}");
+    assert!(error.starts_with("Plugin broken did not load: Error: no"), "{error}");
+    client.end().await;
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_bad_plugin_request_is_invalid_params_and_a_failed_git_call_is_an_internal_error() {
+    let place = Place::new("rpc", "plugins_error_codes");
+    let missing = place.work.join("no-such-repository").to_string_lossy().into_owned();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([]))).await;
+
+    let unknown = client
+        .call("plugin/remove", json!({ "name": "nope" }))
+        .await
+        .unwrap_err();
+    let failed = client.call("plugin/find", json!({ "git": missing })).await.unwrap_err();
+
+    assert_eq!(unknown["code"], json!(ResponseError::INVALID_PARAMS));
+    assert_eq!(failed["code"], json!(ResponseError::INTERNAL_ERROR));
     client.end().await;
 }
 

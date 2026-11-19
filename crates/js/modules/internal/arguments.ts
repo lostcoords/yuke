@@ -21,13 +21,7 @@ function checkObject(schema: ObjectSchema, value: Record<string, unknown>, prefi
       throw new Error(`Remove ${prefix}${name}. The fields are: ${names.join(", ")}.`);
     }
     if (field === null && !required.includes(name)) continue;
-    // An assignment to `__proto__` would set the prototype, so each field becomes an own property.
-    Object.defineProperty(checked, name, {
-      value: checkValue(property, field, `${prefix}${name}`),
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
+    checked[name] = checkValue(property, field, `${prefix}${name}`);
   }
   for (const name of required) {
     // A required name that the properties lack has nothing to check.

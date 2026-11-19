@@ -8,14 +8,14 @@ import type { Mount, View, ViewFactory } from "yuke:tui";
  */
 export function createMount(closed: () => void): Mount {
   const controller = new AbortController();
-  return Object.freeze({
+  return {
     signal: controller.signal,
     close(): void {
       if (controller.signal.aborted) return;
       controller.abort();
       closed();
     },
-  });
+  };
 }
 
 /**

@@ -7,7 +7,7 @@ mod generated;
 use std::borrow::Cow;
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::oauth::Flow;
 use crate::{
@@ -78,7 +78,7 @@ pub struct Modalities {
 
 /// A limit the source does not publish stays `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct Limits {
     /// The context window in tokens.
     pub context_window: Option<u64>,
@@ -86,21 +86,27 @@ pub struct Limits {
     pub max_output_tokens: Option<u64>,
 }
 
-/// The prices of one band, in US dollars per million tokens. A `None` price is unknown, and never zero.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// The prices of one band, in US dollars per million tokens. A missing price is unknown, and never zero.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct PriceBand {
     /// The smallest prompt this band prices. The prompt counts every input token, the cached ones too.
     pub min_prompt_tokens: u64,
     /// The price of an input token.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<f64>,
     /// The price of an output token.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<f64>,
     /// A reasoning token is also an output token. This price replaces the output price for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<f64>,
     /// The price of a token read from the prompt cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_read: Option<f64>,
     /// The price of a token written to the prompt cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write: Option<f64>,
 }
 
@@ -326,10 +332,7 @@ impl std::error::Error for Error {}
 
 /// Split `provider/model` on the first slash, because a model id may hold further slashes.
 fn split(selector: &str) -> Result<(&str, &str), Error> {
-    match selector.split_once('/') {
-        Some((provider, model)) if !provider.is_empty() && !model.is_empty() => Ok((provider, model)),
-        _ => Err(Error::MalformedSelector),
-    }
+    selector.split_once('/').ok_or(Error::MalformedSelector)
 }
 
 /// One catalog model and its provider, borrowed from a provider table.
@@ -546,13 +549,10 @@ mod tests {
         assert_eq!(lookup_in(&table, "host/nope").err(), Some(Error::UnknownModel));
         // A model id may hold its own slash, so only the first one divides the selector.
         assert_eq!(lookup_in(&table, "host/amazon/nova").unwrap().model.id, "amazon/nova");
-        for malformed in ["host", "/claude", "host/"] {
-            assert_eq!(
-                lookup_in(&table, malformed).err(),
-                Some(Error::MalformedSelector),
-                "{malformed}"
-            );
-        }
+        assert_eq!(lookup_in(&table, "host").err(), Some(Error::MalformedSelector));
+        // An empty part names nothing.
+        assert_eq!(lookup_in(&table, "/claude").err(), Some(Error::UnknownProvider));
+        assert_eq!(lookup_in(&table, "host/").err(), Some(Error::UnknownModel));
     }
 
     #[test]

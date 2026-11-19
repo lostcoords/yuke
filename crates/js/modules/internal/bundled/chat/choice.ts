@@ -1,11 +1,11 @@
 /** The saved pick of the bundled chat in `choice.json`: the model and the level of the first session of a pane. */
 
 import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
-import type { ModelReference, ReasoningLevel } from "yuke:protocol";
+import type { ModelReference, ReasoningSelection } from "yuke:protocol";
 
 interface Choice {
   readonly model: ModelReference;
-  readonly reasoning: ReasoningLevel;
+  readonly reasoning: ReasoningSelection;
 }
 
 /** The pick of `value`, a parsed `choice.json`, or `undefined` when it has another shape. */
@@ -35,7 +35,7 @@ export class SavedChoice {
   static async load(dataDir: string, report: (error: unknown) => void): Promise<SavedChoice> {
     let choice: Choice | undefined;
     try {
-      choice = choiceOf(JSON.parse(await readTextFile("choice.json", { cwd: dataDir, fatal: true })));
+      choice = choiceOf(JSON.parse(await readTextFile("choice.json", { folder: dataDir, fatal: true })));
     } catch (error) {
       if (!(error instanceof FileSystemError && error.code === "ENOENT")) report(error);
     }
@@ -48,7 +48,7 @@ export class SavedChoice {
 
   /** Save `choice`. A failed write keeps the old pick. */
   async save(choice: Choice): Promise<void> {
-    await writeTextFile("choice.json", JSON.stringify(choice), { cwd: this.#dataDir, atomic: true });
+    await writeTextFile("choice.json", JSON.stringify(choice), { folder: this.#dataDir, atomic: true });
     this.#choice = choice;
   }
 }

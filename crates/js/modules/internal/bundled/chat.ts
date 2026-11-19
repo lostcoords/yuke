@@ -30,7 +30,7 @@ import type { PluginContext } from "yuke:plugins";
 import { env } from "yuke:process";
 import type { ModelInfo, SessionId } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
-import type { Mount, View } from "yuke:tui";
+import type { Mount, StatusEntry, View } from "yuke:tui";
 
 /** The cells of the gauge of the token share of the last answer. */
 const GAUGE = 6;
@@ -237,7 +237,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         throw error;
       }
     },
-    session: (view) => panes.get(view)?.session(),
+    sessionIdOf: (view) => panes.get(view)?.session(),
     addChangeListener: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -289,14 +289,14 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     const jobs = new Set(data.jobs.map((job) => job.id));
     work.set(data.sessionId, { parent: data.parent, turn: data.state === "running", jobs });
   });
-  ctx.addListener("session.update", ({ sessionId, update }) => {
-    const entry = work.get(sessionId);
+  ctx.addListener("session.update", (data) => {
+    const entry = work.get(data.sessionId);
     if (entry === undefined) return;
-    if (update.kind === "state") entry.turn = update.state === "running";
-    else if (update.kind === "job" && update.job.state === "running") entry.jobs.add(update.job.id);
-    else if (update.kind === "job") entry.jobs.delete(update.job.id);
+    if (data.update.kind === "state") entry.turn = data.update.state === "running";
+    else if (data.update.kind === "job" && data.update.job.state === "running") entry.jobs.add(data.update.job.id);
+    else if (data.update.kind === "job") entry.jobs.delete(data.update.job.id);
   });
-  ctx.addListener("session.closed", ({ sessionId }) => work.delete(sessionId));
+  ctx.addListener("session.closed", (data) => work.delete(data.sessionId));
   const chat: Chat = {
     ctx,
     tui,
@@ -327,7 +327,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   // The slash commands are the oldest provider, so a plugin can take their place.
   completionProviders.add({ provider: slashCompletions(tui.commands) });
   const active = (): PaneActions | undefined => {
-    const view = tui.panes.active?.view;
+    const view = tui.panes.activePane?.view;
     return view === undefined ? undefined : chat.panes.get(view);
   };
   // The models of the ready providers. A change of the providers reads them again.
@@ -376,7 +376,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
             choice.settings.effort === effort && JSON.stringify(choice.settings.thinking) === JSON.stringify(thinking),
         )?.level;
       const model = level === undefined ? settings.model.model : `${settings.model.model} ${level}`;
-      return { model, folder: shownFolder(settings.cwd) };
+      return { model, folder: shownFolder(settings.folder) };
     }
     const pick = chat.choice.current;
     const level = models
@@ -385,16 +385,23 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     const model = pick === undefined || level === undefined ? undefined : `${pick.model.model} ${level}`;
     return { model, folder: shownFolder(status.nextFolder) };
   };
+  // The remover of each shown item. A new `set` of an id replaces the item, so the older remover then does nothing.
+  const statusRemovers = new Map<string, () => void>();
+  /** Show the item `id` with `entry`, or no item for `undefined`. */
+  const showStatus = (id: string, entry: StatusEntry | undefined): void => {
+    if (entry === undefined) {
+      statusRemovers.get(id)?.();
+      statusRemovers.delete(id);
+    } else statusRemovers.set(id, tui.status.set(id, entry));
+  };
   /** Show the folder item with `text`, or no folder item. */
   const setFolder = (text: string | undefined): void => {
     // The folder gives way first in a narrow bar.
-    if (text === undefined) tui.status.delete("folder");
-    else tui.status.set("folder", { text, side: "left", order: 10, priority: -1 });
+    showStatus("folder", text === undefined ? undefined : { text, side: "left", order: 10, priority: -1 });
   };
   /** Show the model item with `text`, or no model item. */
   const setModel = (text: string | undefined): void => {
-    if (text === undefined) tui.status.delete("model");
-    else tui.status.set("model", { text, side: "right", order: 10 });
+    showStatus("model", text === undefined ? undefined : { text, side: "right", order: 10 });
   };
   /**
    * Show the folder, the model, the token share of the last answer, and the process jobs of the focused chat pane, or
@@ -409,13 +416,13 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     setModel(target.model);
     const settings = status?.settings;
     if (status === undefined || settings === undefined) {
-      for (const key of ["context", "jobs"]) tui.status.delete(key);
+      for (const key of ["context", "jobs"]) showStatus(key, undefined);
       return;
     }
     const model = models?.get(`${settings.model.provider}/${settings.model.model}`);
     const usage = status.usage;
     // A count that the provider did not send is unknown, not zero.
-    if (usage?.input === undefined) tui.status.delete("context");
+    if (usage?.input === undefined) showStatus("context", undefined);
     else {
       const used = usage.input + (usage.output ?? 0);
       const window = model?.contextWindow ?? undefined;
@@ -424,10 +431,12 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         share === undefined
           ? `${(used / 1000).toFixed(1)}k tokens`
           : `${"▰".repeat(Math.round(share * GAUGE))}${"▱".repeat(GAUGE - Math.round(share * GAUGE))} ${Math.round(share * 100)}%`;
-      tui.status.set("context", { text, side: "right", order: 20, priority: 1 });
+      showStatus("context", { text, side: "right", order: 20, priority: 1 });
     }
-    if (status.jobs === 0) tui.status.delete("jobs");
-    else tui.status.set("jobs", { text: `Jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
+    showStatus(
+      "jobs",
+      status.jobs === 0 ? undefined : { text: `Jobs ${status.jobs}`, side: "right", order: 1, priority: 2 },
+    );
   };
   defaultEmptyView =
     ctx.options.emptyView === false
@@ -494,7 +503,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   });
   tui.views.add("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
   tui.panes.setDefault((mount, reason) =>
-    chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
+    chatPane(chat, mount, { session: reason === "start" ? tui.startup.sessionId : undefined }),
   );
   for (const command of COMMANDS) {
     tui.commands.add({

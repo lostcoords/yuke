@@ -31,7 +31,7 @@ use yuke_ai::Credential;
 use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::transport::{Exchange, Transport};
-use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
+use yuke_engine::{CancellationToken, CredentialSource, ModelAccess, Timer, chain_text};
 use yuke_js::{Options, PluginCode, Processes, Report, Runtime};
 use yuke_protocol::{
     AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult,
@@ -46,7 +46,7 @@ use self::models::PluginModels;
 use self::plugin_sessions::PluginSessions;
 pub(crate) use self::sessions::{Attachment, SessionService};
 pub(crate) use self::test_host::{TestPlace, TestSetup};
-use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
+use crate::auth::{LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
 use crate::plugins::{self, Outcome};
@@ -361,9 +361,8 @@ impl Shared {
                     }
                 }
             };
-            if end.send(outcome.clone()).is_err() {
-                // A client of `auth/login` learns the end from the notification.
-            }
+            // A client of `auth/login` learns the end from the notification.
+            _ = end.send(outcome.clone());
             {
                 let mut pending = shared.pending_logins.borrow_mut();
                 // A newer login of the provider keeps its entry.
@@ -452,11 +451,8 @@ impl Shared {
                 )));
             }
         }
-        // A model request sends the key in a header, and a header holds no control character.
-        if api_key.is_empty() || api_key.chars().any(char::is_control) {
-            return Err(AppError::Invalid(
-                "apiKey: send a value that is not empty and has no control character".to_owned(),
-            ));
+        if api_key.is_empty() {
+            return Err(AppError::Invalid("apiKey: send a value that is not empty".to_owned()));
         }
         crate::auth::set_api_key(provider, api_key, self.machine.paths.data.clone())
             .await
@@ -467,8 +463,7 @@ impl Shared {
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
     pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
-        let plugins =
-            plugins::manager::list(&self.machine.paths, &self.profile.borrow().outcomes).map_err(AppError::Invalid)?;
+        let plugins = plugins::manager::list(&self.machine.paths, &self.profile.borrow().outcomes)?;
         Ok(ListPluginsResult { plugins })
     }
 
@@ -476,28 +471,28 @@ impl Shared {
     pub(crate) async fn sync_plugins(&self) -> Result<SyncPluginsResult, AppError> {
         plugins::manager::sync(&self.machine.paths, false, &|_| {})
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// The new commits of the Git plugins of the target, for `plugin/check`.
     pub(crate) async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
         plugins::manager::check(&self.machine.paths, &params.target, &|_| {})
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// Write the new commits of changes into `plugins.lock`, for `plugin/apply`.
     pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<(), AppError> {
         plugins::manager::apply(&self.machine.paths, &params.plugins)
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// The plugins of a Git repository, for `plugin/find`.
     pub(crate) async fn find_plugins(&self, params: FindPluginsParams) -> Result<FindPluginsResult, AppError> {
         let plugins = plugins::manager::find(&self.machine.paths, &params.git)
             .await
-            .map_err(AppError::Invalid)?;
+            .map_err(AppError::from)?;
         Ok(FindPluginsResult { plugins })
     }
 
@@ -511,7 +506,7 @@ impl Shared {
             &|_| {},
         )
         .await
-        .map_err(AppError::Invalid)?;
+        .map_err(AppError::from)?;
         Ok(AddPluginsResult { plugins })
     }
 
@@ -519,7 +514,7 @@ impl Shared {
     pub(crate) async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), AppError> {
         plugins::manager::remove(&self.machine.paths, &params.name)
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// The plugin folders now.
@@ -740,7 +735,7 @@ impl App {
             )));
         };
         let source = login_source(&self.shared, &provider.id, flow);
-        source.push(Pushed::new(params, flow, SystemTime::now()).map_err(AppError::Invalid)?);
+        source.push(Pushed::new(params).map_err(AppError::Invalid)?);
         self.shared.facts.catalog_changed();
         Ok(())
     }
@@ -818,6 +813,15 @@ impl fmt::Display for AppError {
     }
 }
 
+impl From<plugins::manager::Error> for AppError {
+    fn from(error: plugins::manager::Error) -> Self {
+        match error {
+            plugins::manager::Error::Invalid(text) => AppError::Invalid(text),
+            plugins::manager::Error::Internal(text) => AppError::Internal(text),
+        }
+    }
+}
+
 impl From<StoreError> for AppError {
     fn from(error: StoreError) -> Self {
         AppError::Store(error)
@@ -889,7 +893,7 @@ async fn stop_runtime(shared: &Shared, runtime: Runtime, reporter: JoinHandle<()
 }
 
 /// The model of `reference`, with the credential source of its provider: an API key, or the login of `shared`.
-fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppError> {
+fn model_of(reference: &ModelReference, shared: &Shared) -> Result<ModelAccess, AppError> {
     let selector = format!("{}/{}", reference.provider, reference.model);
     let providers = shared.providers();
     let entry = providers
@@ -912,7 +916,7 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
     let target = entry
         .bind()
         .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))?;
-    Ok(Model {
+    Ok(ModelAccess {
         target,
         source,
         context_window: entry.model.limits.context_window,
@@ -926,8 +930,8 @@ async fn save_settings(
     mut settings: SessionSettings,
     shared: &Shared,
 ) -> Result<StoredEvent, AppError> {
-    if settings.cwd != session.settings().cwd {
-        settings.cwd = canonical(settings.cwd).await?;
+    if settings.folder != session.settings().folder {
+        settings.folder = canonical(settings.folder).await?;
     }
     model_of(&settings.model, shared)?;
     let event_number = session
@@ -974,7 +978,6 @@ fn login_source(shared: &Shared, id: &str, flow: Flow) -> LoginSource {
         flow,
         shared.machine.paths.data.clone(),
         Arc::clone(&shared.machine.exchange),
-        LOCK_LIMIT,
     );
     logins.insert(id.to_owned(), source.clone());
     source
@@ -1052,9 +1055,8 @@ async fn report(
 
 /// Write `text` to stderr as a notice of yuke.
 pub(crate) fn warn(text: &str) {
-    if writeln!(io::stderr(), "yuke: {text}").is_err() {
-        // No one reads stderr, so the notice has nowhere to go.
-    }
+    // No one reads stderr, so the notice has nowhere to go.
+    _ = writeln!(io::stderr(), "yuke: {text}");
 }
 
 /// The store of the sessions in the data folder `data`.

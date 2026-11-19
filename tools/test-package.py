@@ -147,8 +147,6 @@ if os.environ["CORRUPT_DOWNLOAD"] == "1":
             actual = {path.relative_to(folder).as_posix(): path.read_bytes()
                       for path in folder.rglob("*") if path.is_file()}
             self.assertEqual(actual, expected)
-        self.assertEqual((self.extracted / "lib/yuke/protocol/README.md").read_bytes(),
-                         (ROOT / "crates/protocol/README.md").read_bytes())
         for source, installed in [(ROOT / "docs", "docs"), (ROOT / "skills/yuke", "skills/yuke")]:
             expected = {path.relative_to(source).as_posix(): path.read_bytes()
                         for path in source.rglob("*") if path.is_file()

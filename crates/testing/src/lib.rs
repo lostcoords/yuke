@@ -1,6 +1,7 @@
-//! Test fixtures that the tests of several yuke crates share: a test model and a new folder for each test. A fixture that
-//! one crate alone uses stays in that crate. The scripted transport is `yuke_ai::scripted`, and the timer that never
-//! waits is `yuke_engine::NoWait`.
+//! Test fixtures that the tests of several yuke crates share: a test target and model, an assertion for the order of
+//! texts in a body, a new folder for each test, and Git repositories of plugins. A fixture that one crate alone uses
+//! stays in that crate. The scripted transport is `yuke_ai::scripted`, and the timer that never waits is
+//! `yuke_engine::NoWait`.
 #![expect(
     clippy::unwrap_used,
     clippy::missing_panics_doc,
@@ -11,7 +12,7 @@
 use std::sync::Arc;
 
 use yuke_ai::{AnthropicWire, Credential, Origin, OriginRef, Route, Target, ToolDefinition, Wire};
-use yuke_engine::Model;
+use yuke_engine::ModelAccess;
 
 /// An Anthropic target at a test host. Its route takes no credential.
 pub fn target() -> Target {
@@ -45,13 +46,13 @@ pub fn definition(name: &str) -> ToolDefinition {
 }
 
 /// [`target`] with no credential.
-pub fn model() -> Model {
+pub fn model() -> ModelAccess {
     model_of(target())
 }
 
 /// `target` with no credential.
-pub fn model_of(target: Target) -> Model {
-    Model {
+pub fn model_of(target: Target) -> ModelAccess {
+    ModelAccess {
         target,
         source: Arc::new(Credential::None),
         context_window: None,

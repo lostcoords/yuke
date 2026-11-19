@@ -41,8 +41,8 @@ test("the abort of a plugin that owns the active theme and listens gives that pl
   const before = own;
   stop.abort();
   other.abort();
-  // The other plugin still hears of the removal of the theme.
-  assertEquals([own - before, seen], [0, ["nord", "nord"]]);
+  // The other plugin still hears that the stop brings back the default theme.
+  assertEquals([own - before, seen], [0, ["nord", "default"]]);
 });
 
 test("the palette color fg of a theme reaches the plain text of a Markdown text", () => {

@@ -3,7 +3,7 @@
  * draft that Enter runs.
  */
 
-import type { CompletionItem, CompletionProvider, SlashCommands } from "yuke:chat";
+import type { CompletionItem, CompletionProvider } from "yuke:chat";
 import { type CommandItem, fuzzyMatch, type OffsetRange } from "yuke:tui";
 
 /** A draft of one slash word, such as `/mod`, and the text after it. */
@@ -14,6 +14,18 @@ function runsCommand(item: CommandItem, word: string, hasText: boolean): boolean
   return item.enabled && `/${item.slash}` === word && (!hasText || item.argumentHint !== undefined);
 }
 
+/** The commands to list and run. `tui.commands` fits. */
+export interface SlashCommands {
+  readonly list: () => readonly CommandItem[];
+  readonly run: (name: string, args?: string) => boolean;
+}
+
+/**
+ * The completions of the enabled commands with a `slash` word that match a draft of one word, such as `/mod`, the
+ * best first. A draft with more text, such as `/mode fast`, matches only the word `mode` of a command with an
+ * `argumentHint`, and Enter gives it `"fast"`. Tab writes the selected word, with a space when the command takes
+ * text. Enter runs the command. The bundled chat adds this provider for `tui.commands`.
+ */
 export function slashCompletions(commands: SlashCommands): CompletionProvider {
   return {
     complete: (context) => {
@@ -37,15 +49,15 @@ export function slashCompletions(commands: SlashCommands): CompletionProvider {
       return {
         from: 0,
         to: word.length,
-        items: ranked.map(({ item, ranges }): CompletionItem => {
-          const name = `/${item.slash}`;
+        items: ranked.map((match): CompletionItem => {
+          const name = `/${match.item.slash}`;
           return {
-            label: item.argumentHint === undefined ? name : `${name} ${item.argumentHint}`,
-            detail: item.description,
-            ranges,
+            label: match.item.argumentHint === undefined ? name : `${name} ${match.item.argumentHint}`,
+            detail: match.item.description,
+            ranges: match.ranges,
             // The text after the word stays, so Tab writes only the word then.
-            insert: text !== undefined || item.argumentHint === undefined ? name : `${name} `,
-            run: () => commands.run(item.name, args),
+            insert: text !== undefined || match.item.argumentHint === undefined ? name : `${name} `,
+            run: () => commands.run(match.item.name, args),
           };
         }),
       };

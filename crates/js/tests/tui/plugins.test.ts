@@ -30,7 +30,7 @@ const LISTED: readonly ManagedPlugin[] = [
     source: "./broken",
     name: "broken",
     state: { kind: "local" },
-    load: { kind: "failed", error: "plugin broken did not load: Error: no luck" },
+    load: { kind: "failed", error: "Plugin broken did not load: Error: no luck" },
   },
 ];
 
@@ -187,7 +187,7 @@ test("the dashboard shows each plugin in its section with its state, and the rea
   );
   assertEquals(
     opened.filter((line) => line.startsWith("      ")).map((line) => line.trim()),
-    ["s installs it", "s installs it", "plugin broken did not load: Error: no luck"],
+    ["s installs it", "s installs it", "Plugin broken did not load: Error: no luck"],
   );
   // The first plugin is not installed and has no name, so `u` and `d` do not work on it.
   assertEquals(rowOf(opened, "esc: close"), " s: sync · c: check updates · a: add · r: reload · esc: close");

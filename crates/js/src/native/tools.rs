@@ -102,9 +102,8 @@ fn add_reports<'js>(
                     event,
                     data,
                 };
-                if events.send(Report::Event(event)).is_err() {
-                    // The owner dropped the receiver, so it ignores events.
-                }
+                // The owner dropped the receiver, so it ignores events.
+                _ = events.send(Report::Event(event));
                 Ok(())
             },
         )?,
@@ -132,9 +131,8 @@ fn add_reports<'js>(
                     source,
                     text,
                 };
-                if reports.send(Report::Notice(notice)).is_err() {
-                    // The owner dropped the receiver, so it ignores notices.
-                }
+                // The owner dropped the receiver, so it ignores notices.
+                _ = reports.send(Report::Notice(notice));
                 Ok(())
             },
         )?,

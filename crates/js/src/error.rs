@@ -191,12 +191,8 @@ pub(crate) fn caught<T>(ctx: &Ctx<'_>, result: rquickjs::Result<T>) -> Result<T,
 /// Add the global `reportError(error)` of the web: it reports `error` as a fault without a throw.
 pub(crate) fn install_report_error<'js>(ctx: &Ctx<'js>, faults: mpsc::UnboundedSender<Report>) -> rquickjs::Result<()> {
     let report = Function::new(ctx.clone(), move |ctx: Ctx<'js>, error: Value<'js>| {
-        if faults
-            .send(Report::Fault(ScriptError::from_value(&ctx, &error)))
-            .is_err()
-        {
-            // The owner dropped the receiver, so it ignores faults.
-        }
+        // The owner dropped the receiver, so it ignores faults.
+        _ = faults.send(Report::Fault(ScriptError::from_value(&ctx, &error)));
     })?;
     ctx.globals().set("reportError", report)
 }

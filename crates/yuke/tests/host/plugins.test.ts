@@ -8,7 +8,7 @@ import { assertEquals, assertRejects, createHost, folder, test, waitForSettled }
 async function failures(host: Promise<unknown>): Promise<string[]> {
   const error = await assertRejects(() => host);
   const message = error instanceof Error ? error.message : String(error);
-  return message.split("\n").filter((line) => line.startsWith("plugin "));
+  return message.split("\n").filter((line) => /^plugin /i.test(line));
 }
 
 /**
@@ -20,9 +20,9 @@ async function writePlugin(name: string, fields: Record<string, unknown>, source
   await mkdir(root);
   const entry = source === undefined ? {} : { entry: "index.ts" };
   await writeTextFile("plugin.json", JSON.stringify({ name, extensions: { "sh.yuke": { ...entry, ...fields } } }), {
-    cwd: root,
+    folder: root,
   });
-  if (source !== undefined) await writeTextFile("index.ts", source, { cwd: root });
+  if (source !== undefined) await writeTextFile("index.ts", source, { folder: root });
   return root;
 }
 
@@ -110,11 +110,11 @@ test("a folder plugin reads a file beside its module through import.meta", async
          description: "Read the prompt.",
          concurrency: "serial",
          inputSchema: { type: "object", properties: {} },
-         execute: () => readTextFile("prompt.md", { cwd: import.meta.dirname }),
+         execute: () => readTextFile("prompt.md", { folder: import.meta.dirname }),
        });
      };`,
   );
-  await writeTextFile("prompt.md", "Be brief.", { cwd: root });
+  await writeTextFile("prompt.md", "Be brief.", { folder: root });
   await using host = await createHost({ plugins: [{ folder: root }] });
   const session = await host.openSession();
 
@@ -144,7 +144,7 @@ test("apply runs once with its context, and session runs for each session", asyn
   };
   globalThis.applyOfOne = apply;
   globalThis.sessionOfOne = (s: Parameters<PluginSession>[0]) => {
-    sessions.push(s.cwd);
+    sessions.push(s.folder);
     s.tools.add({
       name: "hello",
       description: "Say hello.",
@@ -162,8 +162,8 @@ test("apply runs once with its context, and session runs for each session", asyn
   await mkdir(`${folder()}/b`);
   await using host = await createHost({ plugins: [{ folder: root }] });
 
-  const first = await host.openSession({ cwd: `${folder()}/a` });
-  const second = await host.openSession({ cwd: `${folder()}/b` });
+  const first = await host.openSession({ folder: `${folder()}/a` });
+  const second = await host.openSession({ folder: `${folder()}/b` });
 
   assertEquals([(await first.call("hello", {})).text, (await second.call("hello", {})).text], ["hello", "hello"]);
   assertEquals(seen, ["one", false, true, [false, true, false], false, "undefined"]);
@@ -277,9 +277,9 @@ test("a service passes to a later plugin, and a failed provider stops its users 
   });
 
   assertEquals(await failures(host), [
-    "plugin broken did not load: Error: no store",
-    "plugin middle did not load: it uses 'test.store.v1', and plugin broken that provides it did not load",
-    "plugin last did not load: it uses 'test.index.v1', and plugin middle that provides it did not load",
+    "Plugin broken did not load: Error: no store",
+    "Plugin middle did not load: it uses 'test.store.v1', and plugin broken that provides it did not load",
+    "Plugin last did not load: it uses 'test.index.v1', and plugin middle that provides it did not load",
   ]);
   assertEquals([count, ran], [3, false]);
 });
@@ -301,8 +301,8 @@ test("a plugin whose provider comes after it does not run, nor do its users, and
   });
 
   assertEquals(await failures(host), [
-    "plugin first did not load: it uses 'test.b.v1', and no plugin before it provides it",
-    "plugin second did not load: it uses 'test.a.v1', and plugin first that provides it did not load",
+    "Plugin first did not load: it uses 'test.b.v1', and no plugin before it provides it",
+    "Plugin second did not load: it uses 'test.a.v1', and plugin first that provides it did not load",
   ]);
   assertEquals(ran, ["plain"]);
 });
@@ -330,7 +330,7 @@ test("a provide of a service that the manifest does not name fails the load of t
   });
 
   assertEquals(await failures(host), [
-    "plugin words did not load: TypeError: plugin words provides 'test.words.v1', and its manifest does not name it in provides",
+    "Plugin words did not load: TypeError: plugin words provides 'test.words.v1', and its manifest does not name it in provides",
   ]);
 });
 
@@ -426,7 +426,7 @@ test("options that fail the check fail the load of that plugin before its apply"
     ],
   });
 
-  const failure = (name: string, text: string) => `plugin ${name} did not load: TypeError: ${text}`;
+  const failure = (name: string, text: string) => `Plugin ${name} did not load: TypeError: ${text}`;
   assertEquals(await failures(host), [
     failure("missing", "the options of the plugin: Set folder to a string."),
     failure("wrong", "the options of the plugin: Set depth to an integer of at least 1."),

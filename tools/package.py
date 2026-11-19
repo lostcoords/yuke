@@ -91,7 +91,6 @@ def main():
         for name in declarations:
             copy_typescript(ROOT / "crates/js/types", library / "types", name)
         copy_typescript(ROOT / "crates/protocol/bindings", library / "protocol/bindings")
-        shutil.copy2(ROOT / "crates/protocol/README.md", library / "protocol/README.md")
         shutil.copy2(ROOT / "LICENSE.md", library / "LICENSE.md")
         # The skill points agents to these guides, so both match the installed release. The docs tests stay in CI.
         shutil.copytree(ROOT / "docs", library / "docs", ignore=shutil.ignore_patterns("tests", "tsconfig.json"))

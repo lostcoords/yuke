@@ -68,9 +68,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn S
                 let queue = Queue::of(&ctx);
                 let sender = queue.sender.clone();
                 let sink = Rc::new(move |event| {
-                    if sender.send(Delivery::View(key, Box::new(event))).is_err() {
-                        // The engine stopped, so it takes no more events.
-                    }
+                    // The engine stopped, so it takes no more events.
+                    _ = sender.send(Delivery::View(key, Box::new(event)));
                 });
                 let (promise, _abort) = queue.request(
                     &ctx,
@@ -107,9 +106,8 @@ fn add_facts<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessio
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, key: u32| {
             let sender = Queue::of(&ctx).sender;
             let sink: FactSink = Rc::new(move |fact| {
-                if sender.send(Delivery::Fact(key, fact)).is_err() {
-                    // The engine stopped, so it takes no more facts.
-                }
+                // The engine stopped, so it takes no more facts.
+                _ = sender.send(Delivery::Fact(key, fact));
             });
             *started.borrow_mut() = Some(sessions.watch_facts(sink));
         })?,

@@ -61,7 +61,7 @@ async function chosen(
 
 /** Take an API key for `provider` in a masked field. A refused key stays in the field with its error. */
 async function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider: ProviderInfo): Promise<void> {
-  const saved = await tui.input({
+  const saved = await tui.prompt({
     title: `API key · ${provider.name}`,
     placeholder: "API key",
     mask: true,
@@ -75,10 +75,10 @@ async function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider:
 }
 
 /** Open `url` in the browser. The module cannot read the platform, and `open` on Linux can be another program. */
-async function openBrowser(url: string, cwd: string): Promise<boolean> {
+async function openBrowser(url: string, folder: string): Promise<boolean> {
   for (const program of ["xdg-open", "open"]) {
     try {
-      const output = await new Command(program, { args: [url], cwd, stdout: "null", stderr: "null" }).output();
+      const output = await new Command(program, { args: [url], cwd: folder, stdout: "null", stderr: "null" }).output();
       return output.success;
     } catch {
       // This program does not start. The next one can.

@@ -74,7 +74,7 @@ impl TestHost {
                     model: "test-model".to_owned(),
                 },
                 settings: yuke_ai::RequestSettings::new(),
-                cwd: folder.to_owned(),
+                folder: folder.to_owned(),
             }),
             failure: None,
         }
@@ -106,7 +106,7 @@ impl SessionHost for TestHost {
         None
     }
 
-    fn cwd(&self) -> PathBuf {
+    fn folder(&self) -> PathBuf {
         self.folder.borrow_mut().clone()
     }
 
@@ -148,7 +148,7 @@ impl SessionHost for TestHost {
     fn model(
         &self,
         reference: &yuke_protocol::ModelReference,
-    ) -> Result<yuke_engine::Model, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<yuke_engine::ModelAccess, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(error) = &self.failure {
             return Err(Arc::clone(error).into());
         }

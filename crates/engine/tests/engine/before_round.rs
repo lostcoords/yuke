@@ -208,7 +208,7 @@ fn a_cancel_during_before_round_sends_no_request() {
 #[test]
 fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_answer() {
     let transport = ScriptedTransport::new([counted(&tool_reply(&[("c1", "echo", "{}")]), 1200), text_reply("done")]);
-    let model = yuke_engine::Model {
+    let model = yuke_engine::ModelAccess {
         context_window: Some(200_000),
         ..model()
     };
@@ -300,7 +300,7 @@ fn a_replacement_that_changes_nothing_keeps_the_input_tokens() {
 fn retry_round_gets_the_model_window_and_the_settings_of_the_failed_round() {
     let transport = ScriptedTransport::new([failed_reply("half")]);
     let plan = RoundPlan {
-        model: Some(yuke_engine::Model {
+        model: Some(yuke_engine::ModelAccess {
             context_window: Some(1000),
             ..model_of(other_target("other-model"))
         }),

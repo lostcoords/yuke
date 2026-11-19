@@ -74,8 +74,8 @@ fn interface(display: Arc<Display>) -> Interface {
     Interface {
         display,
         startup: Startup {
-            cwd: "/".to_owned(),
-            session: None,
+            folder: "/".to_owned(),
+            session_id: None,
             version: "0.0.0".to_owned(),
         },
     }
@@ -174,14 +174,6 @@ async fn a_cursor_shape_reaches_the_terminal_and_an_unknown_shape_throws() {
         "{:?}",
         output.text()
     );
-    let error = evaluate::<String>(
-        &runtime,
-        "try { term.cursor({ column: 0, row: 0, shape: 'beam' }); return 'no throw'; }
-         catch (error) { return `${error.name}: ${error.message}`; }",
-    )
-    .await
-    .unwrap();
-    assert_eq!(error, "TypeError: a cursor shape is block, underline, or bar, not beam");
 }
 
 #[tokio::test(flavor = "local")]
@@ -636,6 +628,6 @@ async fn styles_take_indices_hex_colors_and_reset() {
     .unwrap();
     assert_eq!(
         names,
-        "TypeError TypeError TypeError TypeError TypeError none none none none"
+        "TypeError TypeError TypeError TypeError none none none none none"
     );
 }

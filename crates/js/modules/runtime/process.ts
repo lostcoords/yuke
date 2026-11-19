@@ -4,7 +4,7 @@ import { underSignal } from "yuke:internal/events";
 import { type ProcessRequest, processEnv, processOutput } from "yuke:internal/native";
 import type { CommandOptions, CommandOutput } from "yuke:process";
 
-export const env = Object.freeze({ get: (name: string): string | undefined => processEnv(name) });
+export const env = { get: (name: string): string | undefined => processEnv(name) };
 
 export class Command {
   readonly #request: ProcessRequest;

@@ -5,7 +5,7 @@ use std::error::Error;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use yuke_ai::{Block, FinishReason, RequestSettings, ToolDefinition, Usage};
-use yuke_engine::{CancellationToken, Model};
+use yuke_engine::{CancellationToken, ModelAccess};
 use yuke_protocol::{ModelReference, SessionId};
 
 /// One request of a plugin to a model.
@@ -37,7 +37,7 @@ pub struct Attachment {
 #[derive(Debug, Clone)]
 pub struct SideRequest {
     /// The model of the round.
-    pub model: Model,
+    pub model: ModelAccess,
     /// The system prompt of the round.
     pub system: String,
     /// The tool definitions of the round. The request offers them, and no tool runs.

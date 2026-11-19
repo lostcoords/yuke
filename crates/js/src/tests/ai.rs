@@ -333,7 +333,7 @@ async fn s_settings_gives_the_settings_of_the_session_now_frozen() {
         "return [
            JSON.stringify(s.settings.model),
            s.settings.settings.reasoning.effort,
-           s.settings.cwd === s.cwd,
+           s.settings.folder === s.folder,
            Object.isFrozen(s.settings),
            Object.isFrozen(s.settings.settings.reasoning),
          ].map(String);",

@@ -1,4 +1,4 @@
-//! A transport that answers with scripted replies, for the tests of yuke and of its plugins. A reply is an [`Answer`],
+//! A transport that answers with scripted replies, for the tests of yuke and of its plugins. A reply is a [`ScriptedAnswer`],
 //! which the transport writes in the stream format of the protocol of each request, or a body as it is. The functions
 //! of this module write the Anthropic SSE of an answer. The provider path then runs as with a real provider: the
 //! stream, the retries, and the tools. [`ScriptedExchange`] answers the small exchanges of the OAuth flows.
@@ -31,6 +31,12 @@ pub fn sse<T: Display>(events: &[T]) -> String {
         }
     }
     output
+}
+
+// Each change of a guarded value is complete before the next statement, so a panic of another holder leaves a valid
+// value.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn message_start() -> Value {
@@ -69,7 +75,7 @@ pub fn text_reply(text: &str) -> String {
     ])
 }
 
-/// The start of an answer that streams `text` and has no end, for [`Answer::Stall`].
+/// The start of an answer that streams `text` and has no end, for [`ScriptedAnswer::Stall`].
 fn partial_reply(text: &str) -> String {
     sse(&[message_start(), text_start(), text_delta(text)])
 }
@@ -130,12 +136,12 @@ fn calls_reply(text: &str, calls: &[(&str, &str, &str)], stop_reason: &str) -> S
     sse(&events)
 }
 
-/// The error text of [`Answer::Overflow`]. Anthropic names an overflow only by this start of the text.
+/// The error text of [`ScriptedAnswer::Overflow`]. Anthropic names an overflow only by this start of the text.
 const OVERFLOW_TEXT: &str = "prompt is too long: the scripted context overflow";
 
 /// One scripted answer of the model. The transport writes it in the stream format of the protocol of the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Answer {
+pub enum ScriptedAnswer {
     /// A complete answer with a text.
     Text {
         /// The text of the answer.
@@ -170,7 +176,7 @@ pub enum Answer {
     },
 }
 
-/// One tool call of an [`Answer`].
+/// One tool call of a [`ScriptedAnswer`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Call {
     /// The id of the call.
@@ -181,7 +187,7 @@ pub struct Call {
     pub arguments: String,
 }
 
-impl Answer {
+impl ScriptedAnswer {
     /// The body of this answer in the stream format of `protocol`, and whether the stream stays open after the body.
     fn encode(&self, protocol: Protocol) -> (String, bool) {
         match protocol {
@@ -193,8 +199,8 @@ impl Answer {
 
     fn anthropic(&self) -> (String, bool) {
         let body = match self {
-            Answer::Text { text, input_tokens } => counted(&text_reply(text), *input_tokens),
-            Answer::Calls {
+            ScriptedAnswer::Text { text, input_tokens } => counted(&text_reply(text), *input_tokens),
+            ScriptedAnswer::Calls {
                 text,
                 calls,
                 input_tokens,
@@ -207,14 +213,14 @@ impl Answer {
                 let stop_reason = if *cut { "max_tokens" } else { "tool_use" };
                 counted(&calls_reply(text, &calls, stop_reason), *input_tokens)
             }
-            Answer::Overloaded => overloaded_reply(),
+            ScriptedAnswer::Overloaded => overloaded_reply(),
             // Anthropic names an overflow only in the message of a request error.
-            Answer::Overflow => sse(&[
+            ScriptedAnswer::Overflow => sse(&[
                 message_start(),
                 json!({"type": "error", "error": {"type": "invalid_request_error", "message": OVERFLOW_TEXT}}),
             ]),
-            Answer::Failed { text } => failed_reply(text),
-            Answer::Stall { text } => return (partial_reply(text), true),
+            ScriptedAnswer::Failed { text } => failed_reply(text),
+            ScriptedAnswer::Stall { text } => return (partial_reply(text), true),
         };
         (body, false)
     }
@@ -232,12 +238,12 @@ impl Answer {
         };
         let overloaded = json!({"error": {"code": "server_error", "message": "Overloaded"}, "choices": []}).to_string();
         let events = match self {
-            Answer::Text { text, input_tokens } => {
+            ScriptedAnswer::Text { text, input_tokens } => {
                 let mut events = vec![chunk(json!({"role": "assistant", "content": text}), None)];
                 events.extend(end("stop", *input_tokens));
                 events
             }
-            Answer::Calls {
+            ScriptedAnswer::Calls {
                 text,
                 calls,
                 input_tokens,
@@ -255,15 +261,15 @@ impl Answer {
                 events.extend(end(if *cut { "length" } else { "tool_calls" }, *input_tokens));
                 events
             }
-            Answer::Overloaded => vec![overloaded],
-            Answer::Overflow => {
+            ScriptedAnswer::Overloaded => vec![overloaded],
+            ScriptedAnswer::Overflow => {
                 vec![
                     json!({"error": {"code": "context_length_exceeded", "message": OVERFLOW_TEXT}, "choices": []})
                         .to_string(),
                 ]
             }
-            Answer::Failed { text } => vec![chunk(json!({"content": text}), None), overloaded],
-            Answer::Stall { text } => {
+            ScriptedAnswer::Failed { text } => vec![chunk(json!({"content": text}), None), overloaded],
+            ScriptedAnswer::Stall { text } => {
                 return (sse(&[chunk(json!({"role": "assistant", "content": text}), None)]), true);
             }
         };
@@ -297,7 +303,7 @@ impl Answer {
         });
         let mut events = vec![created];
         match self {
-            Answer::Text { text, input_tokens } => {
+            ScriptedAnswer::Text { text, input_tokens } => {
                 events.extend(text_start);
                 events.extend(message(text));
                 events.push(json!({
@@ -305,7 +311,7 @@ impl Answer {
                     "response": {"status": "completed", "usage": usage(*input_tokens)},
                 }));
             }
-            Answer::Calls {
+            ScriptedAnswer::Calls {
                 text,
                 calls,
                 input_tokens,
@@ -351,16 +357,16 @@ impl Answer {
                     })
                 });
             }
-            Answer::Overloaded => events.push(failed),
-            Answer::Overflow => events.push(json!({
+            ScriptedAnswer::Overloaded => events.push(failed),
+            ScriptedAnswer::Overflow => events.push(json!({
                 "type": "response.failed",
                 "response": {"status": "failed", "error": {"code": "context_length_exceeded", "message": OVERFLOW_TEXT}},
             })),
-            Answer::Failed { text } => {
+            ScriptedAnswer::Failed { text } => {
                 events.extend(text_start);
                 events.extend([text_delta(text), failed]);
             }
-            Answer::Stall { text } => {
+            ScriptedAnswer::Stall { text } => {
                 events.extend(text_start);
                 events.push(text_delta(text));
                 return (sse(&events), true);
@@ -417,7 +423,7 @@ enum Reply {
         body: Bytes,
         stalls: bool,
     },
-    Answer(Answer),
+    Answer(ScriptedAnswer),
 }
 
 impl ScriptedTransport {
@@ -436,7 +442,7 @@ impl ScriptedTransport {
     }
 
     /// Add `answer` to the end of the script.
-    pub fn push_answer(&self, answer: Answer) {
+    pub fn push_answer(&self, answer: ScriptedAnswer) {
         self.script().replies.push_back(Reply::Answer(answer));
     }
 
@@ -455,7 +461,7 @@ impl ScriptedTransport {
     }
 
     fn script(&self) -> MutexGuard<'_, Script> {
-        self.script.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.script)
     }
 
     /// The requests, in send order.
@@ -629,7 +635,7 @@ impl ScriptedExchange {
     }
 
     fn script(&self) -> MutexGuard<'_, ExchangeScript> {
-        self.script.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.script)
     }
 
     /// The requests, in send order.
@@ -801,25 +807,25 @@ mod tests {
         for protocol in PROTOCOLS {
             let transport = ScriptedTransport::default();
             for answer in [
-                Answer::Text {
+                ScriptedAnswer::Text {
                     text: "hi".to_owned(),
                     input_tokens: 7,
                 },
-                Answer::Calls {
+                ScriptedAnswer::Calls {
                     text: String::new(),
                     calls: vec![call("a", "read", r#"{"path":"x"}"#), call("b", "exec", "{}")],
                     input_tokens: 9,
                     cut: false,
                 },
-                Answer::Calls {
+                ScriptedAnswer::Calls {
                     text: "first".to_owned(),
                     calls: vec![call("c", "read", "{}")],
                     input_tokens: 0,
                     cut: true,
                 },
-                Answer::Overloaded,
-                Answer::Overflow,
-                Answer::Failed {
+                ScriptedAnswer::Overloaded,
+                ScriptedAnswer::Overflow,
+                ScriptedAnswer::Failed {
                     text: "part".to_owned(),
                 },
             ] {
@@ -887,7 +893,7 @@ mod tests {
     fn a_stalled_answer_streams_its_text_and_never_ends_in_each_protocol() {
         for protocol in PROTOCOLS {
             let transport = ScriptedTransport::default();
-            transport.push_answer(Answer::Stall {
+            transport.push_answer(ScriptedAnswer::Stall {
                 text: "part".to_owned(),
             });
             let url = format!("https://example.test/v1{}", protocol_path(protocol));

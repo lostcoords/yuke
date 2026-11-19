@@ -2,7 +2,6 @@
 //! `//` and `/* */` comments, and an unknown field is an error.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::path::Path;
 
 use serde::{Deserialize, Deserializer};
@@ -41,12 +40,9 @@ impl Providers {
     /// Apply the entries of `file` to the built-in providers, and give the result.
     fn from_file(file: File) -> Result<Providers, String> {
         let mut providers = catalog::PROVIDERS.to_vec();
-        let mut ids = HashSet::new();
+        // An entry with an id that an earlier entry has changes the result of that entry.
         for patch in file.providers {
             let id = patch.id.clone();
-            if !ids.insert(id.clone()) {
-                return Err(format!("provider {id}: the file has this id twice"));
-            }
             patch
                 .apply(&mut providers)
                 .map_err(|error| format!("provider {id}: {error}"))?;
@@ -91,7 +87,7 @@ impl Providers {
             Some((provider, Auth::OAuth(flow))) => return Ok((provider, *flow)),
             Some((_, Auth::ApiKey(Some(variable)))) => {
                 return Err(format!(
-                    "{id} takes an API key: set {variable}. {}",
+                    "{id} takes an API key, not a login: run /login {id} in yuke to store one, or set {variable}. {}",
                     self.login_providers()
                 ));
             }
@@ -122,6 +118,7 @@ struct File {
 /// One provider entry. A field that the entry omits keeps the built-in value, and a written `null` is an error.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ProviderPatch {
     id: String,
     #[serde(default, deserialize_with = "written")]
@@ -154,6 +151,7 @@ struct HeaderEntry {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct EndpointEntry {
     protocol: Protocol,
     credential_header: Option<CredentialHeader>,
@@ -166,6 +164,7 @@ struct EndpointEntry {
 /// One model entry. It replaces the built-in model with its id as a whole.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ModelEntry {
     id: String,
     upstream_id: Option<String>,
@@ -182,6 +181,7 @@ struct ModelEntry {
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct Flags {
     supports_tool_search: Option<bool>,
     can_disable_reasoning: Option<bool>,
@@ -206,7 +206,9 @@ enum ThinkingShape {
 impl ProviderPatch {
     /// Change the provider with this id in `providers`, or add it.
     fn apply(self, providers: &mut Vec<Provider>) -> Result<(), String> {
-        valid_id(&self.id, "/")?;
+        if self.id.is_empty() || self.id.contains('/') {
+            return Err(format!("id: {:?} must not be empty and must have no '/'", self.id));
+        }
         let position = providers.iter().position(|provider| provider.id == self.id);
         let index = if let Some(index) = position {
             index
@@ -220,7 +222,7 @@ impl ProviderPatch {
     /// An empty provider of a new id. The change gives it the fields that it needs.
     fn new_provider(&self) -> Result<Provider, String> {
         let missing = [
-            ("base_url", self.base_url.is_none()),
+            ("baseUrl", self.base_url.is_none()),
             ("endpoints", self.endpoints.is_none()),
             ("models", self.models.is_none()),
         ];
@@ -246,17 +248,19 @@ impl ProviderPatch {
         }
         if let Some(variable) = self.api_key_env {
             if matches!(provider.auth, Auth::OAuth(_)) {
-                return Err("api_key_env: the provider uses a login of `yuke login`".to_owned());
+                return Err("apiKeyEnv: the provider uses a login of `yuke login`".to_owned());
             }
             if variable.is_empty() || variable.contains(['=', '\0']) {
                 return Err(format!(
-                    "api_key_env: {variable:?} is not a variable name: write a name with no '=' and no NUL"
+                    "apiKeyEnv: {variable:?} is not a variable name: write a name with no '=' and no NUL"
                 ));
             }
             provider.auth = Auth::ApiKey(Some(variable.into()));
         }
         if let Some(base_url) = self.base_url {
-            valid_base_url(&base_url).map_err(|error| format!("base_url: {error}"))?;
+            if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+                return Err("baseUrl: the URL must start with http:// or https://".to_owned());
+            }
             provider.base_url = base_url.into();
         }
         if let Some(headers) = self.headers {
@@ -273,12 +277,9 @@ impl ProviderPatch {
             provider.endpoints = endpoints(entries)?.into();
         }
         if let Some(entries) = self.models {
-            let mut ids = HashSet::new();
+            // A model with an id that an earlier model has replaces it.
             for entry in entries {
                 let id = entry.id.clone();
-                if !ids.insert(id.clone()) {
-                    return Err(format!("model {id}: the provider has this id twice"));
-                }
                 let model = entry
                     .model(&provider.endpoints)
                     .map_err(|error| format!("model {id}: {error}"))?;
@@ -308,19 +309,19 @@ fn endpoints(entries: Vec<EndpointEntry>) -> Result<Vec<Endpoint>, String> {
         if entry.cache_breakpoint && protocol == Protocol::OpenaiChat {
             return Err(format!(
                 "{}: Chat Completions has no breakpoint",
-                field("cache_breakpoint")
+                field("cacheBreakpoint")
             ));
         }
         if entry.responses_dialect.is_some() && protocol != Protocol::OpenaiResponses {
             return Err(format!(
                 "{}: only an openai_responses endpoint takes it",
-                field("responses_dialect")
+                field("responsesDialect")
             ));
         }
         if entry.chat_dialect.is_some() && protocol != Protocol::OpenaiChat {
             return Err(format!(
                 "{}: only an openai_chat endpoint takes it",
-                field("chat_dialect")
+                field("chatDialect")
             ));
         }
         endpoints.push(Endpoint {
@@ -337,7 +338,9 @@ fn endpoints(entries: Vec<EndpointEntry>) -> Result<Vec<Endpoint>, String> {
 impl ModelEntry {
     /// The model of the entry on a provider with `endpoints`.
     fn model(self, endpoints: &[Endpoint]) -> Result<Model, String> {
-        valid_id(&self.id, "")?;
+        if self.id.is_empty() {
+            return Err("id: the id must not be empty".to_owned());
+        }
         let protocol = match (self.protocol, endpoints) {
             (Some(protocol), _) => protocol,
             (None, [only]) => only.protocol,
@@ -361,12 +364,11 @@ impl ModelEntry {
         ];
         if chat_flags.contains(&true) && protocol != Protocol::OpenaiChat {
             return Err(
-                "flags: thinking_format, reasoning_replay, and max_tokens_field need the openai_chat protocol"
-                    .to_owned(),
+                "flags: thinkingFormat, reasoningReplay, and maxTokensField need the openai_chat protocol".to_owned(),
             );
         }
         if flags.anthropic_thinking.is_some() && protocol != Protocol::AnthropicMessages {
-            return Err("flags.anthropic_thinking: it needs the anthropic_messages protocol".to_owned());
+            return Err("flags.anthropicThinking: it needs the anthropic_messages protocol".to_owned());
         }
         let anthropic_thinking = match flags.anthropic_thinking {
             Some(ThinkingShape::Budget) => AnthropicThinking::Budget {
@@ -374,7 +376,7 @@ impl ModelEntry {
                 max: flags.reasoning_budget_max,
             },
             _ if flags.reasoning_budget_min.is_some() || flags.reasoning_budget_max.is_some() => {
-                return Err("flags: the reasoning budget needs \"anthropic_thinking\": \"budget\"".to_owned());
+                return Err("flags: the reasoning budget needs \"anthropicThinking\": \"budget\"".to_owned());
             }
             Some(ThinkingShape::Toggle) => AnthropicThinking::Toggle,
             Some(ThinkingShape::Adaptive) => AnthropicThinking::Adaptive,
@@ -415,12 +417,12 @@ fn check(provider: &Provider) -> Result<(), String> {
         match (sends_credential, endpoint.credential_header) {
             (true, None) => {
                 return Err(format!(
-                    "endpoints[{index}].credential_header: the provider sends a credential, so name its header"
+                    "endpoints[{index}].credentialHeader: the provider sends a credential, so name its header"
                 ));
             }
             (false, Some(_)) => {
                 return Err(format!(
-                    "endpoints[{index}].credential_header: the provider sends no credential: set api_key_env, or \
+                    "endpoints[{index}].credentialHeader: the provider sends no credential: set apiKeyEnv, or \
                      remove the header"
                 ));
             }
@@ -442,48 +444,6 @@ fn check(provider: &Provider) -> Result<(), String> {
         Entry { provider, model }
             .bind()
             .map_err(|error| format!("model {}: {error}", model.id))?;
-    }
-    Ok(())
-}
-
-/// Check that `id` is not empty, and holds no white space, no control character, and none of `refused`.
-fn valid_id(id: &str, refused: &str) -> Result<(), String> {
-    if id.is_empty()
-        || id
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || refused.contains(c))
-    {
-        let slash = if refused.is_empty() { "" } else { ", and no slash" };
-        return Err(format!(
-            "id: {id:?} must not be empty, and must have no white space, no control character{slash}"
-        ));
-    }
-    Ok(())
-}
-
-/// Check that `url` is an `http` or `https` URL with a host, and with no user, query, or fragment.
-fn valid_base_url(url: &str) -> Result<(), &'static str> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .ok_or("the URL must start with http:// or https://")?;
-    let host = rest.split('/').next().unwrap_or_default();
-    if host.is_empty() {
-        return Err("the URL has no host");
-    }
-    if host.contains('@') {
-        return Err("the URL must have no user");
-    }
-    // The HTTP parser keeps a port that is no number, and then sends to the default port.
-    let port = host.rsplit_once(']').map_or(host, |(_, after)| after).split_once(':');
-    if port.is_some_and(|(_, port)| port.parse::<u16>().is_err()) {
-        return Err("the URL port must be a number from 0 to 65535");
-    }
-    if url.contains(['?', '#']) {
-        return Err("the URL must have no query and no fragment");
-    }
-    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err("the URL must have no white space and no control character");
     }
     Ok(())
 }

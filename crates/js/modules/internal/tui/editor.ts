@@ -207,7 +207,6 @@ export class TextEditor implements TextWidget<number, EditorChange> {
   }
 
   heightFor(width: number): number {
-    if (!Number.isInteger(width) || width < 0) throw new RangeError("a width is a whole number of cells");
     if (width === 0) return 0;
     return this.#rowCount(this.#layoutAt(this.#textWidth(width)));
   }
@@ -221,7 +220,7 @@ export class TextEditor implements TextWidget<number, EditorChange> {
     return this.rows.at({ column: Math.max(0, column), row: point.row + this.#scroll });
   }
 
-  screenAt(position: number): Point | undefined {
+  #screenAt(position: number): Point | undefined {
     const point = this.rows.point(position);
     if (point === undefined) return undefined;
     const row = point.row - this.#scroll;
@@ -294,7 +293,7 @@ export class TextEditor implements TextWidget<number, EditorChange> {
   }
 
   cursor(): Cursor | undefined {
-    const at = this.screenAt(this.caret);
+    const at = this.#screenAt(this.caret);
     if (at === undefined) return undefined;
     const shape = this.#support.appearance(this.#appearance).cursorShape;
     return shape === undefined ? at : { ...at, shape };

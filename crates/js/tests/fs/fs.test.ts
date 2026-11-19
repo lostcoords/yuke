@@ -35,12 +35,12 @@ async function failure(promise: Promise<unknown>): Promise<fs.FileSystemError> {
 
 test("text and bytes round trip through a relative path and a base folder", async () => {
   const base = folder();
-  await fs.writeTextFile("note.txt", "héllo \uD800", { cwd: base });
+  await fs.writeTextFile("note.txt", "héllo \uD800", { folder: base });
   assertEquals(await fs.readTextFile(`${base}/note.txt`), "héllo �");
-  await fs.writeFile("data.bin", new Uint8Array([0, 1, 2, 3, 4]).subarray(1, 4), { cwd: base });
-  assertEquals(await fs.readFile("data.bin", { cwd: base }), new Uint8Array([1, 2, 3]));
-  assertEquals(await fs.readFile("data.bin", { cwd: base, position: 1, length: 1 }), new Uint8Array([2]));
-  assertEquals(await fs.readFile("data.bin", { cwd: base, position: 9 }), new Uint8Array([]));
+  await fs.writeFile("data.bin", new Uint8Array([0, 1, 2, 3, 4]).subarray(1, 4), { folder: base });
+  assertEquals(await fs.readFile("data.bin", { folder: base }), new Uint8Array([1, 2, 3]));
+  assertEquals(await fs.readFile("data.bin", { folder: base, position: 1, length: 1 }), new Uint8Array([2]));
+  assertEquals(await fs.readFile("data.bin", { folder: base, position: 9 }), new Uint8Array([]));
   assertEquals(await run(base, "cat", "data.bin"), new Uint8Array([1, 2, 3]));
 });
 
@@ -48,30 +48,39 @@ test("a bad path or option throws a type error", async () => {
   const base = folder();
   const errors = await Promise.all([
     assertRejects(() => fs.readTextFile("relative.txt")),
-    assertRejects(() => fs.readTextFile("relative.txt", { cwd: "not/absolute" })),
+    assertRejects(() => fs.readTextFile("relative.txt", { folder: "not/absolute" })),
     assertRejects(() => fs.readTextFile("")),
-    assertRejects(() => fs.readTextFile("a\0b", { cwd: base })),
-    assertRejects(() => fs.readFile("x", { cwd: base, position: -1 })),
+    assertRejects(() => fs.readFile("x", { folder: base, position: -1 })),
     // @ts-expect-error: the data is an array, not bytes.
-    assertRejects(() => fs.writeFile("x", [1], { cwd: base })),
+    assertRejects(() => fs.writeFile("x", [1], { folder: base })),
   ]);
   assertEquals(
     errors.map((error) => (error instanceof Error ? error.name : error)),
-    Array(6).fill("TypeError"),
+    Array(5).fill("TypeError"),
   );
+});
+
+test("an empty path names the folder, and a NUL in a path is a file system error that says so", async () => {
+  const base = folder();
+  const empty = await assertRejects(() => fs.readTextFile("", { folder: base }));
+  const nul = await assertRejects(() => fs.readTextFile("a\0b", { folder: base }));
+  assert(empty instanceof fs.FileSystemError, String(empty));
+  assert(nul instanceof fs.FileSystemError, String(nul));
+  assertEquals([empty.code, empty.message], ["EISDIR", `the path is a directory: ${base}/`]);
+  assert(nul.message.includes("NUL"), nul.message);
 });
 
 // Failures.
 
 test("a failure is a file system error with a code and the absolute path", async () => {
   const base = folder();
-  await fs.writeFile("binary.dat", new Uint8Array([0x61, 0xff]), { cwd: base });
+  await fs.writeFile("binary.dat", new Uint8Array([0x61, 0xff]), { folder: base });
   const errors = [
-    await failure(fs.readTextFile("gone.txt", { cwd: base })),
-    await failure(fs.readTextFile("binary.dat", { cwd: base, fatal: true })),
+    await failure(fs.readTextFile("gone.txt", { folder: base })),
+    await failure(fs.readTextFile("binary.dat", { folder: base, fatal: true })),
     await failure(fs.readFile(base)),
-    await failure(fs.writeTextFile("missing/folder/x.txt", "x", { cwd: base })),
-    await failure(fs.rename("gone.txt", "other.txt", { cwd: base })),
+    await failure(fs.writeTextFile("missing/folder/x.txt", "x", { folder: base })),
+    await failure(fs.rename("gone.txt", "other.txt", { folder: base })),
   ];
   assertEquals(
     errors.map((error) => ({ name: error.name, code: error.code, path: error.path, destination: error.destination })),
@@ -87,7 +96,7 @@ test("a failure is a file system error with a code and the absolute path", async
 
 test("a failure message names the problem and the path", async () => {
   const base = folder();
-  const error = await failure(fs.readTextFile("gone.txt", { cwd: base }));
+  const error = await failure(fs.readTextFile("gone.txt", { folder: base }));
   assertEquals(error.message, `the path does not exist: ${base}/gone.txt`);
 });
 
@@ -95,7 +104,7 @@ test("a symbolic link loop rejects with eloop", async () => {
   const base = folder();
   await run(base, "ln", "-s", "second", "first");
   await run(base, "ln", "-s", "first", "second");
-  assertEquals((await failure(fs.stat("first", { cwd: base }))).code, "ELOOP");
+  assertEquals((await failure(fs.stat("first", { folder: base }))).code, "ELOOP");
 });
 
 test("a read or a write of a fifo rejects at once and does not wait for its other end", async () => {
@@ -103,9 +112,9 @@ test("a read or a write of a fifo rejects at once and does not wait for its othe
   await run(base, "mkfifo", "pipe");
   assertEquals(
     [
-      (await failure(fs.readFile("pipe", { cwd: base }))).code,
-      (await failure(fs.writeTextFile("pipe", "x", { cwd: base }))).code,
-      (await failure(fs.writeTextFile("pipe", "x", { cwd: base, atomic: true }))).code,
+      (await failure(fs.readFile("pipe", { folder: base }))).code,
+      (await failure(fs.writeTextFile("pipe", "x", { folder: base }))).code,
+      (await failure(fs.writeTextFile("pipe", "x", { folder: base, atomic: true }))).code,
     ],
     ["EINVAL", "EINVAL", "EINVAL"],
   );
@@ -116,22 +125,22 @@ test("a read or a write of a fifo rejects at once and does not wait for its othe
 
 test("a text read replaces bytes that are not utf8 and a fatal read rejects", async () => {
   const base = folder();
-  await fs.writeFile("mixed.txt", new Uint8Array([0x61, 0xff, 0x62, 0xe2, 0x82]), { cwd: base });
-  assertEquals(await fs.readTextFile("mixed.txt", { cwd: base }), "a�b�");
-  assertEquals((await failure(fs.readTextFile("mixed.txt", { cwd: base, fatal: true }))).code, "EILSEQ");
+  await fs.writeFile("mixed.txt", new Uint8Array([0x61, 0xff, 0x62, 0xe2, 0x82]), { folder: base });
+  assertEquals(await fs.readTextFile("mixed.txt", { folder: base }), "a�b�");
+  assertEquals((await failure(fs.readTextFile("mixed.txt", { folder: base, fatal: true }))).code, "EILSEQ");
 });
 
 test("a write appends creates only a new file or needs an existing one", async () => {
   const base = folder();
-  await fs.writeTextFile("log.txt", "one\n", { cwd: base });
+  await fs.writeTextFile("log.txt", "one\n", { folder: base });
   await run(base, "ln", "-s", `${base}/nowhere`, "dangling");
-  await fs.writeTextFile("log.txt", "two\n", { cwd: base, append: true });
-  await fs.writeTextFile("started.txt", "x", { cwd: base, append: true });
-  assertEquals((await failure(fs.writeTextFile("log.txt", "x", { cwd: base, createNew: true }))).code, "EEXIST");
-  assertEquals((await failure(fs.writeTextFile("dangling", "x", { cwd: base, createNew: true }))).code, "EEXIST");
-  await fs.writeTextFile("fresh.txt", "new", { cwd: base, createNew: true, create: false });
-  assertEquals((await failure(fs.writeTextFile("missing.txt", "x", { cwd: base, create: false }))).code, "ENOENT");
-  await fs.writeTextFile("log.txt", "tail", { cwd: base, append: true, create: false });
+  await fs.writeTextFile("log.txt", "two\n", { folder: base, append: true });
+  await fs.writeTextFile("started.txt", "x", { folder: base, append: true });
+  assertEquals((await failure(fs.writeTextFile("log.txt", "x", { folder: base, createNew: true }))).code, "EEXIST");
+  assertEquals((await failure(fs.writeTextFile("dangling", "x", { folder: base, createNew: true }))).code, "EEXIST");
+  await fs.writeTextFile("fresh.txt", "new", { folder: base, createNew: true, create: false });
+  assertEquals((await failure(fs.writeTextFile("missing.txt", "x", { folder: base, create: false }))).code, "ENOENT");
+  await fs.writeTextFile("log.txt", "tail", { folder: base, append: true, create: false });
   assertEquals(
     [
       text(await run(base, "cat", "log.txt")),
@@ -145,7 +154,7 @@ test("a write appends creates only a new file or needs an existing one", async (
 
 test("an atomic write with append create new or without create is a misuse", async () => {
   const base = folder();
-  const options = { cwd: base, atomic: true };
+  const options = { folder: base, atomic: true };
   assertEquals(
     [
       await assertRejects(() => fs.writeTextFile("x.txt", "x", { ...options, append: true })),
@@ -163,14 +172,14 @@ test("an atomic write with append create new or without create is a misuse", asy
 
 test("an atomic write into a missing folder fails and leaves no temporary file", async () => {
   const base = folder();
-  assertEquals((await failure(fs.writeTextFile("gone/x.txt", "x", { cwd: base, atomic: true }))).code, "ENOENT");
+  assertEquals((await failure(fs.writeTextFile("gone/x.txt", "x", { folder: base, atomic: true }))).code, "ENOENT");
   assertEquals(await exists(base, "gone"), false);
 });
 
 test("a time before the epoch is a date and not null", async () => {
   const base = folder();
   await run(base, "touch", "-t", "196001010000", "old.txt");
-  const info = await fs.stat("old.txt", { cwd: base });
+  const info = await fs.stat("old.txt", { folder: base });
   assert(info.mtime !== null && info.mtime.getUTCFullYear() < 1970, `the time is ${String(info.mtime)}`);
 });
 
@@ -178,18 +187,18 @@ test("a time before the epoch is a date and not null", async () => {
 
 test("read dir gives the entries by name and stat and lstat tell a link from its target", async () => {
   const base = folder();
-  await fs.mkdir("dir/sub", { cwd: base, recursive: true });
-  await fs.writeTextFile("dir/b.txt", "four", { cwd: base });
-  await fs.writeTextFile("dir/a.txt", "", { cwd: base });
+  await fs.mkdir("dir/sub", { folder: base, recursive: true });
+  await fs.writeTextFile("dir/b.txt", "four", { folder: base });
+  await fs.writeTextFile("dir/a.txt", "", { folder: base });
   await run(base, "ln", "-s", "b.txt", "dir/link");
-  assertEquals(await Array.fromAsync(fs.readDir("dir", { cwd: base })), [
+  assertEquals(await Array.fromAsync(fs.readDir("dir", { folder: base })), [
     { name: "a.txt", isFile: true, isDirectory: false, isSymlink: false },
     { name: "b.txt", isFile: true, isDirectory: false, isSymlink: false },
     { name: "link", isFile: false, isDirectory: false, isSymlink: true },
     { name: "sub", isFile: false, isDirectory: true, isSymlink: false },
   ]);
-  const target = await fs.stat("dir/link", { cwd: base });
-  const link = await fs.lstat("dir/link", { cwd: base });
+  const target = await fs.stat("dir/link", { folder: base });
+  const link = await fs.lstat("dir/link", { folder: base });
   assertEquals(
     { isFile: target.isFile, isSymlink: target.isSymlink, size: target.size },
     { isFile: true, isSymlink: false, size: 4 },
@@ -201,34 +210,34 @@ test("read dir gives the entries by name and stat and lstat tell a link from its
 
 test("read dir gives an async iterable that rejects at its first step for a missing folder", async () => {
   const base = folder();
-  await fs.mkdir("dir", { cwd: base });
-  await fs.writeTextFile("dir/a.txt", "", { cwd: base });
+  await fs.mkdir("dir", { folder: base });
+  await fs.writeTextFile("dir/a.txt", "", { folder: base });
   const names: string[] = [];
-  for await (const entry of fs.readDir("dir", { cwd: base })) names.push(entry.name);
-  const error = await failure(fs.readDir("missing", { cwd: base })[Symbol.asyncIterator]().next());
+  for await (const entry of fs.readDir("dir", { folder: base })) names.push(entry.name);
+  const error = await failure(fs.readDir("missing", { folder: base })[Symbol.asyncIterator]().next());
   assertEquals([names, error.code], [["a.txt"], "ENOENT"]);
 });
 
 test("remove needs recursive for a full folder and force accepts a missing path", async () => {
   const base = folder();
-  await fs.mkdir("full/inner", { cwd: base, recursive: true });
-  await fs.mkdir("empty", { cwd: base });
-  await fs.writeTextFile("file.txt", "x", { cwd: base });
-  assertEquals((await failure(fs.remove("full", { cwd: base }))).code, "ENOTEMPTY");
-  await fs.remove("full", { cwd: base, recursive: true });
-  await fs.remove("empty", { cwd: base });
-  await fs.remove("file.txt", { cwd: base });
-  assertEquals((await failure(fs.remove("gone", { cwd: base }))).code, "ENOENT");
-  await fs.remove("gone", { cwd: base, force: true });
+  await fs.mkdir("full/inner", { folder: base, recursive: true });
+  await fs.mkdir("empty", { folder: base });
+  await fs.writeTextFile("file.txt", "x", { folder: base });
+  assertEquals((await failure(fs.remove("full", { folder: base }))).code, "ENOTEMPTY");
+  await fs.remove("full", { folder: base, recursive: true });
+  await fs.remove("empty", { folder: base });
+  await fs.remove("file.txt", { folder: base });
+  assertEquals((await failure(fs.remove("gone", { folder: base }))).code, "ENOENT");
+  await fs.remove("gone", { folder: base, force: true });
   assertEquals([await exists(base, "full"), await exists(base, "file.txt")], [false, false]);
 });
 
 test("rename moves a file and replaces one at the destination", async () => {
   const base = folder();
-  await fs.writeTextFile("a.txt", "new", { cwd: base });
-  await fs.writeTextFile("b.txt", "old", { cwd: base });
-  await fs.rename("a.txt", "b.txt", { cwd: base });
-  assertEquals(await fs.readTextFile("b.txt", { cwd: base }), "new");
+  await fs.writeTextFile("a.txt", "new", { folder: base });
+  await fs.writeTextFile("b.txt", "old", { folder: base });
+  await fs.rename("a.txt", "b.txt", { folder: base });
+  assertEquals(await fs.readTextFile("b.txt", { folder: base }), "new");
   assertEquals(await exists(base, "a.txt"), false);
 });
 
@@ -239,7 +248,7 @@ test("an aborted signal rejects with its reason and changes nothing", async () =
   // A plain object reason must not become a `FileSystemError`.
   const reason = { why: "stop" };
   const error = await assertRejects(() =>
-    fs.writeTextFile("x.txt", "x", { cwd: base, signal: AbortSignal.abort(reason) }),
+    fs.writeTextFile("x.txt", "x", { folder: base, signal: AbortSignal.abort(reason) }),
   );
   assert(error === reason, `the reason is ${String(error)}`);
   assertEquals(await exists(base, "x.txt"), false);
@@ -248,13 +257,13 @@ test("an aborted signal rejects with its reason and changes nothing", async () =
 // The abort comes in the turn of the call, so the first check stops the read. A Rust test stops a write between chunks.
 test("an abort of a read rejects with the reason and a fake abort event does not", async () => {
   const base = folder();
-  await fs.writeTextFile("small.txt", "bytes", { cwd: base });
+  await fs.writeTextFile("small.txt", "bytes", { folder: base });
   const controller = new AbortController();
-  const reading = fs.readFile("small.txt", { cwd: base, signal: controller.signal });
+  const reading = fs.readFile("small.txt", { folder: base, signal: controller.signal });
   controller.abort("stop");
   assertEquals(await assertRejects(() => reading), "stop");
   const faked = new AbortController();
-  const whole = fs.readTextFile("small.txt", { cwd: base, signal: faked.signal });
+  const whole = fs.readTextFile("small.txt", { folder: base, signal: faked.signal });
   faked.signal.dispatchEvent(new Event("abort"));
   assertEquals(await whole, "bytes");
 });

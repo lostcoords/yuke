@@ -3,32 +3,41 @@
 /**
  * The types of the terminal interface and its stateless helpers. An import of this module starts nothing, so a plugin
  * can import it in each mode. Coordinates are local cells from 0. Text offsets are UTF-16 units, as in JavaScript
- * strings. A registration gives a remover, `() => void`. A second call of a remover does nothing.
+ * strings. An `add*` or `set*` method that registers something returns a remover, `() => void`. A second call of a
+ * remover does nothing. `wrapRoot`, `overlay`, and `dialog` return a `Mount`, and `panes.split` returns a `Pane`: its
+ * `close` removes the view. `setDocument`, `setText`, and `setItems` change the content of a widget, so they return
+ * nothing.
  */
 declare module "yuke:tui" {
   import type { Media, NoticeLevel, SessionId } from "yuke:protocol";
 
+  /** A size in cells. */
   export interface Size {
     readonly width: number;
     readonly height: number;
   }
 
+  /** A cell: its column and its row, both from 0. */
   export interface Point {
     readonly column: number;
     readonly row: number;
   }
 
+  /** A rectangle of cells: its top left cell, and its size. */
   export interface Rect extends Point, Size {}
 
   /** A steady block, underline, or bar. No shape keeps the shape of the terminal settings. */
   export type CursorShape = "block" | "underline" | "bar";
 
+  /** The cursor of a view: its cell, local to the view, and its shape. */
   export interface Cursor extends Point {
     readonly shape?: CursorShape | undefined;
   }
 
+  /** The axis of a split or a stack. `row` places the children from left to right, and `column` from top to bottom. */
   export type Direction = "row" | "column";
 
+  /** The way that `panes.moveFocus` moves the focus: to the nearest pane on that side. */
   export type FocusDirection = "left" | "right" | "up" | "down";
 
   /** The modifiers of a key or a mouse event. A terminal reports only shift, alt, and ctrl with a mouse event. */
@@ -99,6 +108,7 @@ declare module "yuke:tui" {
     | `f${FunctionNumber}`
     | "unknown";
 
+  /** A key press from the terminal. `strokeOf` gives its stroke, as a key spec names it. */
   export interface KeyEvent {
     readonly type: "key";
     readonly code: KeyCode;
@@ -113,6 +123,7 @@ declare module "yuke:tui" {
     readonly modifiers: Modifiers;
   }
 
+  /** The button of a mouse event: a button, `none` for a motion, a direction of the wheel, or `button<n>`. */
   export type MouseButton =
     | "left"
     | "middle"
@@ -211,7 +222,11 @@ declare module "yuke:tui" {
 
   /** A command: a key binding names it, and `commands.list` gives it to a list of commands, such as the slash list. */
   export interface Command {
-    /** The name: letters, digits, and `:`, `-`, `_`, `.`. */
+    /**
+     * The name: letters, digits, and `:`, `-`, `_`, `.`. A bare name gets the prefix `<plugin>:` of the plugin, so
+     * `open` of the plugin `notes` is `notes:open`. A qualified name must start with the prefix of the plugin. A name
+     * that exists already makes `commands.add` throw a `TypeError`.
+     */
     readonly name: string;
     /** One line for a list of commands, beside the name. */
     readonly description?: string | undefined;
@@ -352,15 +367,18 @@ declare module "yuke:tui" {
   }
 
   /**
-   * The part of one plugin in a text widget: key contexts, an appearance, decorations, and handlers. Each setter
-   * replaces only this part. A later extension wins per appearance field and per decoration style field. `dispose()`
-   * and the abort of the signal of `extend` remove the part. After that, each call does nothing.
+   * The part of one plugin in a text widget: key contexts, an appearance, decorations, and handlers. Each `set` method
+   * replaces only this part, and its remover brings back the value before it, unless a later call replaced it. A later
+   * extension wins per appearance field and per decoration style field. `close()` and the abort of the signal of
+   * `extend` remove the whole part. After that, each call does nothing.
    */
   export interface TextExtension<P, E> {
     /** Add context atoms of the keymap while the widget is on the focus path. */
-    setContexts: (atoms: readonly string[]) => void;
-    setAppearance: (appearance: TextAppearance) => void;
-    setDecorations: (decorations: readonly Decoration<P>[]) => void;
+    setContexts: (atoms: readonly string[]) => () => void;
+    /** Set how the widget looks while it has this extension. */
+    setAppearance: (appearance: TextAppearance) => () => void;
+    /** Set the styles over ranges of the widget. */
+    setDecorations: (decorations: readonly Decoration<P>[]) => () => void;
     /**
      * Take a key of the focused widget: `true` stops it. A `beforeKeymap` handler runs before the keymap. A key that it
      * takes ends a pending key sequence. A `beforeDefault` handler (the default) runs after the keymap and before the
@@ -371,7 +389,8 @@ declare module "yuke:tui" {
     addMouseHandler: (handler: (event: MouseEvent) => boolean) => () => void;
     addPasteHandler: (handler: (event: PasteEvent) => boolean) => () => void;
     addChangeListener: (listener: (event: E) => void) => () => void;
-    dispose: () => void;
+    /** Remove the whole part of the plugin. A second call does nothing. */
+    close: () => void;
   }
 
   /** A range of UTF-16 offsets. `to` is not in the range. */
@@ -414,8 +433,6 @@ declare module "yuke:tui" {
      * `undefined`.
      */
     hitTest: (point: Point) => P | undefined;
-    /** The cell of `position` in the widget, or `undefined` when it does not show. */
-    screenAt: (position: P) => Point | undefined;
     /** Scroll the least to show `position`. `false` when it cannot show. */
     ensureVisible: (position: P) => boolean;
   }
@@ -451,6 +468,7 @@ declare module "yuke:tui" {
     readonly changes: readonly TextEdit[];
   }
 
+  /** The options of a `TextEditor`. */
   export interface EditorOptions {
     /** The default role is `field`. The role is a context atom of the keymap while the editor has the focus. */
     readonly role?: "composer" | "field" | undefined;
@@ -460,9 +478,11 @@ declare module "yuke:tui" {
     readonly multiline?: boolean | undefined;
     /** Show one `•` for each grapheme and each span, as for a password. The state keeps the text. */
     readonly mask?: boolean | undefined;
+    /** The first draft of the editor. The default is an empty draft. */
     readonly state?: EditorState | undefined;
     /** The text that an empty editor shows. */
     readonly placeholder?: string | undefined;
+    /** The look of the editor, such as its prompt. A `TextExtension` can change it later. */
     readonly appearance?: TextAppearance | undefined;
     /** Get the state at Enter. The editor keeps the draft, so the owner resets it when it wants an empty editor. */
     readonly onSubmit?: ((state: EditorState) => void) | undefined;
@@ -506,7 +526,6 @@ declare module "yuke:tui" {
     submit(): void;
     extend(signal: AbortSignal): TextExtension<number, EditorChange>;
     hitTest(point: Point): number | undefined;
-    screenAt(position: number): Point | undefined;
     ensureVisible(position: number): boolean;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
@@ -523,6 +542,7 @@ declare module "yuke:tui" {
     readonly offset: number;
   }
 
+  /** A range of a text widget, from `from` to `to`. `to` is not in the range. */
   export interface TextRange {
     readonly from: TextPosition;
     readonly to: TextPosition;
@@ -574,25 +594,27 @@ declare module "yuke:tui" {
     readonly addChangeListener: (listener: (state: ScrollState) => void) => () => void;
   }
 
+  /** The options of a `TextView`. */
   export interface TextViewOptions {
+    /** The items to show. `setDocument` replaces them later. */
     readonly document: TextDocument;
     /** The default role is `text`. */
     readonly role?: "transcript" | "text" | undefined;
+    /** The group of related widgets, such as a composer and its transcript. The default is a new group. */
     readonly group?: object | undefined;
     /** The cursor shape of the caret. A text view draws no prompt. */
     readonly appearance?: TextAppearance | undefined;
-    /** Copy a mouse selection when the button goes up. The default is true. */
-    readonly copyOnRelease?: boolean | undefined;
     /** Act on a click without a drag, and on `activate()`. `link` is the target of the segment at the position. */
     readonly onActivate?: ((position: TextPosition, link: string | undefined) => void) | undefined;
+    /** Stay at the bottom while items grow. The default is false. */
     readonly followTail?: boolean | undefined;
+    /** Load older items when the view shows the top, as `ScrollListOptions.onTopReached` does. */
     readonly onTopReached?: (() => void | Promise<void>) | undefined;
   }
 
   /**
    * A read-only view of a document of items and sections, on a scroll list. A position stays on its section when other
-   * items change. A drag selects. When `copyOnRelease` is true (the default), the release copies the selection. The
-   * view has no default keys.
+   * items change. A drag selects, and the release copies the selection. The view has no default keys.
    */
   export class TextView implements TextWidget<TextPosition, TextViewChange> {
     constructor(options: TextViewOptions);
@@ -619,7 +641,6 @@ declare module "yuke:tui" {
     activate(position: TextPosition): boolean;
     extend(signal: AbortSignal): TextExtension<TextPosition, TextViewChange>;
     hitTest(point: Point): TextPosition | undefined;
-    screenAt(position: TextPosition): Point | undefined;
     ensureVisible(position: TextPosition): boolean;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
@@ -713,7 +734,9 @@ declare module "yuke:tui" {
     readonly anchor: { readonly id: string; readonly row: number } | undefined;
   }
 
+  /** The options of a `ScrollList`. */
   export interface ScrollListOptions<T extends object> {
+    /** The first items. `setItems` replaces them later. */
     readonly items?: readonly T[] | undefined;
     /** An id that stays the same for one item across updates. Two items cannot share one id. */
     readonly id: (item: T) => string;
@@ -722,7 +745,7 @@ declare module "yuke:tui" {
      * it can call this again for the same item and width. The rows must stay the same.
      */
     readonly render: (item: T, width: number) => readonly TextRow[];
-    /** The default is false. */
+    /** Stay at the bottom while items grow. The default is false. */
     readonly followTail?: boolean | undefined;
     /**
      * Load older items when the view shows the top. The list calls it once for each visit of the top or update of the
@@ -785,7 +808,9 @@ declare module "yuke:tui" {
     readonly ranges?: readonly OffsetRange[] | undefined;
   }
 
+  /** The options of a `Picker`. */
   export interface PickerOptions<T> {
+    /** The items to choose from. `setItems` replaces them later. */
     readonly items: readonly T[];
     /** An id that stays the same for one item. New items keep the selection on it; a new query selects the first result. */
     readonly id: (item: T) => string;
@@ -818,7 +843,8 @@ declare module "yuke:tui" {
   export class Picker<T> implements View {
     constructor(options: PickerOptions<T>);
     readonly input: TextEditor;
-    readonly selected: T | undefined;
+    /** The item that is selected now, or `undefined` for a query without a result. */
+    readonly selectedItem: T | undefined;
     /** The picker takes the focus and gives it to its search field. */
     readonly focusable: boolean;
     readonly initialFocus: View;
@@ -834,10 +860,12 @@ declare module "yuke:tui" {
     onMouse(event: MouseEvent): boolean;
   }
 
-  /** A change of `tui.focused`. `pane` is the pane that holds `current`, or `undefined` outside the panes. */
+  /** A change of `tui.focusedView`. `pane` is the pane that holds `focusedView`, or `undefined` outside the panes. */
   export interface FocusChange {
-    readonly previous: View | undefined;
-    readonly current: View | undefined;
+    /** The deepest view on the focus path before the change. */
+    readonly previousView: View | undefined;
+    /** The deepest view on the focus path after the change. */
+    readonly focusedView: View | undefined;
     readonly pane: Pane | undefined;
   }
 
@@ -868,8 +896,11 @@ declare module "yuke:tui" {
   /** Make the view of a pane that the core opens. A throw closes the mount, gives one fault, and leaves the pane empty. */
   export type DefaultPaneFactory = (mount: Mount, reason: PaneReason) => View;
 
+  /** A pane of the pane tree. `close` closes the pane, as the close of a mount does. */
   export interface Pane extends Mount {
+    /** The view of the pane. */
     readonly view: View;
+    /** Give the focus to the pane. */
     readonly focus: () => void;
   }
 
@@ -878,7 +909,7 @@ declare module "yuke:tui" {
     /** The view of the tree. */
     readonly view: View;
     /** The active pane beneath any modal. */
-    readonly active: Pane | undefined;
+    readonly activePane: Pane | undefined;
     /** Split the active pane. The new pane gets the focus. The close of the last pane gives a new default pane. */
     readonly split: (create: ViewFactory, options?: { readonly direction?: Direction | undefined }) => Pane;
     /**
@@ -887,7 +918,6 @@ declare module "yuke:tui" {
      */
     readonly setDefault: (create: DefaultPaneFactory) => () => void;
     readonly moveFocus: (direction: FocusDirection) => boolean;
-    readonly focusNext: () => void;
   }
 
   /** A key of a dialog, with its label in the footer. Two keys in a row with one label share one entry. */
@@ -934,8 +964,8 @@ declare module "yuke:tui" {
     readonly signal?: AbortSignal | undefined;
   }
 
-  /** What `tui.input` shows: a text field in a dialog. */
-  export interface InputOptions {
+  /** What `tui.prompt` shows: a text field in a dialog. */
+  export interface PromptOptions {
     /** The text of the head row, as in `DialogOptions`. */
     readonly title?: string | (() => string) | undefined;
     /** The dim text of an empty field. */
@@ -967,6 +997,7 @@ declare module "yuke:tui" {
     readonly signal?: AbortSignal | undefined;
   }
 
+  /** How an overlay shows. */
   export interface OverlayOptions {
     /** Default true: a modal takes the focus and all input below it. A float takes only what it handles. */
     readonly modal?: boolean | undefined;
@@ -977,8 +1008,11 @@ declare module "yuke:tui" {
   /** The size of a child of `stack`: cells, a share of the rest, or cells from the size of the stack. */
   export type StackSize = number | "fill" | ((size: Size) => number);
 
+  /** One child of `stack`. */
   export interface StackChild {
+    /** The view of the child. */
     readonly view: View;
+    /** The size of the child along the axis of the stack. */
     readonly size: StackSize;
   }
 
@@ -991,9 +1025,11 @@ declare module "yuke:tui" {
     | readonly JsonValue[]
     | { readonly [key: string]: JsonValue };
 
+  /** What a view saves for a reload: its view type, and the JSON state that the type restores it from. */
   export interface ViewSnapshot {
     /** A view type of `tui.views.add`. */
     readonly type: string;
+    /** The state that `RestoreView` gets. */
     readonly state: JsonValue;
   }
 
@@ -1006,9 +1042,9 @@ declare module "yuke:tui" {
    */
   export interface Startup {
     /** The folder that yuke started in. */
-    readonly cwd: string;
+    readonly folder: string;
     /** The session of `--continue` or `--resume`. The start pane shows it. A restored pane keeps its saved session. */
-    readonly session?: SessionId | undefined;
+    readonly sessionId?: SessionId | undefined;
     /** The version of yuke, such as `0.1.0`. */
     readonly version: string;
   }
@@ -1017,17 +1053,25 @@ declare module "yuke:tui" {
   export interface Tui {
     /** The size of the terminal now, in cells. */
     readonly size: Size;
+    /** The background of the terminal now. `ctx.addListener("theme.changed")` tells each change. */
     readonly background: "dark" | "light";
+    /** Whether the terminal shows 24-bit colors. Else a color maps to the 256 colors of the terminal. */
     readonly truecolor: boolean;
+    /** How the terminal interface started. */
     readonly startup: Startup;
+    /** The pane tree of the core: its view, its active pane, and the way to split a pane. */
     readonly panes: Panes;
     /** The deepest view on the focus path. */
-    readonly focused: View | undefined;
+    readonly focusedView: View | undefined;
+    /**
+     * Give the focus to `view`, when the view is placed and can take the focus. `false` otherwise. A view of the root
+     * keeps the focus beneath a modal until the modal closes.
+     */
     readonly focus: (view: View) => boolean;
-    /** Give each later change of `focused` to `listener`. */
+    /** Give each later change of `focusedView` to `listener`. */
     readonly addFocusListener: (listener: (change: FocusChange) => void) => () => void;
     /**
-     * Call `callback` once after `delay` milliseconds, and draw a frame after it. The disposer cancels the call, and the
+     * Call `callback` once after `delay` milliseconds, and draw a frame after it. The remover cancels the call, and the
      * stop of the plugin cancels it too. A frame test moves this time with `advance`.
      */
     readonly addTimer: (delay: number, callback: () => void) => () => void;
@@ -1042,6 +1086,10 @@ declare module "yuke:tui" {
      * ```
      */
     readonly wrapRoot: (create: RootFactory) => Mount;
+    /**
+     * Show the view that `create` makes over the panes. A modal overlay (the default) takes the focus and all input
+     * until `close`. With `modal: false`, the overlay is a float that takes only the input that it handles.
+     */
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
     readonly dialog: (options: DialogOptions) => Mount;
@@ -1084,16 +1132,31 @@ declare module "yuke:tui" {
      * Ask the user for a line of text in a dialog. Gives the text that Enter accepts, or `undefined` for Esc, an abort of
      * `signal`, and a stop of the plugin during the wait.
      */
-    readonly input: (options: InputOptions) => Promise<string | undefined>;
+    readonly prompt: (options: PromptOptions) => Promise<string | undefined>;
     /** Ask the user a question in a dialog. Gives `true` for Enter, and `false` for Esc, an abort, and a stop. */
     readonly confirm: (options: ConfirmOptions) => Promise<boolean>;
     readonly commands: {
+      /**
+       * Add `command`. The name follows the rule of `Command.name`, and a name that exists throws a `TypeError`. The
+       * remover removes only this command.
+       */
       readonly add: (command: Command) => () => void;
-      /** Run a command. `false` when it is missing or disabled, or when its run gives `false`, else `true`. */
+      /**
+       * Run a command. A bare name gets the prefix of this plugin, and a qualified name runs a command of any plugin,
+       * such as `core:split-right`. `false` when the command is missing or disabled, or when its run gives `false`,
+       * else `true`.
+       */
       readonly run: (name: string, args?: unknown) => boolean;
+      /** Each command in the order of its add, with its state now. */
       readonly list: () => readonly CommandItem[];
     };
     readonly keys: {
+      /**
+       * Bind the key spec `spec`, as `parseKeys` reads it, to the command `command`. `options.in` is the context atom
+       * of the keymap that the binding needs, and the default is `root`. A bare `command` gets the prefix `<plugin>:`
+       * of this plugin, and a qualified one names a command of any plugin, also one that comes later. A binding of a
+       * missing or disabled command passes the key on.
+       */
       readonly add: (spec: string, command: string, options?: { readonly in?: string | undefined }) => () => void;
       /** The keys of the pending sequence, such as `ctrl+k`, or "". */
       readonly pending: () => string;
@@ -1101,7 +1164,7 @@ declare module "yuke:tui" {
       readonly list: (command: string) => readonly string[];
     };
     readonly styles: {
-      /** Change style groups, and return the disposer of the change. A later call wins per field. */
+      /** Change style groups, and return the remover of the change. A later call wins per field. */
       readonly add: (groups: Readonly<Record<string, StylePatch>>) => () => void;
       /**
        * Add a theme, and return its remover. It applies nothing until it is active. The newest of a name wins. The name
@@ -1112,8 +1175,11 @@ declare module "yuke:tui" {
       readonly themes: () => readonly string[];
       /** The name of the active theme. `ctx.addListener("theme.changed")` tells each change. */
       readonly theme: string;
-      /** Make `name` the active theme, also before that theme comes. */
-      readonly setTheme: (name: string) => void;
+      /**
+       * Make `name` the active theme, also before that theme comes. The last call wins, and the remover brings back the
+       * theme before it. The stop of the plugin removes its calls.
+       */
+      readonly setTheme: (name: string) => () => void;
     };
     /**
      * The notice history of the terminal interface: the last 100 notices with their repeat counts, also the notices from
@@ -1132,18 +1198,24 @@ declare module "yuke:tui" {
      */
     readonly status: {
       /**
-       * Set the item `id`. The same id replaces the item. The returned function deletes the item while this entry is
+       * Set the item `id`. A bare id gets the prefix `<plugin>:` of this plugin, and a qualified id must start with it.
+       * The same id replaces the item. The returned function deletes the item while this entry is
        * the newest one of `id`.
        */
       readonly set: (id: string, entry: StatusEntry) => () => void;
-      readonly delete: (id: string) => void;
-      /** Each item of each plugin. */
+      /** Each item of each plugin, in no set order: a bar orders them. */
       readonly list: () => readonly StatusItem[];
       /** Call `listener` after each later change of the items. A throw of `listener` goes to the call that changed them. */
       readonly addChangeListener: (listener: () => void) => () => void;
     };
+    /** The text widgets that are placed now, with a watch for each new one: the way to extend the editor of a pane. */
     readonly widgets: WidgetRegistry;
     readonly views: {
+      /**
+       * Add the view type `type`, so a reload gives each saved view of that type back to `restore`. A bare type gets
+       * the prefix `<plugin>:` of this plugin, and a qualified type must start with it. A type that exists throws a
+       * `TypeError`.
+       */
       readonly add: (type: string, restore: RestoreView) => () => void;
     };
     /** Ask for a frame in `delay` milliseconds. Many asks give one frame. Ask after a state change outside the input. */

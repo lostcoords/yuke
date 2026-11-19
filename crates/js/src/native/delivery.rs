@@ -132,9 +132,8 @@ impl<'js> Queue<'js> {
         let sender = self.sender.clone();
         ctx.spawn(async move {
             let result = task.await;
-            if sender.send(Delivery::Reply(key, Box::new(result))).is_err() {
-                // The engine stopped, so it takes no more replies.
-            }
+            // The engine stopped, so it takes no more replies.
+            _ = sender.send(Delivery::Reply(key, Box::new(result)));
         });
         Ok((promise, abort))
     }
@@ -169,10 +168,9 @@ async fn dispatch<'js>(
                     reply(&ctx, result)
                 }
             };
-            if let Err(Error::Script(error)) = caught(&ctx, result)
-                && faults.send(Report::Fault(error)).is_err()
-            {
+            if let Err(Error::Script(error)) = caught(&ctx, result) {
                 // The owner dropped the receiver, so it ignores faults.
+                _ = faults.send(Report::Fault(error));
             }
         }
         tokio::task::yield_now().await;

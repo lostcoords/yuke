@@ -53,7 +53,7 @@ function rank(query: string, rows: readonly SessionRow[]): readonly PickerMatch<
   for (const item of rows) {
     const match = fuzzyMatch(query, labelOf(item));
     if (match !== undefined) fuzzy.push({ match: { item, ranges: match.ranges }, score: match.score });
-    else if ([item.model.model, item.cwd, item.sessionId].some((text) => text.toLowerCase().includes(lower))) {
+    else if ([item.model.model, item.folder, item.sessionId].some((text) => text.toLowerCase().includes(lower))) {
       plain.push({ item });
     }
   }
@@ -69,15 +69,15 @@ function rank(query: string, rows: readonly SessionRow[]): readonly PickerMatch<
 async function open(ctx: PluginContext, tui: Tui): Promise<void> {
   const chat = ctx.get("chat");
   const sessions = ctx.get("sessions");
-  const pane = tui.panes.active?.view;
-  const shown = pane === undefined ? undefined : chat.session(pane);
+  const pane = tui.panes.activePane?.view;
+  const shown = pane === undefined ? undefined : chat.sessionIdOf(pane);
   // Another client can remove the session of the pane, and the list then starts with the start folder.
   const folder =
     shown === undefined
-      ? tui.startup.cwd
+      ? tui.startup.folder
       : await sessions.get(shown).then(
-          (row) => row.cwd,
-          () => tui.startup.cwd,
+          (row) => row.folder,
+          () => tui.startup.folder,
         );
   let all = false;
   let loadedAt = Date.now();
@@ -86,7 +86,7 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     id: (row) => row.sessionId,
     label: labelOf,
     detail: (row) => {
-      const place = all ? ` · ${row.cwd.split("/").findLast((part) => part !== "") ?? row.cwd}` : "";
+      const place = all ? ` · ${row.folder.split("/").findLast((part) => part !== "") ?? row.folder}` : "";
       return `${age(row.updatedAt, loadedAt)} · ${row.model.model}${place}`;
     },
     rank,
@@ -116,7 +116,7 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
   const load = async (): Promise<void> => {
     let page: Awaited<ReturnType<typeof sessions.list>>;
     try {
-      page = await sessions.list(all ? { limit: PAGE } : { cwd: folder, limit: PAGE });
+      page = await sessions.list(all ? { limit: PAGE } : { folder, limit: PAGE });
     } catch (error) {
       if (dialog.signal.aborted) return;
       dialog.close();

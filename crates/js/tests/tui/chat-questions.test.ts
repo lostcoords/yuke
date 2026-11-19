@@ -28,7 +28,7 @@ const DELETE = one({
 });
 
 test("a single question takes the place of the composer, enter picks the cursor option, and the draft comes back", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -47,7 +47,14 @@ test("a single question takes the place of the composer, enter picks the cursor 
   await waitForSettled();
   frame.draw();
   assertEquals(
-    [shown, off, sessions.responses, sessions.inputs, rows(frame.frame).at(-2), chat.tui.focused === composerOf(chat)],
+    [
+      shown,
+      off,
+      sessions.responses,
+      sessions.inputs,
+      rows(frame.frame).at(-2),
+      chat.tui.focusedView === composerOf(chat),
+    ],
     [
       [" guard · Branch", " Delete branch?", " feat/x", "❯ Yes", "  No", " ↑↓ choose · enter send · esc cancel"],
       [false, false, false],
@@ -60,7 +67,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
 });
 
 test("a question from yuke shows its source without host:", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -72,7 +79,7 @@ test("a question from yuke shows its source without host:", async () => {
 });
 
 test("a request of several questions shows one page each, with ticks and typed answers, and the last enter sends", async () => {
-  using frame = createFrame({ width: 64, height: 20 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 64, height: 20 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -133,7 +140,7 @@ test("a request of several questions shows one page each, with ticks and typed a
 });
 
 test("shift+tab or left goes back, and enter answers the page again", async () => {
-  using frame = createFrame({ width: 50, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 50, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -180,7 +187,7 @@ test("shift+tab or left goes back, and enter answers the page again", async () =
 });
 
 test("a press on the field row keeps the page keys with the question", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -196,7 +203,7 @@ test("a press on the field row keeps the page keys with the question", async () 
 });
 
 test("a tall question keeps its options in view and counts the lines that do not show", async () => {
-  using frame = createFrame({ width: 40, height: 15 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 15 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -215,7 +222,7 @@ test("a tall question keeps its options in view and counts the lines that do not
 });
 
 test("a short pane keeps the first line of a tall question above its options", async () => {
-  using frame = createFrame({ width: 40, height: 9 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 9 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -233,7 +240,7 @@ test("a short pane keeps the first line of a tall question above its options", a
 });
 
 test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -261,7 +268,7 @@ test("Esc and Ctrl+C cancel the question and leave the turn and the draft", asyn
 });
 
 test("a late answer gives a notice and the question stays until it closes", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -298,7 +305,7 @@ test("each pane of a session shows its question, and the focused pane takes the 
 });
 
 test("a close of the session by another client drops its question, and the next send opens the session again", async () => {
-  using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 32, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -323,7 +330,7 @@ test("a browse of the messages stops while a question shows", async () => {
       consumed: [{ id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },
   ];
-  using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 32, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(saved);
   const chat = await loadChat(frame, sessions);
   frame.start();

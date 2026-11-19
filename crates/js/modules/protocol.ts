@@ -158,7 +158,7 @@ hints: ToolHints,
 /**
  * The working folder of the call. A relative path of the call starts there.
  */
-cwd?: string, };
+folder?: string, };
 
 /**
  * The params of `plugin/check`.
@@ -640,7 +640,7 @@ export type ListSessionsParams = {
 /**
  * Only the sessions whose newest settings name this folder. Without it, the list has the sessions of every folder.
  */
-cwd?: string, 
+folder?: string, 
 /**
  * Only the children of this session. Without it, the list has the sessions without a parent.
  */
@@ -650,7 +650,7 @@ parent?: SessionId,
  */
 limit?: number, 
 /**
- * The `nextCursor` of the page before, with the same `cwd` and `parent`. Without it, the page starts at the newest
+ * The `nextCursor` of the page before, with the same `folder` and `parent`. Without it, the page starts at the newest
  * session.
  */
 cursor?: string, };
@@ -794,9 +794,10 @@ mimeType: string,
 filename?: string, };
 
 /**
- * A kind of content that a model reads.
+ * A kind of content: what an attachment holds, and what a model reads or writes. `Other` is a media type that no
+ * protocol names, and no model lists.
  */
-export type Modality = "text" | "image" | "audio" | "video" | "pdf";
+export type Modality = "text" | "image" | "audio" | "video" | "pdf" | "other";
 
 /**
  * A model of a provider.
@@ -835,7 +836,7 @@ tools?: boolean,
  */
 toolSearch?: boolean, 
 /**
- * The kinds of content that the model reads. Empty when the catalog does not know them.
+ * The kinds of content that the model reads. Empty when the catalog does not know them. It never lists `other`.
  */
 input: Array<Modality>, };
 
@@ -1009,11 +1010,11 @@ names: Array<string>, };
 export type Preview = "head" | "tail" | "none";
 
 /**
- * The prices of one band, in US dollars per million tokens. A missing price is unknown, never zero.
+ * The prices of one band, in US dollars per million tokens. A missing price is unknown, and never zero.
  */
 export type PriceBand = { 
 /**
- * The smallest prompt that this band prices. The prompt counts every input token, the cached ones too.
+ * The smallest prompt this band prices. The prompt counts every input token, the cached ones too.
  */
 minPromptTokens: number, 
 /**
@@ -1025,15 +1026,15 @@ input?: number,
  */
 output?: number, 
 /**
- * The price of a reasoning token, which replaces the output price for it.
+ * A reasoning token is also an output token. This price replaces the output price for it.
  */
 reasoning?: number, 
 /**
- * The price of a token that the prompt cache gives.
+ * The price of a token read from the prompt cache.
  */
 cacheRead?: number, 
 /**
- * The price of a token that the prompt cache keeps.
+ * The price of a token written to the prompt cache.
  */
 cacheWrite?: number, };
 
@@ -1167,7 +1168,7 @@ export type ReasoningChoice = {
 /**
  * The level.
  */
-level: ReasoningLevel, 
+level: ReasoningSelection, 
 /**
  * The reasoning settings that a session sends for this level, as the `reasoning` of its settings.
  */
@@ -1185,11 +1186,6 @@ blockId: number,
  * The new text.
  */
 text: string, };
-
-/**
- * A reasoning level of a model. JSON holds each level as its name: `default`, `off`, or the name of the effort.
- */
-export type ReasoningLevel = "default" | "off" | Effort;
 
 /**
  * Provider state, and the origin that may receive it again. The state must return to its provider verbatim.
@@ -1216,6 +1212,12 @@ export type ReasoningSectionStarted = {
  * The block id.
  */
 blockId: number, };
+
+/**
+ * What a user selects for the reasoning of a model: the default of the endpoint, no reasoning, or an effort. JSON
+ * holds each selection as its name: `default`, `off`, or the name of the effort.
+ */
+export type ReasoningSelection = "default" | "off" | Effort;
 
 /**
  * The reasoning one request asks for, as the caller chose it for the model. Each serializer writes the settings its
@@ -1385,7 +1387,7 @@ model: ModelReference,
 /**
  * The working folder of the newest settings.
  */
-cwd: string, 
+folder: string, 
 /**
  * The display title from a message, an explicit rename, or a fork of a titled session.
  */
@@ -1423,7 +1425,7 @@ settings: RequestSettings,
 /**
  * The folder that the tools of the session work in.
  */
-cwd: string, };
+folder: string, };
 
 /**
  * A session for a new viewer: its settings, and the updates that show it. The updates are its last saved events, its
@@ -1464,7 +1466,7 @@ export type SetApiKeyParams = {
  */
 provider: string, 
 /**
- * The API key. It is not empty and has no control character.
+ * The API key. It is not empty.
  */
 apiKey: string, };
 

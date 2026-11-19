@@ -134,7 +134,7 @@ test("a select shows its items in the order of its rank, with the rows of its re
 test("an input keeps a refused text with its message, and gives the text that its check accepts", async () => {
   using frame = createFrame({ width: 60, height: 10 });
   const checked: string[] = [];
-  const answer = frame.surface("test").tui.input({
+  const answer = frame.surface("test").tui.prompt({
     title: "Name",
     text: "a",
     onSubmit: async (text) => {
@@ -157,7 +157,7 @@ test("an input keeps a refused text with its message, and gives the text that it
 
 test("an input gives undefined for esc", async () => {
   using frame = createFrame({ width: 60, height: 10 });
-  const answer = frame.surface("test").tui.input({ placeholder: "URL" });
+  const answer = frame.surface("test").tui.prompt({ placeholder: "URL" });
   frame.draw();
   frame.paste("draft");
   frame.key("esc");
@@ -316,7 +316,7 @@ test("a picker body gets the focus of its search field, so typed text filters it
   frame.key("l");
   frame.draw();
 
-  assertEquals([picker.query, picker.selected?.name, shows(frame, "clock")], ["tool", "tools", false]);
+  assertEquals([picker.query, picker.selectedItem?.name, shows(frame, "clock")], ["tool", "tools", false]);
 });
 
 test("the title and the keys of a dialog have a default look that a plugin changes", () => {

@@ -76,14 +76,14 @@ fn settings(place: &Place) -> SessionSettings {
             model: "MiniMax-M3".to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: place.work.clone(),
+        folder: place.work.clone(),
     }
 }
 
 async fn saved(sessions: &SessionService) -> usize {
     sessions
         .list(ListSessionsParams {
-            cwd: None,
+            folder: None,
             parent: None,
             limit: None,
             cursor: None,
@@ -551,7 +551,7 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
     let ViewEvent::Snapshot(snapshot) = &events[0] else {
         panic!("the first view event is no snapshot: {events:?}");
     };
-    assert_eq!(snapshot.settings.cwd, settings(&place).cwd);
+    assert_eq!(snapshot.settings.folder, settings(&place).folder);
     let saved: Vec<u64> = snapshot
         .updates
         .iter()

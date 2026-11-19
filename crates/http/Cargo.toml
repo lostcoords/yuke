@@ -1,6 +1,6 @@
 [package]
 name = "yuke-http"
-version = "0.0.1-dev"
+version.workspace = true
 description = "An HTTP/1.1 client that uses hyper and rustls. It sends one request and follows no redirect."
 edition.workspace = true
 rust-version.workspace = true

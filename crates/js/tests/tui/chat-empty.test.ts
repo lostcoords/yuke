@@ -20,7 +20,7 @@ function cells(row: string | undefined, from: number, to?: number): string {
 /** Save the pick `p/m` at the level high, so a send needs no picker. */
 async function savedPick(): Promise<void> {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    cwd: folder(),
+    folder: folder(),
   });
 }
 
@@ -34,7 +34,7 @@ function accepted(id: number, content: Block[]): SessionUpdate {
 
 test("a pane without a session shows the icon and, beside it, the version, the model, the folder, and the way to start", async () => {
   await savedPick();
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w", version: "1.2.3" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w", version: "1.2.3" });
   await loadChat(frame);
   frame.start();
   await waitForSettled();
@@ -49,7 +49,7 @@ test("a pane without a session shows the icon and, beside it, the version, the m
 
 test("the first send hides the header at once, and the waiting message keeps it hidden", async () => {
   await savedPick();
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -66,7 +66,7 @@ test("the first send hides the header at once, and the waiting message keeps it 
 });
 
 test("a session with history shows no header", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, fakeSessions(replies(3)));
   frame.start();
   await waitForSettled();
@@ -78,7 +78,7 @@ test("a session with history shows no header", async () => {
 test("a narrow pane puts the lines below the icon and cuts a long line", async () => {
   await savedPick();
   using frame = createFrame({ width: 30, height: 20 }, undefined, {
-    cwd: "/a/very/long/folder/name",
+    folder: "/a/very/long/folder/name",
     version: "1.2.3",
   });
   await loadChat(frame);
@@ -95,7 +95,7 @@ test("a narrow pane puts the lines below the icon and cuts a long line", async (
 
 test("a pane too short for the whole header shows none of it", async () => {
   await savedPick();
-  using frame = createFrame({ width: 80, height: 8 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 80, height: 8 }, undefined, { folder: "/w" });
   await loadChat(frame);
   frame.start();
   await waitForSettled();
@@ -109,7 +109,7 @@ test("a pane too short for the whole header shows none of it", async () => {
 
 test("without a ready provider the header names /login, and a catalog change brings the usual hint back", async () => {
   await savedPick();
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w" });
   let ready = false;
   const chat = await loadChat(frame, fakeSessions(), { list: async () => (ready ? CATALOG : { providers: [] }) });
   frame.start();
@@ -141,7 +141,7 @@ test("without a ready provider the header names /login, and a catalog change bri
 test("the header names the model and the folder of the bar, with the home folder as ~", async () => {
   await savedPick();
   const home = env.get("HOME") ?? "/home";
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: `${home}/launch` });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: `${home}/launch` });
   const chat = await loadChat(frame);
   frame.start();
   await waitForSettled();
@@ -152,7 +152,7 @@ test("the header names the model and the folder of the bar, with the home folder
 });
 
 test("setEmptyView replaces the header in each pane, and its disposer brings the default back", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w" });
   const chat = await loadChat(frame);
   frame.start();
   await waitForSettled();
@@ -167,7 +167,7 @@ test("setEmptyView replaces the header in each pane, and its disposer brings the
 });
 
 test("the option emptyView false shows nothing in an empty pane", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w" });
   await loadChat(frame, fakeSessions(), undefined, { emptyView: false });
   frame.start();
   await waitForSettled();

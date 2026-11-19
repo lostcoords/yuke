@@ -1,6 +1,8 @@
 // The frame around the input of a chat pane: its insets, its paint, its context, and its owner.
 
-import { ChatDocument, type ComposerFrameContext, composerRows } from "yuke:chat";
+import type { ComposerFrameContext } from "yuke:chat";
+import { ChatDocument } from "yuke:internal/chat/document";
+import { composerRows } from "yuke:internal/chat/rows";
 import type { InteractionRequest } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { type Canvas, TextEditor } from "yuke:tui";
@@ -39,7 +41,7 @@ test("the height, the cursor, and a click of the input follow the side insets", 
 });
 
 test("a frame without insets leaves each row to the transcript and the input", async () => {
-  using frame = createFrame({ width: 20, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(30)));
   chat.chat.setComposerFrame({ inset: () => ({}), draw() {} });
   frame.start();
@@ -101,14 +103,14 @@ test("the style of a frame stays under the text of the input and the empty cells
 });
 
 test("a frame gets the view in the input area, the focus, and the state of the turn", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(3));
   const chat = await loadChat(frame, sessions);
   const seen: string[] = [];
   chat.chat.setComposerFrame({
     inset: (pane) => (pane.kind === "composer" ? { left: 1 } : {}),
     draw: (_canvas, pane) => {
-      seen.push(`${pane.kind} ${pane.focused} ${pane.running} ${pane.inputRect.column} ${pane.session}`);
+      seen.push(`${pane.kind} ${pane.focused} ${pane.running} ${pane.inputRect.column} ${pane.sessionId}`);
     },
   });
   frame.start();
@@ -148,10 +150,10 @@ test("the composer stays the same widget in a frame, and the last frame wins unt
   assertEquals(rows(frame.frame)[1], "two");
   const composer = chat.tui.widgets.list().find((mount) => mount.widget.role === "composer")?.widget;
   assertEquals(composer instanceof TextEditor, true);
-  assertEquals(chat.tui.focused, composer);
+  assertEquals(chat.tui.focusedView, composer);
   // A press on the frame leaves the focus on the input.
   click(frame, 0, 1);
-  assertEquals(chat.tui.focused, composer);
+  assertEquals(chat.tui.focusedView, composer);
   // The disposer of an earlier frame leaves the current one, and the disposer of the last frame gives the rules back.
   first();
   frame.draw();

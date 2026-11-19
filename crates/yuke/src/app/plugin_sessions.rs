@@ -168,9 +168,8 @@ impl Sessions for PluginSessions {
     }
 
     fn cancel_login(&self, id: LoginId) {
-        if self.shared.cancel_login(id).is_err() {
-            // The login ended, so it has nothing to stop.
-        }
+        // The login ended, so it has nothing to stop.
+        _ = self.shared.cancel_login(id);
     }
 
     async fn set_api_key(&self, params: SetApiKeyParams) -> Result<(), SessionsError> {

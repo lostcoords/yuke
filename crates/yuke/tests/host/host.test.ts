@@ -57,7 +57,7 @@ test("a plugin that does not load rejects the host with its reason", async () =>
 
   const error = await assertRejects(() => createHost({ plugins: [{ name: "failing", apply: failing }] }));
 
-  assertEquals(error instanceof Error && error.message.includes("plugin failing did not load"), true);
+  assertEquals(error instanceof Error && error.message.includes("Plugin failing did not load"), true);
 });
 
 test("a given plugin name follows the rule of a manifest name", async () => {
@@ -138,7 +138,7 @@ test("setSettings changes the folder and the model of an open session", async ()
       description: "Give the folder.",
       concurrency: "serial",
       inputSchema: { type: "object", properties: {} },
-      execute: (_args, context) => context.cwd,
+      execute: (_args, context) => context.folder,
     });
   };
   const replies = [reply.text("Done.")];
@@ -148,7 +148,7 @@ test("setSettings changes the folder and the model of an open session", async ()
 
   await session.setSettings({
     ...session.settings,
-    cwd: `${folder()}/other`,
+    folder: `${folder()}/other`,
     model: { provider: "openai", model: "gpt-4.1" },
   });
   await session.sendMessage("Hi.");
@@ -174,7 +174,7 @@ test("a setSettings that fails during a turn changes nothing", async () => {
   );
   stop.abort(new Error("stop"));
   await sending;
-  await session.setSettings({ ...session.settings, cwd: folder() });
+  await session.setSettings({ ...session.settings, folder: folder() });
   await session.sendMessage("Hi.");
 
   assertEquals(

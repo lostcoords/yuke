@@ -59,9 +59,6 @@ function optionsOf(given: Options, schema: ObjectSchema | undefined): Options {
 /** The services of the loaded plugins. A service enters only after its provider's `apply` succeeds. */
 const services = new Map<string, unknown>();
 
-/** Set at the start of the close of the plugins. A later load fails, so the close misses no plugin. */
-let closing = false;
-
 /** Each loaded plugin, in load order: the abort of its signal and the cleanup of its `apply`. */
 const loaded: { readonly plugin: string; readonly abort: (reason: string) => void; readonly cleanup?: Cleanup }[] = [];
 
@@ -87,7 +84,6 @@ export function give(name: string, exports: object): void {
  * the plugin and throws. Only a loaded plugin runs `session`.
  */
 export async function load(spec: PluginSpec): Promise<void> {
-  if (closing) throw new TypeError(`plugin ${spec.name} loads after the close of the plugins`);
   const { signal, abort } = hostSignal();
   const pending = new Map<string, unknown>();
   // One surface per plugin activation: each call of `get("tui")` gives the same one, and its signal stops it.
@@ -115,7 +111,7 @@ export async function load(spec: PluginSpec): Promise<void> {
       optionsSchema = exports.optionsSchema;
     }
     const options = optionsOf(spec.options, optionsSchema);
-    const ctx: PluginContext<Options> = Object.freeze({
+    const ctx: PluginContext<Options> = {
       name: spec.name,
       dataDir: spec.dataDir,
       options,
@@ -147,14 +143,13 @@ export async function load(spec: PluginSpec): Promise<void> {
       addListener<K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void): () => void {
         return addListener(spec.name, signal, event, listener);
       },
-    });
+    };
     if (apply !== undefined) cleanup = await apply(ctx);
-    if (closing) throw new TypeError(`plugin ${spec.name} loads after the close of the plugins`);
     for (const [name, value] of pending) services.set(name, value);
     if (session !== undefined) sessionExports.push({ plugin: spec.name, session, options });
     loaded.push(cleanup === undefined ? { plugin: spec.name, abort } : { plugin: spec.name, abort, cleanup });
   } catch (error) {
-    abort(`plugin ${spec.name} did not load`);
+    abort(`Plugin ${spec.name} did not load`);
     if (cleanup !== undefined) await clean(spec.name, cleanup);
     throw error;
   }
@@ -165,7 +160,6 @@ export async function load(spec: PluginSpec): Promise<void> {
  * plugin first. A failed cleanup sends a notice, and the next cleanup still runs. A second close does nothing.
  */
 export async function closePlugins(): Promise<void> {
-  closing = true;
   const plugins = loaded.splice(0).reverse();
   for (const { plugin, abort } of plugins) abort(`the runtime of plugin ${plugin} closed`);
   for (const { plugin, cleanup } of plugins) if (cleanup !== undefined) await clean(plugin, cleanup);

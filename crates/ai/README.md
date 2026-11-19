@@ -1,4 +1,4 @@
-# ai
+# yuke-ai
 
 Model calls for the yuke coding agent.
 
@@ -70,3 +70,6 @@ To update the model catalog:
 ```sh
 mise exec -- bash crates/ai/scripts/generate-catalog.sh
 ```
+
+To print the model changes between two generated catalogs as Markdown, run
+`crates/ai/scripts/catalog-changes.sh old.rs new.rs`. The catalog workflow uses it for the text of its pull request.

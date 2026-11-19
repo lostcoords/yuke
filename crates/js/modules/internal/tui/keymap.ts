@@ -38,8 +38,6 @@ export class Keymap {
   /** Bind `spec` to the command `command` in the context atom `in` (`root` by default), and return the disposer. */
   add(spec: string, command: string, options: { readonly in?: string } = {}): () => void {
     const { in: atom = "root" } = options;
-    if (command === "") throw new TypeError("a binding names a command");
-    if (atom === "") throw new TypeError("a context atom is not empty");
     const binding: Binding = { strokes: parseKeys(spec), command, atom };
     this.#bindings.push(binding);
     this.#changed();

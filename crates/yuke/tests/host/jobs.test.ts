@@ -127,6 +127,24 @@ test("the stop tool aborts the signal, waits for the end, and drops the report",
   assertEquals(host.requests.length, 0);
 });
 
+test("stopJob of a handle aborts the signal, waits for the end, and drops the report", async () => {
+  const { host, s, handle } = await opened();
+  await using _host = host;
+  const work = held();
+  await s.jobs.start({ id: "explorer", label: "one" }, work.work);
+
+  let answered = false;
+  const pending = handle.stopJob("explorer").then(() => {
+    answered = true;
+  });
+  await waitForSettled();
+  assertEquals([work.signal.aborted, answered], [true, false]);
+  work.finish(REPORT);
+  await pending;
+
+  assertEquals([answered, handle.jobs(), host.requests.length], [true, [], 0]);
+});
+
 test("a cancel of the stop tool ends its wait, and the stop goes on", async () => {
   const { host, session, s, handle } = await opened();
   await using _host = host;
