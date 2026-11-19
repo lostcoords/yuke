@@ -737,7 +737,7 @@ export interface SessionContext<O = Record<string, never>> {
   /** The parent session. A fork has no parent. */
   readonly parent: SessionId | undefined;
   /** The workspace folder of the session at its open. A tool reads the folder of each call from its context. */
-  readonly cwd: string;
+  readonly folder: string;
   /** A frozen copy of the settings of the session now. Each read gives a new copy. */
   readonly settings: Frozen<SessionSettings>;
   /** The options of the plugin. They are the same object as `options` of `PluginContext`. */

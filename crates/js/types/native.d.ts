@@ -52,7 +52,7 @@ declare module "yuke:internal/native" {
     readonly sessionId: string;
     readonly callId: string;
     /** The working folder of the session at the start of the call. */
-    readonly cwd: string;
+    readonly folder: string;
     /** Send one text of the call to the consumer. */
     readonly output: (text: string) => void;
     readonly call: CallHost;
@@ -361,44 +361,44 @@ declare module "yuke:internal/native" {
   }
 
   /**
-   * The file operations of `yuke:fs`. A relative path needs the absolute `cwd`; a bad path throws a `TypeError`. A
+   * The file operations of `yuke:fs`. A relative path needs the absolute `folder`; a bad path throws a `TypeError`. A
    * failure rejects with `{ code, message, path, destination }`, and a stop with `{ cancelled: true }`.
    */
   export function fsReadFile(
     path: string,
-    cwd: string | undefined,
+    folder: string | undefined,
     position: number,
     length: number | undefined,
   ): Operation<Uint8Array>;
-  export function fsReadTextFile(path: string, cwd: string | undefined, fatal: boolean): Operation<string>;
+  export function fsReadTextFile(path: string, folder: string | undefined, fatal: boolean): Operation<string>;
   /** `atomic` comes only with `create`. */
   export function fsWriteFile(
     path: string,
-    cwd: string | undefined,
+    folder: string | undefined,
     data: Uint8Array | string,
     placement: "replace" | "append" | "atomic",
     creation: "create" | "existing" | "new",
     mode: number | undefined,
   ): Operation<undefined>;
-  export function fsReadDir(path: string, cwd: string | undefined): Operation<(Kind & { readonly name: string })[]>;
+  export function fsReadDir(path: string, folder: string | undefined): Operation<(Kind & { readonly name: string })[]>;
   export function fsStat(
     path: string,
-    cwd: string | undefined,
+    folder: string | undefined,
     follow: boolean,
   ): Operation<Kind & { readonly size: number; readonly mtime: number | undefined }>;
   export function fsMkdir(
     path: string,
-    cwd: string | undefined,
+    folder: string | undefined,
     recursive: boolean,
     mode: number | undefined,
   ): Operation<undefined>;
   export function fsRemove(
     path: string,
-    cwd: string | undefined,
+    folder: string | undefined,
     recursive: boolean,
     force: boolean,
   ): Operation<undefined>;
-  export function fsRename(source: string, destination: string, cwd: string | undefined): Operation<undefined>;
+  export function fsRename(source: string, destination: string, folder: string | undefined): Operation<undefined>;
 
   /** At most `limit` lines from line `offset`, while they fit in `maxBytes`. */
   export function readLines(

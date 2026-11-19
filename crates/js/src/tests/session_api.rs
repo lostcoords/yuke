@@ -88,7 +88,7 @@ impl crate::SessionHost for Scripted {
     fn parent(&self) -> Option<SessionId> {
         None
     }
-    fn cwd(&self) -> PathBuf {
+    fn folder(&self) -> PathBuf {
         self.folder.clone()
     }
     fn is_closed(&self) -> bool {

@@ -157,7 +157,7 @@ const session: PluginSession = async (scope) => {
 // @ts-expect-error: a cleanup is a function.
 const valued: PluginSession = () => 5;
 const plain: PluginSession = async (scope) => {
-  await Promise.resolve(scope.cwd);
+  await Promise.resolve(scope.folder);
 };
 const quiet: PluginSession = (scope) => {
   scope.notify("info", "x");
@@ -207,17 +207,17 @@ export async function drive(sessions: Sessions): Promise<void> {
 // `yuke:fs` takes a base folder and a signal, and its failure has a code.
 async function files(): Promise<void> {
   const fs = await import("yuke:fs");
-  const text: string = await fs.readTextFile("state.json", { cwd: ctx.dataDir, signal: ctx.signal });
-  const bytes: Uint8Array = await fs.readFile("data.bin", { cwd: ctx.dataDir, position: 0, length: 4 });
+  const text: string = await fs.readTextFile("state.json", { folder: ctx.dataDir, signal: ctx.signal });
+  const bytes: Uint8Array = await fs.readFile("data.bin", { folder: ctx.dataDir, position: 0, length: 4 });
   // A module finds the files beside it through `import.meta`. A built-in module has no folder.
   const here: string | undefined = import.meta.dirname;
   // @ts-expect-error: `dirname` can be undefined.
   const folder: string = import.meta.dirname;
   const url: string = import.meta.url;
-  const info: Date | null = (await fs.stat("prompt.md", { cwd: here ?? ctx.dataDir })).mtime;
-  await fs.writeTextFile("state.json", text, { cwd: ctx.dataDir, atomic: true, mode: 0o600 });
+  const info: Date | null = (await fs.stat("prompt.md", { folder: here ?? ctx.dataDir })).mtime;
+  await fs.writeTextFile("state.json", text, { folder: ctx.dataDir, atomic: true, mode: 0o600 });
   // @ts-expect-error: the data of `writeFile` is bytes.
-  await fs.writeFile("data.bin", "text", { cwd: ctx.dataDir });
+  await fs.writeFile("data.bin", "text", { folder: ctx.dataDir });
   void bytes;
   void info;
   void folder;

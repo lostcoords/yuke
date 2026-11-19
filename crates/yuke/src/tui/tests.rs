@@ -321,7 +321,7 @@ async fn the_startup_gives_the_folder_the_session_and_the_version_of_the_start()
     let version = env!("YUKE_VERSION");
     output
         .shows(&format!(
-            r#"{{"cwd":"/work","sessionId":"{id}","version":"{version}"}}"#
+            r#"{{"folder":"/work","sessionId":"{id}","version":"{version}"}}"#
         ))
         .await;
     app.shutdown().await;

@@ -72,7 +72,7 @@ function grayPng(width: number, height: number, pixels: Uint8Array): Uint8Array 
 
 /** Paste the PNG `bytes` with ctrl+v into a chat, send it, and give the stored bytes and the inputs that the session got. */
 async function pasteAndSend(bytes: Uint8Array) {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();

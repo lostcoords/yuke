@@ -12,7 +12,7 @@ const RESUME = "To resume this session, run: yuke -r s1";
 
 /** A chat pane on the session `s1` with the running jobs `jobs`. */
 async function opened(jobs: readonly Job[] = []) {
-  const frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  const frame = createFrame({ width: 50, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(3));
   const chat = await loadChat(frame, sessions);
   // A frame test has no default keys.

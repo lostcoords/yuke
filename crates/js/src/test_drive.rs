@@ -274,7 +274,7 @@ impl<'js> IntoJs<'js> for Decision {
 
 /// Store each item of `media` in the session of `script`, as for a tool result or a hook answer.
 async fn stored(script: &ScriptSession, media: Vec<MediaFile>) -> Result<Vec<Media>, TestError> {
-    store_media(&*script.host, media, &script.host.cwd()).await
+    store_media(&*script.host, media, &script.host.folder()).await
 }
 
 /// Read the bytes of each item of `media` of the session `id` from the store.

@@ -1016,7 +1016,7 @@ declare module "yuke:tui" {
    */
   export interface Startup {
     /** The folder that yuke started in. */
-    readonly cwd: string;
+    readonly folder: string;
     /** The session of `--continue` or `--resume`. The start pane shows it. A restored pane keeps its saved session. */
     readonly sessionId?: SessionId | undefined;
     /** The version of yuke, such as `0.1.0`. */

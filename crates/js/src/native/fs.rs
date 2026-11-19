@@ -28,8 +28,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
             "fsReadFile",
             Function::new(
                 ctx.clone(),
-                |ctx: Ctx<'js>, path: String, cwd: Option<String>, position: u64, length: Option<u64>| {
-                    read_file(&ctx, &path, cwd.as_deref(), position, length)
+                |ctx: Ctx<'js>, path: String, folder: Option<String>, position: u64, length: Option<u64>| {
+                    read_file(&ctx, &path, folder.as_deref(), position, length)
                 },
             )?,
         ),
@@ -37,8 +37,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
             "fsReadTextFile",
             Function::new(
                 ctx.clone(),
-                |ctx: Ctx<'js>, path: String, cwd: Option<String>, fatal: bool| {
-                    read_text_file(&ctx, &path, cwd.as_deref(), fatal)
+                |ctx: Ctx<'js>, path: String, folder: Option<String>, fatal: bool| {
+                    read_text_file(&ctx, &path, folder.as_deref(), fatal)
                 },
             )?,
         ),
@@ -48,28 +48,28 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
                 ctx.clone(),
                 |ctx: Ctx<'js>,
                  path: String,
-                 cwd: Option<String>,
+                 folder: Option<String>,
                  data: Value<'js>,
                  placement: String,
                  creation: String,
                  mode: Option<u32>| {
                     let how = (placement.as_str(), creation.as_str());
-                    write_file(&ctx, &path, cwd.as_deref(), &data, how, mode)
+                    write_file(&ctx, &path, folder.as_deref(), &data, how, mode)
                 },
             )?,
         ),
         (
             "fsReadDir",
-            Function::new(ctx.clone(), |ctx: Ctx<'js>, path: String, cwd: Option<String>| {
-                read_dir_entries(&ctx, &path, cwd.as_deref())
+            Function::new(ctx.clone(), |ctx: Ctx<'js>, path: String, folder: Option<String>| {
+                read_dir_entries(&ctx, &path, folder.as_deref())
             })?,
         ),
         (
             "fsStat",
             Function::new(
                 ctx.clone(),
-                |ctx: Ctx<'js>, path: String, cwd: Option<String>, follow: bool| {
-                    stat_path(&ctx, &path, cwd.as_deref(), follow)
+                |ctx: Ctx<'js>, path: String, folder: Option<String>, follow: bool| {
+                    stat_path(&ctx, &path, folder.as_deref(), follow)
                 },
             )?,
         ),
@@ -77,8 +77,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
             "fsMkdir",
             Function::new(
                 ctx.clone(),
-                |ctx: Ctx<'js>, path: String, cwd: Option<String>, recursive: bool, mode: Option<u32>| {
-                    make_dir(&ctx, &path, cwd.as_deref(), recursive, mode)
+                |ctx: Ctx<'js>, path: String, folder: Option<String>, recursive: bool, mode: Option<u32>| {
+                    make_dir(&ctx, &path, folder.as_deref(), recursive, mode)
                 },
             )?,
         ),
@@ -86,8 +86,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
             "fsRemove",
             Function::new(
                 ctx.clone(),
-                |ctx: Ctx<'js>, path: String, cwd: Option<String>, recursive: bool, force: bool| {
-                    remove_path(&ctx, &path, cwd.as_deref(), recursive, force)
+                |ctx: Ctx<'js>, path: String, folder: Option<String>, recursive: bool, force: bool| {
+                    remove_path(&ctx, &path, folder.as_deref(), recursive, force)
                 },
             )?,
         ),
@@ -95,8 +95,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
             "fsRename",
             Function::new(
                 ctx.clone(),
-                |ctx: Ctx<'js>, source: String, destination: String, cwd: Option<String>| {
-                    rename_path(&ctx, &source, &destination, cwd.as_deref())
+                |ctx: Ctx<'js>, source: String, destination: String, folder: Option<String>| {
+                    rename_path(&ctx, &source, &destination, folder.as_deref())
                 },
             )?,
         ),
@@ -107,22 +107,27 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
     Ok(())
 }
 
-/// `fsReadFile(path, cwd, position, length)`: the bytes of a file from `position`, at most `length`.
+/// `fsReadFile(path, folder, position, length)`: the bytes of a file from `position`, at most `length`.
 fn read_file<'js>(
     ctx: &Ctx<'js>,
     path: &str,
-    cwd: Option<&str>,
+    folder: Option<&str>,
     position: u64,
     length: Option<u64>,
 ) -> rquickjs::Result<Operation<'js>> {
-    let path = resolve(ctx, path, cwd)?;
+    let path = resolve(ctx, path, folder)?;
     operation(ctx, move |stop| read(&path, position, length, stop).map(Bytes))
 }
 
-/// `fsReadTextFile(path, cwd, fatal)`: the whole file as UTF-8. Bytes that are not UTF-8 become U+FFFD, or fail
+/// `fsReadTextFile(path, folder, fatal)`: the whole file as UTF-8. Bytes that are not UTF-8 become U+FFFD, or fail
 /// with `EILSEQ` when `fatal`.
-fn read_text_file<'js>(ctx: &Ctx<'js>, path: &str, cwd: Option<&str>, fatal: bool) -> rquickjs::Result<Operation<'js>> {
-    let path = resolve(ctx, path, cwd)?;
+fn read_text_file<'js>(
+    ctx: &Ctx<'js>,
+    path: &str,
+    folder: Option<&str>,
+    fatal: bool,
+) -> rquickjs::Result<Operation<'js>> {
+    let path = resolve(ctx, path, folder)?;
     operation(ctx, move |stop| {
         let bytes = read(&path, 0, None, stop)?;
         match String::from_utf8(bytes) {
@@ -155,13 +160,13 @@ enum Creation {
     New,
 }
 
-/// `fsWriteFile(path, cwd, data, placement, creation, mode)`: write `data`, a `Uint8Array` or a string, to a file.
+/// `fsWriteFile(path, folder, data, placement, creation, mode)`: write `data`, a `Uint8Array` or a string, to a file.
 /// `placement` is `replace`, `append`, or `atomic`; `creation` is `create`, `existing`, or `new`. `yuke:fs` is the
 /// only caller, so any other text means `replace` and `create`. It sends `atomic` only with `create`.
 fn write_file<'js>(
     ctx: &Ctx<'js>,
     path: &str,
-    cwd: Option<&str>,
+    folder: Option<&str>,
     data: &Value<'js>,
     (placement, creation): (&str, &str),
     mode: Option<u32>,
@@ -176,7 +181,7 @@ fn write_file<'js>(
         "existing" => Creation::Existing,
         _ => Creation::Create,
     };
-    let path = resolve(ctx, path, cwd)?;
+    let path = resolve(ctx, path, folder)?;
     // A copy at the call, so a later change of the bytes does not reach the file.
     let bytes = match data.as_string() {
         Some(text) => text.to_string()?.into_bytes(),
@@ -185,27 +190,27 @@ fn write_file<'js>(
     operation(ctx, move |stop| write(&path, &bytes, placement, creation, mode, stop))
 }
 
-/// `fsReadDir(path, cwd)`: the entries of a directory.
-fn read_dir_entries<'js>(ctx: &Ctx<'js>, path: &str, cwd: Option<&str>) -> rquickjs::Result<Operation<'js>> {
-    let path = resolve(ctx, path, cwd)?;
+/// `fsReadDir(path, folder)`: the entries of a directory.
+fn read_dir_entries<'js>(ctx: &Ctx<'js>, path: &str, folder: Option<&str>) -> rquickjs::Result<Operation<'js>> {
+    let path = resolve(ctx, path, folder)?;
     operation(ctx, move |stop| read_dir(&path, stop))
 }
 
-/// `fsStat(path, cwd, follow)`: the facts of a path, of the target of a link when `follow`.
-fn stat_path<'js>(ctx: &Ctx<'js>, path: &str, cwd: Option<&str>, follow: bool) -> rquickjs::Result<Operation<'js>> {
-    let path = resolve(ctx, path, cwd)?;
+/// `fsStat(path, folder, follow)`: the facts of a path, of the target of a link when `follow`.
+fn stat_path<'js>(ctx: &Ctx<'js>, path: &str, folder: Option<&str>, follow: bool) -> rquickjs::Result<Operation<'js>> {
+    let path = resolve(ctx, path, folder)?;
     operation(ctx, move |stop| stat(&path, follow, stop))
 }
 
-/// `fsMkdir(path, cwd, recursive, mode)`: create a directory.
+/// `fsMkdir(path, folder, recursive, mode)`: create a directory.
 fn make_dir<'js>(
     ctx: &Ctx<'js>,
     path: &str,
-    cwd: Option<&str>,
+    folder: Option<&str>,
     recursive: bool,
     mode: Option<u32>,
 ) -> rquickjs::Result<Operation<'js>> {
-    let path = resolve(ctx, path, cwd)?;
+    let path = resolve(ctx, path, folder)?;
     operation(ctx, move |stop| {
         check(stop)?;
         let mut builder = fs::DirBuilder::new();
@@ -217,27 +222,27 @@ fn make_dir<'js>(
     })
 }
 
-/// `fsRemove(path, cwd, recursive, force)`: remove a path.
+/// `fsRemove(path, folder, recursive, force)`: remove a path.
 fn remove_path<'js>(
     ctx: &Ctx<'js>,
     path: &str,
-    cwd: Option<&str>,
+    folder: Option<&str>,
     recursive: bool,
     force: bool,
 ) -> rquickjs::Result<Operation<'js>> {
-    let path = resolve(ctx, path, cwd)?;
+    let path = resolve(ctx, path, folder)?;
     operation(ctx, move |stop| remove(&path, recursive, force, stop))
 }
 
-/// `fsRename(source, destination, cwd)`: move a path.
+/// `fsRename(source, destination, folder)`: move a path.
 fn rename_path<'js>(
     ctx: &Ctx<'js>,
     source: &str,
     destination: &str,
-    cwd: Option<&str>,
+    folder: Option<&str>,
 ) -> rquickjs::Result<Operation<'js>> {
-    let source = resolve(ctx, source, cwd)?;
-    let destination = resolve(ctx, destination, cwd)?;
+    let source = resolve(ctx, source, folder)?;
+    let destination = resolve(ctx, destination, folder)?;
     operation(ctx, move |stop| {
         check(stop)?;
         fs::rename(&source, &destination).map_err(|error| Failure::Io {
@@ -257,22 +262,22 @@ impl<'js> IntoJs<'js> for Bytes {
     }
 }
 
-/// The absolute path of `path`. A relative path needs the absolute folder `cwd`. A bad path throws a `TypeError`.
-fn resolve(ctx: &Ctx<'_>, path: &str, cwd: Option<&str>) -> rquickjs::Result<PathBuf> {
+/// The absolute path of `path`. A relative path needs the absolute `folder` option. A bad path throws a `TypeError`.
+fn resolve(ctx: &Ctx<'_>, path: &str, folder: Option<&str>) -> rquickjs::Result<PathBuf> {
     let refuse = |message: &str| throw(ctx, ErrorClass::TypeError, message);
     if path.is_empty() {
         return Err(refuse("the path is empty"));
     }
-    if path.contains('\0') || cwd.is_some_and(|cwd| cwd.contains('\0')) {
+    if path.contains('\0') || folder.is_some_and(|folder| folder.contains('\0')) {
         return Err(refuse("a path holds a NUL character"));
     }
     if Path::new(path).is_absolute() {
         return Ok(PathBuf::from(path));
     }
-    match cwd {
-        Some(cwd) if Path::new(cwd).is_absolute() => Ok(Path::new(cwd).join(path)),
-        Some(cwd) => Err(refuse(&format!("cwd '{cwd}' is not an absolute path"))),
-        None => Err(refuse(&format!("the relative path '{path}' needs cwd"))),
+    match folder {
+        Some(folder) if Path::new(folder).is_absolute() => Ok(Path::new(folder).join(path)),
+        Some(folder) => Err(refuse(&format!("the option folder '{folder}' is not an absolute path"))),
+        None => Err(refuse(&format!("the relative path '{path}' needs the option folder"))),
     }
 }
 

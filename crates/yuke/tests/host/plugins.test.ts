@@ -20,9 +20,9 @@ async function writePlugin(name: string, fields: Record<string, unknown>, source
   await mkdir(root);
   const entry = source === undefined ? {} : { entry: "index.ts" };
   await writeTextFile("plugin.json", JSON.stringify({ name, extensions: { "sh.yuke": { ...entry, ...fields } } }), {
-    cwd: root,
+    folder: root,
   });
-  if (source !== undefined) await writeTextFile("index.ts", source, { cwd: root });
+  if (source !== undefined) await writeTextFile("index.ts", source, { folder: root });
   return root;
 }
 
@@ -110,11 +110,11 @@ test("a folder plugin reads a file beside its module through import.meta", async
          description: "Read the prompt.",
          concurrency: "serial",
          inputSchema: { type: "object", properties: {} },
-         execute: () => readTextFile("prompt.md", { cwd: import.meta.dirname }),
+         execute: () => readTextFile("prompt.md", { folder: import.meta.dirname }),
        });
      };`,
   );
-  await writeTextFile("prompt.md", "Be brief.", { cwd: root });
+  await writeTextFile("prompt.md", "Be brief.", { folder: root });
   await using host = await createHost({ plugins: [{ folder: root }] });
   const session = await host.openSession();
 
@@ -144,7 +144,7 @@ test("apply runs once with its context, and session runs for each session", asyn
   };
   globalThis.applyOfOne = apply;
   globalThis.sessionOfOne = (s: Parameters<PluginSession>[0]) => {
-    sessions.push(s.cwd);
+    sessions.push(s.folder);
     s.tools.add({
       name: "hello",
       description: "Say hello.",

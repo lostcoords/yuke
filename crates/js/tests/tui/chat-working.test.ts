@@ -8,7 +8,7 @@ const hints = { subject: { argument: "command", kind: "text" }, preview: "tail" 
 
 test("a running turn shows its phase and time above an empty row before the rule, and the end of the turn takes the working row away", async () => {
   const sessions = fakeSessions(replies(2));
-  using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 50, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -73,7 +73,7 @@ test("a running turn shows its phase and time above an empty row before the rule
 
 test("the elapsed time of a long turn shows minutes", async () => {
   const sessions = fakeSessions(replies(2));
-  using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 50, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -87,7 +87,7 @@ test("the elapsed time of a long turn shows minutes", async () => {
 
 test("reasoning and response drafts have phase labels, and tool input has a generic label", async () => {
   const sessions = fakeSessions(replies(2));
-  using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 50, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -113,7 +113,7 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
 
 test("a thought without text to show draws no rows, and the working row still shows the reasoning phase", async () => {
   const sessions = fakeSessions(replies(20));
-  using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 50, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -147,7 +147,7 @@ test("a thought without text to show draws no rows, and the working row still sh
 
 test("a short pane gives up the empty rows before the last row of the transcript", async () => {
   const sessions = fakeSessions(replies(2));
-  using frame = createFrame({ width: 50, height: 5 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 50, height: 5 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -163,7 +163,7 @@ test("a short pane gives up the empty rows before the last row of the transcript
 
 test("a close of the session by another client takes the working row away", async () => {
   const sessions = fakeSessions(replies(2));
-  using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 50, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -177,7 +177,7 @@ test("a close of the session by another client takes the working row away", asyn
 
 test("the working row shows no cancel key while the command list takes esc", async () => {
   const sessions = fakeSessions(replies(2));
-  using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 50, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -194,7 +194,7 @@ test("the working row shows no cancel key while the command list takes esc", asy
 /** A frame of `width` with a chat whose exec of `command` runs. */
 async function runningExec(width: number, command: string) {
   const sessions = fakeSessions(replies(2));
-  const frame = createFrame({ width, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  const frame = createFrame({ width, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();

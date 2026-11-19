@@ -755,7 +755,7 @@ impl Parts {
                 let tools = script.tools().await;
                 self.servers.ready().await;
                 tools
-            } => toolset_of(tools, self.servers.tools(), &self.host.cwd()),
+            } => toolset_of(tools, self.servers.tools(), &self.host.folder()),
             () = token.cancelled() => Ok(Toolset::new()),
         }
     }
@@ -1088,7 +1088,7 @@ impl SessionHost for Host {
         self.parent
     }
 
-    fn cwd(&self) -> PathBuf {
+    fn folder(&self) -> PathBuf {
         self.settings.borrow().folder.clone()
     }
 
@@ -1664,7 +1664,7 @@ mod tests {
 
         app.sessions().set_settings(id, changed.clone()).await.unwrap();
         let live = app.sessions().live(id).unwrap();
-        let named = (live.parts.host.settings(), live.parts.host.cwd());
+        let named = (live.parts.host.settings(), live.parts.host.folder());
         drop(live);
         app.shutdown().await;
 

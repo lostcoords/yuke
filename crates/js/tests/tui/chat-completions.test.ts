@@ -17,7 +17,7 @@ function mountProviders(frame: FrameTest, height: number, providers: readonly Co
   frame.surface("demo").tui.wrapRoot((mount) => {
     list = new ChatCompletions(editor, {
       providers: () => providers,
-      cwd: () => "/w",
+      folder: () => "/w",
       signal: mount.signal,
       enabled: () => true,
       onError: (error) => errors.push(error),

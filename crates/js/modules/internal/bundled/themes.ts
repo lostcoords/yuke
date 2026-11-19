@@ -13,7 +13,7 @@ const DEFAULT = "default";
 /** The name of the saved theme, or the default theme without one. A file that does not read gives a notice too. */
 async function saved(ctx: PluginContext): Promise<string> {
   try {
-    const value: unknown = JSON.parse(await readTextFile(FILE, { cwd: ctx.dataDir, fatal: true }));
+    const value: unknown = JSON.parse(await readTextFile(FILE, { folder: ctx.dataDir, fatal: true }));
     const name = (value as { name?: unknown } | null)?.name;
     return typeof name === "string" && name !== "" ? name : DEFAULT;
   } catch (error) {
@@ -48,7 +48,7 @@ function open(ctx: PluginContext, tui: Tui, applied: { remove: () => void }): vo
       preview = undefined;
       applied.remove();
       applied.remove = chosen;
-      writeTextFile(FILE, JSON.stringify({ name: item.name }), { cwd: ctx.dataDir, atomic: true }).catch(
+      writeTextFile(FILE, JSON.stringify({ name: item.name }), { folder: ctx.dataDir, atomic: true }).catch(
         (error: unknown) => ctx.notify("error", `yuke could not save the theme: ${String(error)}`),
       );
     },

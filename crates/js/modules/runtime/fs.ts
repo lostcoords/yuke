@@ -67,25 +67,25 @@ function failureOf(error: unknown, signal: AbortSignal | undefined): unknown {
 }
 
 export async function readFile(path: string, options: ReadFileOptions = {}): Promise<Uint8Array> {
-  const { cwd, signal, position = 0, length } = options;
-  return await run(signal, () => fsReadFile(path, cwd, position, length));
+  const { folder, signal, position = 0, length } = options;
+  return await run(signal, () => fsReadFile(path, folder, position, length));
 }
 
 export async function readTextFile(path: string, options: ReadTextFileOptions = {}): Promise<string> {
-  const { cwd, signal, fatal = false } = options;
-  return await run(signal, () => fsReadTextFile(path, cwd, fatal));
+  const { folder, signal, fatal = false } = options;
+  return await run(signal, () => fsReadTextFile(path, folder, fatal));
 }
 
 /** The write of `data`, bytes or text, with the options of a write. */
 async function writeData(path: string, data: Uint8Array | string, options: WriteFileOptions = {}): Promise<void> {
-  const { cwd, signal, append = false, atomic = false, create = true, createNew = false, mode } = options;
+  const { folder, signal, append = false, atomic = false, create = true, createNew = false, mode } = options;
   // A rename replaces the whole file, and it cannot check that the path is new or that it exists.
   if (atomic && append) throw new TypeError("the options atomic and append exclude each other");
   if (atomic && createNew) throw new TypeError("the options atomic and createNew exclude each other");
   if (atomic && !create) throw new TypeError("an atomic write needs create");
   const placement = atomic ? "atomic" : append ? "append" : "replace";
   const creation = createNew ? "new" : create ? "create" : "existing";
-  await run(signal, () => fsWriteFile(path, cwd, data, placement, creation, mode));
+  await run(signal, () => fsWriteFile(path, folder, data, placement, creation, mode));
 }
 
 export async function writeFile(path: string, data: Uint8Array, options?: WriteFileOptions): Promise<void> {
@@ -97,15 +97,15 @@ export async function writeTextFile(path: string, text: string, options?: WriteF
 }
 
 export async function* readDir(path: string, options: FileOptions = {}): AsyncGenerator<DirEntry, void> {
-  const { cwd, signal } = options;
-  const entries = await run(signal, () => fsReadDir(path, cwd));
+  const { folder, signal } = options;
+  const entries = await run(signal, () => fsReadDir(path, folder));
   yield* entries.sort((first, second) => (first.name < second.name ? -1 : first.name > second.name ? 1 : 0));
 }
 
 /** The facts of `path`, through or without a follow of a symbolic link. */
 async function info(path: string, options: FileOptions, follow: boolean) {
-  const { cwd, signal } = options;
-  const facts = await run(signal, () => fsStat(path, cwd, follow));
+  const { folder, signal } = options;
+  const facts = await run(signal, () => fsStat(path, folder, follow));
   return {
     isFile: facts.isFile,
     isDirectory: facts.isDirectory,
@@ -124,18 +124,18 @@ export async function lstat(path: string, options: FileOptions = {}) {
 }
 
 export async function mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
-  const { cwd, signal, recursive = false, mode } = options;
-  await run(signal, () => fsMkdir(path, cwd, recursive, mode));
+  const { folder, signal, recursive = false, mode } = options;
+  await run(signal, () => fsMkdir(path, folder, recursive, mode));
 }
 
 export async function remove(path: string, options: RemoveOptions = {}): Promise<void> {
-  const { cwd, signal, recursive = false, force = false } = options;
-  await run(signal, () => fsRemove(path, cwd, recursive, force));
+  const { folder, signal, recursive = false, force = false } = options;
+  await run(signal, () => fsRemove(path, folder, recursive, force));
 }
 
 export async function rename(source: string, destination: string, options: FileOptions = {}): Promise<void> {
-  const { cwd, signal } = options;
-  await run(signal, () => fsRename(source, destination, cwd));
+  const { folder, signal } = options;
+  await run(signal, () => fsRename(source, destination, folder));
 }
 
 // The check against `types/fs.d.ts` keeps this code and the declarations of the authors in step.

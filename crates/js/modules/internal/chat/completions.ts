@@ -11,8 +11,8 @@ const ROWS = 6;
 export interface ChatCompletionsOptions {
   /** The providers to ask, the first one first. The first list with an item shows. */
   readonly providers: () => readonly CompletionProvider[];
-  /** The folder of `CompletionContext.cwd`. */
-  readonly cwd: () => string;
+  /** The folder of `CompletionContext.folder`. */
+  readonly folder: () => string;
   /** Its abort removes the watch of the editor and aborts the open ask. */
   readonly signal: AbortSignal;
   /** While this gives `false`, the list shows nothing and takes no key. */
@@ -30,7 +30,7 @@ export interface ChatCompletionsOptions {
  * ```ts
  * const completions = new ChatCompletions(editor, {
  *   providers: () => providers,
- *   cwd: () => folder,
+ *   folder: () => sessionFolder,
  *   signal: mount.signal,
  *   enabled: () => true,
  *   onError: (error) => ctx.notify("error", String(error)),
@@ -116,7 +116,7 @@ export class ChatCompletions {
     const context: CompletionContext = {
       text: this.#editor.state.text,
       caret: this.#editor.caret,
-      cwd: this.#options.cwd(),
+      folder: this.#options.folder(),
       signal: AbortSignal.any([ask.signal, this.#options.signal]),
     };
     this.#next(this.#options.providers(), 0, context);

@@ -17,7 +17,7 @@ const NONE = Object.freeze({ shift: false, alt: false, ctrl: false, super: false
 export function createFrame(
   size: Size,
   create?: ViewFactory,
-  startup: Omit<Startup, "version"> & { readonly version?: string | undefined } = { cwd: "/" },
+  startup: Omit<Startup, "version"> & { readonly version?: string | undefined } = { folder: "/" },
 ): FrameTest {
   const shown: Startup = { ...startup, version: startup.version ?? "0.0.0" };
   let width = size.width;

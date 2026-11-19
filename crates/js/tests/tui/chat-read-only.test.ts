@@ -14,7 +14,7 @@ const QUESTION: InteractionRequest = {
 
 /** A chat pane on the session `s1`, which is read-only with the session `p1` behind it. */
 async function opened() {
-  const frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  const frame = createFrame({ width: 30, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(3));
   const chat = await loadChat(frame, sessions);
   const end = chat.chat.addReadOnly((session) =>

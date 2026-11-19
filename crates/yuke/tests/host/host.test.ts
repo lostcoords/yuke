@@ -138,7 +138,7 @@ test("setSettings changes the folder and the model of an open session", async ()
       description: "Give the folder.",
       concurrency: "serial",
       inputSchema: { type: "object", properties: {} },
-      execute: (_args, context) => context.cwd,
+      execute: (_args, context) => context.folder,
     });
   };
   const replies = [reply.text("Done.")];

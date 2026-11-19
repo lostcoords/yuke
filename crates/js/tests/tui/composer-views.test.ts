@@ -23,7 +23,7 @@ function waiting(id: number, text: string): SessionUpdate {
 }
 
 test("views above show below the transcript and above the waiting messages, cut to the width, in add order", async () => {
-  using frame = createFrame({ width: 24, height: 11 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 11 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   chat.chat.addComposerView("above", () =>
@@ -58,7 +58,7 @@ test("views above show below the transcript and above the waiting messages, cut 
 });
 
 test("views above share at most half the rows above the frame and give way to the strip", async () => {
-  using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   chat.chat.addComposerView("above", plain("a1", "a2", "a3"));
@@ -77,7 +77,7 @@ test("views above share at most half the rows above the frame and give way to th
 });
 
 test("views below show under the composer in add order, and the composer moves up", async () => {
-  using frame = createFrame({ width: 24, height: 11 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 11 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   chat.chat.addComposerView("below", plain("first", "second"));
   const remove = chat.chat.addComposerView("below", plain("third"));
@@ -99,7 +99,7 @@ test("views below show under the composer in add order, and the composer moves u
 });
 
 test("views below share at most half the pane, and views above share half of what the frame leaves", async () => {
-  using frame = createFrame({ width: 24, height: 13 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 13 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   chat.chat.addComposerView("below", plain("a1", "a2", "a3", "a4"));
   chat.chat.addComposerView("below", plain("b1", "b2", "b3"));
@@ -116,7 +116,7 @@ test("views below share at most half the pane, and views above share half of wha
 });
 
 test("a height of 0 places no view, and the next view gets the rows that remain", async () => {
-  using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   const heights: number[] = [];
   let drawnEmpty = 0;
@@ -139,7 +139,7 @@ test("a height of 0 places no view, and the next view gets the rows that remain"
 });
 
 test("each pane makes one view per call and gives its live fields, and a close ends each mount", async () => {
-  using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 60, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(1)));
   const made: { readonly pane: ChatPane; readonly signal: AbortSignal }[] = [];
   const remove = chat.chat.addComposerView("below", (mount, pane) => {
@@ -172,7 +172,7 @@ test("each pane makes one view per call and gives its live fields, and a close e
 });
 
 test("a view that closes its mount stays closed in the pane, and its factory runs once", async () => {
-  using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   let calls = 0;
   let close = (): void => {};
@@ -192,7 +192,7 @@ test("a view that closes its mount stays closed in the pane, and its factory run
 });
 
 test("a view above sits directly above the working row", async () => {
-  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 40, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   chat.chat.addComposerView("above", plain("view row"));
@@ -206,7 +206,7 @@ test("a view above sits directly above the working row", async () => {
 });
 
 test("a factory that throws gives one notice and runs once, and the pane still draws", async () => {
-  using frame = createFrame({ width: 24, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   let calls = 0;
   chat.chat.addComposerView("below", () => {
@@ -224,7 +224,7 @@ test("a factory that throws gives one notice and runs once, and the pane still d
 });
 
 test("a press on a view reaches it and leaves the focus on the composer", async () => {
-  using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   const pressed: number[] = [];
   chat.chat.addComposerView("below", () => ({
@@ -244,7 +244,7 @@ test("a press on a view reaches it and leaves the focus on the composer", async 
 });
 
 test("views below leave the composer half of the rows that remain", async () => {
-  using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   chat.chat.addComposerView("below", plain("b1", "b2", "b3", "b4"));
   frame.start();
@@ -257,7 +257,7 @@ test("views below leave the composer half of the rows that remain", async () => 
 });
 
 test("each call is its own view, and a disposer removes only its own", async () => {
-  using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   const first = chat.chat.addComposerView("above", plain("same"));
   chat.chat.addComposerView("above", plain("same"));
@@ -274,7 +274,7 @@ test("each call is its own view, and a disposer removes only its own", async () 
 });
 
 test("the rule above the composer has a default look that a plugin changes", async () => {
-  using frame = createFrame({ width: 24, height: 6 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 24, height: 6 }, undefined, { folder: "/w" });
   await loadChat(frame, fakeSessions());
   frame.start();
   await waitForSettled();
@@ -288,7 +288,7 @@ test("the rule above the composer has a default look that a plugin changes", asy
 });
 
 test("a pane without plugin views shows a rule below the composer, in the look of the rule above it", async () => {
-  using frame = createFrame({ width: 24, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, fakeSessions());
   frame.start();
   await waitForSettled();
@@ -301,7 +301,7 @@ test("a pane without plugin views shows a rule below the composer, in the look o
 });
 
 test("a view below takes a free row from the rule below the composer", async () => {
-  using frame = createFrame({ width: 24, height: 3 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 3 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   chat.chat.addComposerView("below", plain("only"));
   frame.start();
@@ -320,7 +320,7 @@ test("a view below takes a free row from the rule below the composer", async () 
 });
 
 test("a tall draft stays above the rule below the composer, with the caret on its last line", async () => {
-  using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 24, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, fakeSessions());
   frame.start();
   await waitForSettled();
@@ -334,7 +334,7 @@ test("a tall draft stays above the rule below the composer, with the caret on it
 });
 
 test("a tall question stays above the rule below the composer, with the caret on its field", async () => {
-  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 40, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();

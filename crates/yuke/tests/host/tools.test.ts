@@ -269,7 +269,7 @@ test("the signal aborts when the call ends, and the context names the folder", a
   const { host, session } = await opened(
     tool("keep", (_args, context) => {
       kept = context.signal;
-      return context.cwd;
+      return context.folder;
     }),
   );
   await using _host = host;
@@ -283,7 +283,7 @@ test("a call gets the id of its session, its call id, and its folder", async () 
   const seen: string[][] = [];
   const { host, session } = await opened(
     tool("facts", (_args, context) => {
-      seen.push([context.sessionId, context.callId, context.cwd]);
+      seen.push([context.sessionId, context.callId, context.folder]);
       return "x";
     }),
   );

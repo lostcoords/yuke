@@ -22,11 +22,14 @@ function provider(): CompletionProvider {
   return added;
 }
 
-/** The labels and inserts of the list of `text` with the caret at its end in `cwd`. */
-async function complete(files: CompletionProvider, text: string, cwd: string) {
-  const list = (await files.complete({ text, caret: text.length, cwd, signal: new AbortController().signal })) as
-    | CompletionList
-    | undefined;
+/** The labels and inserts of the list of `text` with the caret at its end in `where`. */
+async function complete(files: CompletionProvider, text: string, where: string) {
+  const list = (await files.complete({
+    text,
+    caret: text.length,
+    folder: where,
+    signal: new AbortController().signal,
+  })) as CompletionList | undefined;
   return list === undefined
     ? undefined
     : { from: list.from, items: list.items.map((item) => [item.label, item.insert]) };

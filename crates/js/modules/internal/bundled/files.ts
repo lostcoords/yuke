@@ -40,13 +40,15 @@ interface Index {
 }
 
 /**
- * The files that Git lists below `cwd`, with the untracked files that no ignore rule takes, or `undefined` without a
+ * The files that Git lists below `workspace`, with the untracked files that no ignore rule takes, or `undefined` without a
  * list.
  */
-async function gitFiles(cwd: string, signal: AbortSignal): Promise<string[] | undefined> {
+async function gitFiles(workspace: string, signal: AbortSignal): Promise<string[] | undefined> {
   const args = ["ls-files", "--cached", "--others", "--exclude-standard", "-z"];
   // A folder that Git does not know, or no Git at all, gives no list.
-  const output = await new Command("git", { args, cwd, stderr: "null", signal }).output().catch(() => undefined);
+  const output = await new Command("git", { args, cwd: workspace, stderr: "null", signal })
+    .output()
+    .catch(() => undefined);
   if (output === undefined || !output.success) return undefined;
   const files = new TextDecoder()
     .decode(output.stdout)
@@ -56,14 +58,14 @@ async function gitFiles(cwd: string, signal: AbortSignal): Promise<string[] | un
   return files.length === 0 ? undefined : files;
 }
 
-/** The files of a walk of `cwd`, folder by folder. An unreadable folder is left out. */
-async function walkedFiles(cwd: string, signal: AbortSignal): Promise<string[]> {
+/** The files of a walk of `workspace`, folder by folder. An unreadable folder is left out. */
+async function walkedFiles(workspace: string, signal: AbortSignal): Promise<string[]> {
   const files: string[] = [];
   const folders = [""];
   let walked = 0;
   for (let folder = folders.shift(); folder !== undefined && walked < MOST_WALKED; folder = folders.shift()) {
     if (signal.aborted) break;
-    const entries = await Array.fromAsync(readDir(`${cwd}/${folder}`)).catch(() => []);
+    const entries = await Array.fromAsync(readDir(`${workspace}/${folder}`)).catch(() => []);
     for (const entry of entries) {
       if (entry.name.startsWith(".") || SKIPPED.has(entry.name)) continue;
       walked += 1;
@@ -120,14 +122,14 @@ function listOf(entries: readonly Entry[], query: string, from: number): Complet
 
 export function apply(ctx: PluginContext): undefined {
   const indexes = new Map<string, Index>();
-  /** The index of `cwd`. A stale index answers while the next one builds. */
-  const indexOf = (cwd: string): Index => {
+  /** The index of `workspace`. A stale index answers while the next one builds. */
+  const indexOf = (workspace: string): Index => {
     const now = Date.now();
-    const known = indexes.get(cwd);
+    const known = indexes.get(workspace);
     if (known !== undefined && now - known.time < FRESH_MS) return known;
     // The build serves the next asks too, so a change of the draft does not stop it. The stop of the plugin does.
     const ready = (async () => {
-      const files = (await gitFiles(cwd, ctx.signal)) ?? (await walkedFiles(cwd, ctx.signal));
+      const files = (await gitFiles(workspace, ctx.signal)) ?? (await walkedFiles(workspace, ctx.signal));
       // Quotes hold a path with whitespace, and no escape lets them hold a quote too.
       return entriesOf(files.filter((file) => !(/\s/.test(file) && file.includes('"'))));
     })();
@@ -135,7 +137,7 @@ export function apply(ctx: PluginContext): undefined {
     void ready.then((entries) => {
       index.entries = entries;
     });
-    indexes.set(cwd, index);
+    indexes.set(workspace, index);
     return index;
   };
   ctx.get("chat").addCompletionProvider({
@@ -144,7 +146,7 @@ export function apply(ctx: PluginContext): undefined {
       if (word === null) return undefined;
       const query = word[1] ?? word[2] ?? "";
       const from = context.caret - word[0].trimStart().length;
-      const index = indexOf(context.cwd);
+      const index = indexOf(context.folder);
       if (index.entries !== undefined) return listOf(index.entries, query, from);
       return index.ready.then((entries) => listOf(entries, query, from));
     },

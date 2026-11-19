@@ -123,7 +123,7 @@ interface OpenRequest {
   readonly open: number;
   readonly sessionId: string;
   readonly parent: string | undefined;
-  readonly cwd: string;
+  readonly folder: string;
   readonly ask: Ask;
   readonly request: SendRequest;
   /** The settings of the session now. */
@@ -136,9 +136,9 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession(request: OpenRequest): void {
-  const { open, sessionId, parent, cwd, ask, settings, startJob } = request;
+  const { open, sessionId, parent, folder, ask, settings, startJob } = request;
   const scopes = sessionExports.map((entry) =>
-    start(open, sessionId, parent, cwd, ask, request.request, settings, startJob, entry),
+    start(open, sessionId, parent, folder, ask, request.request, settings, startJob, entry),
   );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
@@ -622,7 +622,7 @@ function start(
   open: number,
   sessionId: string,
   parent: string | undefined,
-  cwd: string,
+  folder: string,
   ask: Ask,
   send: SendRequest,
   settings: () => SessionSettings,
@@ -717,7 +717,7 @@ function start(
   const s: SessionContext<Options> = Object.freeze({
     sessionId,
     parent,
-    cwd,
+    folder,
     get settings(): SessionSettings {
       return frozen(settings());
     },

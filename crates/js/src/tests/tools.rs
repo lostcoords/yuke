@@ -106,7 +106,7 @@ impl SessionHost for TestHost {
         None
     }
 
-    fn cwd(&self) -> PathBuf {
+    fn folder(&self) -> PathBuf {
         self.folder.borrow_mut().clone()
     }
 

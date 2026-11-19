@@ -8,7 +8,7 @@ import { commit, composerOf, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
 test("show puts another session in the pane, ends the old handle, and the draft waits for the return", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -42,7 +42,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
 });
 
 test("a failed show keeps the session, the handle, and the draft of the pane", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   await waitForSettled();
@@ -67,7 +67,7 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
 });
 
 test("show rejects during a send and succeeds after the send ends", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -85,7 +85,7 @@ test("show rejects during a send and succeeds after the send ends", async () => 
 });
 
 test("show in a pane of another plugin opens a new chat pane, and a pane without a session keeps its draft", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   frame.paste("first words");
@@ -101,7 +101,7 @@ test("show in a pane of another plugin opens a new chat pane, and a pane without
 });
 
 test("a failed show from a pane of another plugin closes the new chat pane again", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   const other = frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
@@ -111,7 +111,7 @@ test("a failed show from a pane of another plugin closes the new chat pane again
 });
 
 test("a show of the shown session opens it again after a close by another client", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -132,7 +132,7 @@ test("a show of the shown session opens it again after a close by another client
 });
 
 test("each pane keeps its own draft of a session that it leaves", async () => {
-  using frame = createFrame({ width: 60, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
+  using frame = createFrame({ width: 60, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   await waitForSettled();

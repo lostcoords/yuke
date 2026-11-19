@@ -74,10 +74,10 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
   // Another client can remove the session of the pane, and the list then starts with the start folder.
   const folder =
     shown === undefined
-      ? tui.startup.cwd
+      ? tui.startup.folder
       : await sessions.get(shown).then(
           (row) => row.folder,
-          () => tui.startup.cwd,
+          () => tui.startup.folder,
         );
   let all = false;
   let loadedAt = Date.now();

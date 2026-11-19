@@ -51,11 +51,11 @@ Return `{ text, isError: true }` when the failed output is useful evidence, such
 
 ## Context and cancellation
 
-`execute` gets a `ToolContext` as its second argument. `cwd` is the workspace folder of the call: relative paths and commands start there. `output(text)` streams text to the user, not the model.
+`execute` gets a `ToolContext` as its second argument. `folder` is the workspace folder of the call: relative paths and commands start there. `output(text)` streams text to the user, not the model.
 
 Pass `context.signal` to cancellable I/O. After a cancel, the host still waits for `execute` to settle, so stop the work when the signal aborts.
 
-For processes, use `Command` from `yuke:process`. It needs an absolute `cwd`, such as `context.cwd`, and takes an optional `signal`.
+For processes, use `Command` from `yuke:process`. It needs an absolute `cwd`, such as `context.folder`, and takes an optional `signal`.
 
 ## Background jobs
 

@@ -21,7 +21,7 @@ declare module "yuke:chat" {
     /** The caret in `text`, in UTF-16 units. */
     readonly caret: number;
     /** The folder of the session of the pane, else of its next session. */
-    readonly cwd: string;
+    readonly folder: string;
     /** It aborts when the draft or the caret changes, or the list ends. */
     readonly signal: AbortSignal;
   }

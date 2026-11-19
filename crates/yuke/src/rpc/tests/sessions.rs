@@ -218,7 +218,7 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
     place.plugin(
         "loud",
         "export function apply(ctx) { ctx.notify('info', 'hello'); }
-         export function session(s) { s.notify('info', `opened in ${s.cwd}`); }",
+         export function session(s) { s.notify('info', `opened in ${s.folder}`); }",
     );
     std::fs::write(
         place.paths.config.join("config.json"),

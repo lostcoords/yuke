@@ -60,8 +60,8 @@ impl Handle {
     /// Returns [`Error::Folder`] when the folder of `host` is not UTF-8, and [`Error::Stopped`] when the engine task
     /// has ended.
     pub async fn open_session(&self, host: Rc<dyn SessionHost>) -> Result<ScriptSession, Error> {
-        let cwd = host.cwd();
-        let cwd = cwd.to_str().ok_or_else(|| Error::Folder(cwd.clone()))?.to_owned();
+        let folder = host.folder();
+        let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
         let parent = host.parent().map(|parent| parent.to_string());
         let job_host = Rc::clone(&host);
@@ -77,7 +77,7 @@ impl Handle {
                     open,
                     session_id,
                     parent,
-                    cwd,
+                    folder,
                     start_job: caught(&ctx, start_job_function(&ctx, &registry, job_host))?,
                     ask: caught(&ctx, ask_function(&ctx, ask_host))?,
                     request: caught(&ctx, request_function(&ctx, request_host))?,
@@ -403,7 +403,7 @@ impl ScriptHooks {
                 }
             }
         }
-        let mut stored = store_media(&*self.host, files, &self.host.cwd())
+        let mut stored = store_media(&*self.host, files, &self.host.folder())
             .await
             .map_err(|error| format!("the {point} hooks failed: {}", chain_text(error.as_ref())))?
             .into_iter();
@@ -476,7 +476,7 @@ struct OpenRequest<'js> {
     open: u64,
     session_id: String,
     parent: Option<String>,
-    cwd: String,
+    folder: String,
     /// The native `startJob(plugin, id, label, inCall)` of the session.
     start_job: Function<'js>,
     /// The native `ask(source, question)` of the session.

@@ -336,7 +336,7 @@ test("the folder of a session stays while a call reads the folder of its start",
   const where: PluginSession = (s) => {
     s.tools.add({
       ...tool("where"),
-      execute: (_args, context) => `${s.cwd} ${context.cwd}`,
+      execute: (_args, context) => `${s.folder} ${context.folder}`,
     } as Tool);
   };
   await using host = await createHost({ plugins: [{ name: "where", session: where }] });
