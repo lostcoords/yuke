@@ -307,11 +307,7 @@ impl Store for FileStore {
         let (opened, lock, cut) = self
             .call(move |state| {
                 let source_meta = meta_of(state.index()?, source)?;
-                let title = source_meta
-                    .title
-                    .as_deref()
-                    .and_then(fork_title_of)
-                    .map(|title| title.to_string());
+                let title = source_meta.title.as_deref().and_then(fork_title_of);
                 let source_log = log::read(&source_folder).map_err(failed)?;
                 let cut = match through {
                     Some(EventNumber(through)) if source_log.ends_completed_turn(through) => through,
@@ -384,7 +380,7 @@ impl Store for FileStore {
     }
 
     async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError> {
-        let title = title.to_string();
+        let title = title.clone();
         self.call(move |state| {
             state.locked(|index| {
                 let mut meta = meta_of(index, id)?;
@@ -400,7 +396,7 @@ impl Store for FileStore {
     }
 
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
-        let title = title_of(&input).map(|title| title.to_string());
+        let title = title_of(&input);
         self.call(move |state| {
             state.locked(|index| {
                 let entry = index.get(id).ok_or(StoreError::NotFound)?;
@@ -472,10 +468,7 @@ impl Store for FileStore {
                 None
             };
             Ok(SessionPage {
-                sessions: listed
-                    .into_iter()
-                    .map(|(&id, meta)| summary_of(id, meta))
-                    .collect::<Result<_, _>>()?,
+                sessions: listed.into_iter().map(|(&id, meta)| summary_of(id, meta)).collect(),
                 next,
             })
         })
@@ -483,8 +476,13 @@ impl Store for FileStore {
     }
 
     async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {
-        self.call(move |state| summary_of(id, &state.index()?.get(id).ok_or(StoreError::NotFound)?.meta))
-            .await
+        self.call(move |state| {
+            Ok(summary_of(
+                id,
+                &state.index()?.get(id).ok_or(StoreError::NotFound)?.meta,
+            ))
+        })
+        .await
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
@@ -666,23 +664,18 @@ fn settings_of(log: &log::Log, cut: u64) -> Result<SessionSettings, StoreError> 
 }
 
 /// The summary of session `id` from its facts.
-fn summary_of(id: SessionId, meta: &Meta) -> Result<SessionSummary, StoreError> {
+fn summary_of(id: SessionId, meta: &Meta) -> SessionSummary {
     let bytes = id.as_bytes();
-    Ok(SessionSummary {
+    SessionSummary {
         session_id: id,
         model: meta.model.clone(),
         folder: meta.folder.clone(),
-        title: meta
-            .title
-            .as_deref()
-            .map(SessionTitle::new)
-            .transpose()
-            .map_err(failed)?,
+        title: meta.title.clone(),
         // A version 7 id starts with the millisecond of its creation, and the list position is the microsecond of the
         // newest activity, so the index stores neither time.
         created_at: u64::from_be_bytes([0, 0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]]),
         updated_at: meta.position / 1000,
         fork_of: meta.fork_of,
         parent: meta.parent,
-    })
+    }
 }

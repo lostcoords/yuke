@@ -9,7 +9,7 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use yuke_protocol::{Input, InputId, ModelReference, PendingInput, SessionId};
+use yuke_protocol::{Input, InputId, ModelReference, PendingInput, SessionId, SessionTitle};
 
 /// The name of the index file in the store folder.
 pub(crate) const INDEX: &str = "sessions.jsonl";
@@ -22,7 +22,7 @@ pub(crate) struct Meta {
     /// The folder of the newest settings event.
     pub(crate) folder: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) title: Option<String>,
+    pub(crate) title: Option<SessionTitle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) fork_of: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
