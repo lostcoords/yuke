@@ -1,10 +1,10 @@
 /**
- * This module holds `ChatWorking` of `yuke:chat`: the working row of a running turn. The row has a spinner, the phase
+ * This module holds `ChatWorking`: the working row of a running turn. The row has a spinner, the phase
  * of the turn, the elapsed time, and the cancel key.
  */
 
-import type { ChatSession, ChatWorkingOptions, ChatWorkingTextOptions } from "yuke:chat";
 import { clipped } from "yuke:internal/chat/rows";
+import type { ChatSession } from "yuke:internal/chat/session";
 import type { Transcript, TurnFailure } from "yuke:transcript";
 import { measure, spinner } from "yuke:tui";
 
@@ -32,6 +32,43 @@ export function elapsed(ms: number): string {
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 
+/** What `ChatWorking.text` shows. */
+export interface ChatWorkingTextOptions {
+  /** The key of the interrupt hint. */
+  readonly cancelKey?: string | undefined;
+  /** The key of the background hint. The hint shows when a tool call has waited for a job for two seconds. */
+  readonly backgroundKey?: string | undefined;
+  /** The columns of the text. A long phase is clipped. A narrow row drops the background hint, then the interrupt hint. */
+  readonly width?: number | undefined;
+}
+
+export interface ChatWorkingOptions {
+  /** Its abort ends the watch of the chat session. */
+  readonly signal: AbortSignal;
+  /** The clock in milliseconds, as `() => tui.now()`. */
+  readonly now: () => number;
+}
+
+/**
+ * The activity row of an active turn shows a spinner, a phase label, elapsed time, and a retry countdown.
+ * The default label is `Working…`, including during tool calls, without tool names or arguments.
+ * The time counts from the first active state that this instance observes with a live handle, not from tool start.
+ * Another session or the end of the handle stops the count. This block asks for no frame: while `active`, the owner draws
+ * again each `SPINNER_INTERVAL` of `yuke:tui`.
+ *
+ * ```ts
+ * const working = new ChatWorking(chat, { signal: mount.signal, now: () => tui.now() });
+ * let stop: (() => void) | undefined;
+ * const tick = () => {
+ *   stop?.();
+ *   stop = working.active && !mount.signal.aborted ? tui.addTimer(SPINNER_INTERVAL, tick) : undefined;
+ * };
+ * working.addChangeListener(tick);
+ * tick();
+ * const row = working.text({ cancelKey: "esc" }); // in draw
+ * if (row !== undefined) canvas.text(0, 0, `${row.spinner} ${row.text}`);
+ * ```
+ */
 export class ChatWorking {
   readonly #chat: ChatSession;
   readonly #now: () => number;
@@ -52,10 +89,12 @@ export class ChatWorking {
     this.#sync();
   }
 
+  /** A turn of the shown session runs. */
   get active(): boolean {
     return this.#start !== undefined;
   }
 
+  /** The spinner and the text now, or `undefined` while no turn runs. */
   text(options: ChatWorkingTextOptions = {}): { readonly spinner: string; readonly text: string } | undefined {
     const start = this.#start;
     if (start === undefined) return undefined;
@@ -81,6 +120,7 @@ export class ChatWorking {
     return { spinner: mark, text: `${clipped(head, Math.max(0, width - measure(tail()) - 1))} ${tail()}` };
   }
 
+  /** Call `listener` after each change of `active`. */
   addChangeListener(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);

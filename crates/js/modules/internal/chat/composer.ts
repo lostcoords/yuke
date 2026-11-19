@@ -1,11 +1,11 @@
 /**
- * `ChatComposer` of `yuke:chat`, and the draft of a composer as the blocks of an input, and back. A paste span keeps
+ * `ChatComposer`, and the draft of a composer as the blocks of an input, and back. A paste span keeps
  * its whole text in the draft, so the input gets the text. An image span covers one U+FFFC and becomes a media block.
  */
 
-import type { ChatComposerOptions, ChatSession } from "yuke:chat";
+import type { ChatSession } from "yuke:internal/chat/session";
 import { fitImage } from "yuke:internal/native";
-import type { Frozen } from "yuke:plugins";
+import type { Frozen, SessionHandle } from "yuke:plugins";
 import type { Block, Input, InputId } from "yuke:protocol";
 import type { Entry } from "yuke:transcript";
 import type { EditorSpan, EditorState, TextEditor } from "yuke:tui";
@@ -77,6 +77,24 @@ function joined(first: EditorState, second: EditorState): EditorState {
   return { text, selection: { anchor: text.length, head: text.length }, spans };
 }
 
+export interface ChatComposerOptions {
+  /** The handle for a send. `undefined` cancels the send, and the draft stays. */
+  readonly handle: () => Promise<SessionHandle | undefined>;
+  /** Its abort removes the watch of the editor by the composer. An attach that started before it puts nothing. */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * The behavior of a composer on a `TextEditor`: the send of its draft, the recall of a waiting message, and the
+ * history of the messages of the user. A paste of more than 300 characters shows a label. A send takes the whole text
+ * of that paste. A paste handler that the caller adds later takes a paste first. It gives no notices: a failure
+ * rejects to the caller. One composer owns its editor: two composers on one editor send one draft twice.
+ *
+ * ```ts
+ * const composer = new ChatComposer(chat, editor, { handle: () => chat.ensure(pick), signal: mount.signal });
+ * // enter: composer.send()   up: composer.olderMessage()   down: composer.newerMessage()
+ * ```
+ */
 export class ChatComposer {
   readonly #chat: ChatSession;
   readonly #editor: TextEditor;
@@ -115,25 +133,34 @@ export class ChatComposer {
     });
   }
 
+  /** A send, a recall, or an attach has not ended. */
   get busy(): boolean {
     return this.#sending || this.#recalling || this.#attaching > 0;
   }
 
+  /** The editor shows an older message of the user. */
   get browsing(): boolean {
     return this.#browse !== undefined;
   }
 
+  /** `olderMessage()` has something to do: a recall, a browse, or an empty editor. */
   get canOlderMessage(): boolean {
     const text = this.#editor.state.text;
     return this.#recalling || this.#browse !== undefined || text === "" || this.#recallable() !== undefined;
   }
 
+  /** The waiting messages of the user in the queue of the session, oldest first. An input of a plugin is not one of them. */
   get waiting(): [InputId, Frozen<Input>][] {
     return [...this.#chat.transcript.pending]
       .filter((entry) => entry[1].source.kind === "user" && entry[1].kind === "message")
       .sort((a, b) => a[0] - b[0]);
   }
 
+  /**
+   * Send the draft. The draft of the send is the one after `handle()`, and the editor then empties. A refused input
+   * comes back above the newer text, and the promise rejects. An empty draft does nothing. A send before the end of
+   * another send or of an attach does nothing.
+   */
   async send(): Promise<void> {
     if (this.#sending || this.#attaching > 0 || blocksOf(this.#editor.state).length === 0) return;
     this.#sending = true;
@@ -155,6 +182,11 @@ export class ChatComposer {
     }
   }
 
+  /**
+   * Recall the newest waiting message into an empty editor, and each next older one above the recalled text. Without a
+   * recall, an empty editor or a shown message gets an older message of the user. `"taken"` when a turn took the
+   * message first.
+   */
   async olderMessage(): Promise<"taken" | undefined> {
     if (this.#recalling) return undefined;
     const next = this.#recallable();
@@ -163,10 +195,15 @@ export class ChatComposer {
     return undefined;
   }
 
+  /** Show a newer message of the user, or the empty editor after the newest one. */
   newerMessage(): void {
     this.#browseBy(1);
   }
 
+  /**
+   * Store `image` in the session of `handle()`, then put it at the caret of that time as `[image N]`. A send gives it
+   * as a media block. `undefined` from `handle()` puts nothing, and a failed store rejects.
+   */
   async attachImage(image: { readonly bytes: Uint8Array; readonly mimeType: string }): Promise<void> {
     this.#attaching += 1;
     try {
@@ -190,6 +227,7 @@ export class ChatComposer {
     }
   }
 
+  /** Put `draft` in the editor, and end a browse. A running recall puts its message above `draft` when it ends. */
   setDraft(draft: EditorState): void {
     this.#editor.reset(draft);
     this.#browse = undefined;

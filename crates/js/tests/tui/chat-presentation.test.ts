@@ -1,6 +1,7 @@
 // The look of the transcript from a plugin: `chat.setPresentation`, with one row that groups all tools.
 
-import { ChatDocument, type ChatPresentation, type ChatPresentationOptions } from "yuke:chat";
+import type { ChatPresentation, ChatPresentationOptions } from "yuke:chat";
+import { ChatDocument } from "yuke:internal/chat/document";
 import type { Block, StoredEvent, ToolCall } from "yuke:protocol";
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import type { Transcript } from "yuke:transcript";

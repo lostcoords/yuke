@@ -5,28 +5,26 @@
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
-import {
-  ChatCompletions,
-  ChatComposer,
-  ChatDocument,
-  type ChatPane,
-  type ChatPresentation,
-  type ChatPresentationOptions,
-  ChatQuestions,
-  type ChatReadOnly,
-  ChatSession,
-  ChatWorking,
-  type CompletionProvider,
-  type ComposerContext,
-  type ComposerFrame,
-  type ComposerPlace,
-  type ComposerView,
+import type {
+  ChatPane,
+  ChatPresentation,
+  ChatPresentationOptions,
+  ChatReadOnly,
+  CompletionProvider,
+  ComposerContext,
+  ComposerFrame,
+  ComposerPlace,
+  ComposerView,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { commandWordLength } from "yuke:internal/chat/commands";
-import { EMPTY } from "yuke:internal/chat/composer";
-import { inputText } from "yuke:internal/chat/document";
+import { ChatCompletions } from "yuke:internal/chat/completions";
+import { ChatComposer, EMPTY } from "yuke:internal/chat/composer";
+import { ChatDocument, inputText } from "yuke:internal/chat/document";
+import { ChatQuestions } from "yuke:internal/chat/questions";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
+import { ChatSession } from "yuke:internal/chat/session";
+import { ChatWorking } from "yuke:internal/chat/working";
 import { failureOf } from "yuke:internal/failure";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
