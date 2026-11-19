@@ -595,9 +595,8 @@ impl ActiveClient {
             ResponseOutcome::Result(value) => Ok(value),
             ResponseOutcome::Error(error) => Err(error),
         };
-        if sender.send(answer).is_err() {
-            // The plugin stopped waiting, and its cancel comes next.
-        }
+        // The plugin stopped waiting, and its cancel comes next.
+        _ = sender.send(answer);
     }
 }
 

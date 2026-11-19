@@ -155,9 +155,8 @@ impl AppTestHost {
                 message: format!("the fake model: {text}"),
                 stack: None,
             };
-            if self.reports.send(Report::Fault(fault)).is_err() {
-                // The runner of the test has left.
-            }
+            // The runner of the test has left.
+            _ = self.reports.send(Report::Fault(fault));
             format!("the fake model: {text}").into()
         })
     }
@@ -384,8 +383,9 @@ impl TestRuntime for TestPlace {
         }
         // A host that the test did not close checks its script here, so an unused reply still fails the test.
         let unchecked = self.host.created.get() && !self.host.closed.get();
-        if unchecked && !timed_out && self.host.check_script().is_err() {
+        if unchecked && !timed_out {
             // The fault of the check reached the runner.
+            _ = self.host.check_script();
         }
         self.app.shutdown().await;
         Ok(())

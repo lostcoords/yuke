@@ -331,9 +331,8 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
     };
     // The steps of the work go to stderr, so stdout keeps only the result.
     let progress = |text: &str| {
-        if writeln!(io::stderr(), "{text}…").is_err() {
-            // A step that does not show changes nothing of the work.
-        }
+        // A step that does not show changes nothing of the work.
+        _ = writeln!(io::stderr(), "{text}…");
     };
     match command {
         PluginCommand::List => say(&plugin_list(&paths)?)?,

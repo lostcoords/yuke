@@ -361,9 +361,8 @@ impl Shared {
                     }
                 }
             };
-            if end.send(outcome.clone()).is_err() {
-                // A client of `auth/login` learns the end from the notification.
-            }
+            // A client of `auth/login` learns the end from the notification.
+            _ = end.send(outcome.clone());
             {
                 let mut pending = shared.pending_logins.borrow_mut();
                 // A newer login of the provider keeps its entry.
@@ -1048,9 +1047,8 @@ async fn report(
 
 /// Write `text` to stderr as a notice of yuke.
 pub(crate) fn warn(text: &str) {
-    if writeln!(io::stderr(), "yuke: {text}").is_err() {
-        // No one reads stderr, so the notice has nowhere to go.
-    }
+    // No one reads stderr, so the notice has nowhere to go.
+    _ = writeln!(io::stderr(), "yuke: {text}");
 }
 
 /// The store of the sessions in the data folder `data`.
