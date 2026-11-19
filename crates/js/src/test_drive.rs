@@ -13,8 +13,8 @@ use yuke_ai::{
     ToolDefinition, ToolResult,
 };
 use yuke_engine::{
-    CancellationToken, DisplayBlock, Hooks, Model, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision,
-    ToolOutcome,
+    CancellationToken, DisplayBlock, Hooks, ModelAccess, RoundDecision, RoundError, RoundPlan, RoundStart,
+    ToolDecision, ToolOutcome,
 };
 use yuke_protocol::{Input, InputId, InputKind, InputSource, PendingInput, SessionId};
 
@@ -293,7 +293,7 @@ fn read(host: &dyn TestHost, id: SessionId, media: Vec<Media>) -> Result<Vec<Out
 /// The round of `event` with its own copies of the parts that [`RoundStart`] borrows.
 struct OwnedRound {
     context: Vec<Block>,
-    model: Model,
+    model: ModelAccess,
     settings: RequestSettings,
     system: String,
     tools: Vec<ToolDefinition>,

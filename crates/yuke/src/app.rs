@@ -31,7 +31,7 @@ use yuke_ai::Credential;
 use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::transport::{Exchange, Transport};
-use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
+use yuke_engine::{CancellationToken, CredentialSource, ModelAccess, Timer, chain_text};
 use yuke_js::{Options, PluginCode, Processes, Report, Runtime};
 use yuke_protocol::{
     AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult,
@@ -889,7 +889,7 @@ async fn stop_runtime(shared: &Shared, runtime: Runtime, reporter: JoinHandle<()
 }
 
 /// The model of `reference`, with the credential source of its provider: an API key, or the login of `shared`.
-fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppError> {
+fn model_of(reference: &ModelReference, shared: &Shared) -> Result<ModelAccess, AppError> {
     let selector = format!("{}/{}", reference.provider, reference.model);
     let providers = shared.providers();
     let entry = providers
@@ -912,7 +912,7 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
     let target = entry
         .bind()
         .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))?;
-    Ok(Model {
+    Ok(ModelAccess {
         target,
         source,
         context_window: entry.model.limits.context_window,

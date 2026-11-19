@@ -51,8 +51,8 @@ fn write(folder: &Path, files: &[(&str, &str)]) {
 }
 
 /// The test model with the context window `window`.
-fn windowed(window: Option<u64>) -> yuke_engine::Model {
-    yuke_engine::Model {
+fn windowed(window: Option<u64>) -> yuke_engine::ModelAccess {
+    yuke_engine::ModelAccess {
         context_window: window,
         ..yuke_testing::model()
     }

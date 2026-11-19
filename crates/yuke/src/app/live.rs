@@ -18,7 +18,7 @@ use tokio::sync::{Notify, oneshot, watch};
 use tokio::task::JoinHandle;
 use yuke_agent::{EventPage, Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
-use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
+use yuke_engine::{CancellationToken, Driver, MediaStore, ModelAccess, Toolset, chain_text};
 use yuke_js::{Handle, RequestFailure, ScriptSession, ScriptTool, SessionHost, ViewEvent, ViewSink};
 use yuke_mcp::{McpTool, OnChange, Servers};
 
@@ -1156,7 +1156,7 @@ impl SessionHost for Host {
         }
     }
 
-    fn model(&self, reference: &ModelReference) -> Result<Model, Box<dyn std::error::Error + Send + Sync>> {
+    fn model(&self, reference: &ModelReference) -> Result<ModelAccess, Box<dyn std::error::Error + Send + Sync>> {
         Ok(model_of(reference, &self.shared)?)
     }
 

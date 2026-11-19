@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use yuke_ai::{AnthropicWire, Credential, Origin, OriginRef, Route, Target, ToolDefinition, Wire};
-use yuke_engine::Model;
+use yuke_engine::ModelAccess;
 
 /// An Anthropic target at a test host. Its route takes no credential.
 pub fn target() -> Target {
@@ -45,13 +45,13 @@ pub fn definition(name: &str) -> ToolDefinition {
 }
 
 /// [`target`] with no credential.
-pub fn model() -> Model {
+pub fn model() -> ModelAccess {
     model_of(target())
 }
 
 /// `target` with no credential.
-pub fn model_of(target: Target) -> Model {
-    Model {
+pub fn model_of(target: Target) -> ModelAccess {
+    ModelAccess {
         target,
         source: Arc::new(Credential::None),
         context_window: None,

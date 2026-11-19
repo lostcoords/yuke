@@ -15,7 +15,9 @@ use yuke_agent::{EventPage, MemoryStore, Session, SessionObserver, Store};
 use yuke_ai::scripted::{ScriptedTransport, Stalled, failed_reply, sse, text_reply, tool_reply};
 use yuke_ai::{Block, Credential, ToolDefinition, Wire};
 use yuke_engine::NoWait;
-use yuke_engine::{CancellationToken, Concurrency, CredentialSource, Driver, Model, Tool, ToolContent, ToolContext};
+use yuke_engine::{
+    CancellationToken, Concurrency, CredentialSource, Driver, ModelAccess, Tool, ToolContent, ToolContext,
+};
 use yuke_testing::{model, model_of, target};
 
 use super::support::{FailingStore, StoreBehavior, prompt, settings, user_input};
@@ -506,7 +508,7 @@ impl CredentialSource for RefusedLogin {
 #[tokio::test]
 async fn a_round_failure_reaches_clients_with_each_cause() {
     let transport = ScriptedTransport::new([]);
-    let model = Model {
+    let model = ModelAccess {
         target: target(),
         source: Arc::new(RefusedLogin),
         context_window: None,

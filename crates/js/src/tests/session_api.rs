@@ -130,7 +130,7 @@ impl crate::SessionHost for Scripted {
     ) -> Result<serde_json::Value, crate::RequestFailure> {
         Err(crate::RequestFailure::NoClient)
     }
-    fn model(&self, _: &ModelReference) -> Result<yuke_engine::Model, SessionsError> {
+    fn model(&self, _: &ModelReference) -> Result<yuke_engine::ModelAccess, SessionsError> {
         Err("unused".into())
     }
     fn settings(&self) -> SessionSettings {

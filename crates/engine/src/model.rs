@@ -31,7 +31,7 @@ impl CredentialSource for Credential {
 /// A target, the source of its credential, and its context window. A planned model brings its own source, so it never
 /// takes the credential of the driver's model.
 #[derive(Clone)]
-pub struct Model {
+pub struct ModelAccess {
     /// Where and how the requests go.
     pub target: Target,
     /// Gives the credential of each attempt.
@@ -40,9 +40,9 @@ pub struct Model {
     pub context_window: Option<u64>,
 }
 
-impl fmt::Debug for Model {
+impl fmt::Debug for ModelAccess {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Model")
+        f.debug_struct("ModelAccess")
             .field("target", &self.target)
             .finish_non_exhaustive()
     }

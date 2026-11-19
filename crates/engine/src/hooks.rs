@@ -6,7 +6,7 @@ use std::error::Error;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, RequestSettings, ToolCall, ToolDefinition};
 
-use crate::model::{Model, RoundError};
+use crate::model::{ModelAccess, RoundError};
 use crate::tool::ToolOutcome;
 use crate::turn_state::Replaced;
 
@@ -82,7 +82,7 @@ pub struct RoundStart<'a> {
     /// The context, oldest first.
     pub context: &'a [Block],
     /// The model of the round: the model of the driver, or the model of a plan for this round.
-    pub model: &'a Model,
+    pub model: &'a ModelAccess,
     /// The settings of the round: the settings of the turn, or the settings of a plan for this round.
     pub settings: &'a RequestSettings,
     /// The system prompt of the round.
@@ -102,7 +102,7 @@ pub struct RoundPlan {
     /// recent blocks. It replaces the context before the request, and the replacement stays after the round.
     pub replace: Option<Replaced<'static>>,
     /// The model of this round. The next round uses the driver's model again.
-    pub model: Option<Model>,
+    pub model: Option<ModelAccess>,
     /// The settings of this round. The next round uses the turn's settings again.
     pub settings: Option<RequestSettings>,
 }

@@ -148,7 +148,7 @@ impl SessionHost for TestHost {
     fn model(
         &self,
         reference: &yuke_protocol::ModelReference,
-    ) -> Result<yuke_engine::Model, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<yuke_engine::ModelAccess, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(error) = &self.failure {
             return Err(Arc::clone(error).into());
         }

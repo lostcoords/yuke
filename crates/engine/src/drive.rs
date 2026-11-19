@@ -19,7 +19,7 @@ use yuke_ai::{
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
-use crate::model::{Model, RoundError};
+use crate::model::{ModelAccess, RoundError};
 use crate::search::{self, Declared};
 use crate::tool::{Concurrency, DisplayBlock, Finished, TOOL_CALL_NAME, ToolContext, ToolOutcome, Toolset};
 use crate::turn_state::{
@@ -166,7 +166,7 @@ impl Observer for NoObserver {
 #[derive(Clone, Copy)]
 pub struct Driver<'a> {
     transport: &'a dyn Transport,
-    model: &'a Model,
+    model: &'a ModelAccess,
     timer: &'a dyn Timer,
     toolset: Option<&'a Toolset>,
     hooks: &'a dyn Hooks,
@@ -189,7 +189,7 @@ impl fmt::Debug for Driver<'_> {
 impl<'a> Driver<'a> {
     /// A driver that sends to `model` through `transport`, and waits with `timer` before it sends an attempt again. It
     /// offers no tools. Its hooks run each call and continue each round. They end each turn when the model ends it.
-    pub fn new(transport: &'a dyn Transport, model: &'a Model, timer: &'a dyn Timer) -> Self {
+    pub fn new(transport: &'a dyn Transport, model: &'a ModelAccess, timer: &'a dyn Timer) -> Self {
         Driver {
             transport,
             model,
@@ -325,7 +325,7 @@ impl<'a> Driver<'a> {
         &self,
         encoder: &mut Encoder,
         request: Request<'_>,
-        model: &Model,
+        model: &ModelAccess,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {

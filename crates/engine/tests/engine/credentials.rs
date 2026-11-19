@@ -9,15 +9,16 @@ use yuke_ai::scripted::{ScriptedTransport, failed_reply, overloaded_reply, text_
 use yuke_ai::{Block, Credential, CredentialHeader, Route, Target};
 use yuke_engine::NoWait;
 use yuke_engine::{
-    CancellationToken, CredentialSource, Driver, Hooks, Model, Outcome, RoundError, RoundPlan, RoundStart, TurnError,
+    CancellationToken, CredentialSource, Driver, Hooks, ModelAccess, Outcome, RoundError, RoundPlan, RoundStart,
+    TurnError,
 };
 use yuke_testing::{model, target};
 
 use crate::support::{Labels, Script, block_on};
 
 /// A model of the test target under the name `name`, with an `x-api-key` header and `source`.
-fn keyed(name: &'static str, source: impl CredentialSource + 'static) -> Model {
-    Model {
+fn keyed(name: &'static str, source: impl CredentialSource + 'static) -> ModelAccess {
+    ModelAccess {
         target: Target {
             model: name.into(),
             route: Route {
