@@ -256,7 +256,7 @@ fn is_comment(rest: &str) -> bool {
     rest.is_empty() || rest.starts_with('#')
 }
 
-/// The text of a double-quoted value, or `None` for a malformed escape.
+/// The text of a double-quoted value, or `None` for an escape other than `\n`, `\t`, `\"`, and `\\`.
 fn unescape(inner: &str) -> Option<String> {
     let mut text = String::with_capacity(inner.len());
     let mut characters = inner.chars();
@@ -265,42 +265,13 @@ fn unescape(inner: &str) -> Option<String> {
             text.push(character);
             continue;
         }
-        let escaped = characters.next()?;
-        let digits = match escaped {
-            'n' => {
-                text.push('\n');
-                continue;
-            }
-            't' => {
-                text.push('\t');
-                continue;
-            }
-            'r' => {
-                text.push('\r');
-                continue;
-            }
-            '0' | 'a' | 'b' | 'e' | 'f' | 'v' => {
-                let code: u8 = match escaped {
-                    '0' => 0,
-                    'a' => 7,
-                    'b' => 8,
-                    'e' => 0x1b,
-                    'f' => 0x0c,
-                    _ => 0x0b,
-                };
-                text.push(char::from(code));
-                continue;
-            }
-            'x' => 2,
-            'u' => 4,
-            'U' => 8,
-            other => {
-                text.push(other);
-                continue;
-            }
-        };
-        let hex: String = characters.by_ref().take(digits).collect();
-        text.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+        text.push(match characters.next()? {
+            'n' => '\n',
+            't' => '\t',
+            '"' => '"',
+            '\\' => '\\',
+            _ => return None,
+        });
     }
     Some(text)
 }

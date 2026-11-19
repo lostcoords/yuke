@@ -77,10 +77,15 @@ fn the_frontmatter_takes_plain_quoted_and_block_values() {
         }
     );
     assert_eq!(
-        fields("---\r\ndescription: \"Say \\\"hi\\\"\\tnow \\u00e9\"\r\n---\r\n")
+        fields("---\r\ndescription: \"Say \\\"hi\\\"\\tnow\\n\\\\\"\r\n---\r\n")
             .description
             .unwrap(),
-        "Say \"hi\"\tnow \u{e9}"
+        "Say \"hi\"\tnow\n\\"
+    );
+    // An escape that yuke does not know keeps the raw text of the value.
+    assert_eq!(
+        fields("---\ndescription: \"caf\\u00e9\"\n---\n").description.unwrap(),
+        "\"caf\\u00e9\""
     );
     assert_eq!(
         fields("---\ndescription: 'It''s fine'\n---\n").description.unwrap(),
