@@ -152,7 +152,7 @@ The composer and each text field of a dialog take these keys:
 
 | Key | Action |
 |---|---|
-| `left`, `right`, `up`, `down`, `home`, `end` | Move the caret. `ctrl+a` and `ctrl+e` go to the start and the end of the line. In the composer, `up` and `down` first work on the old messages. |
+| `left`, `right`, `up`, `down`, `home`, `end` | Move the caret. `ctrl+a` and `ctrl+e` go to the start and the end of the line. With an empty composer, `up` and `down` work on the old messages first. |
 | `alt+b`, `alt+f`, `ctrl+left`, `ctrl+right` | Move by one word. |
 | `shift` with a move key | Select text. |
 | `backspace`, `delete` | Delete a character, or the selection. |
