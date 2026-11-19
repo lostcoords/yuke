@@ -125,13 +125,9 @@ fn a_bad_folder_or_manifest_skips_its_plugin_names_the_problem_and_the_others_lo
     let cases = [
         ("{", "plugin.json"),
         (r#"{ "extensions": {} }"#, "missing field `name`"),
-        (
-            &manifest("Upper", &json!({})) as &str,
-            "name: 'Upper' must be 1 to 64 lowercase letters, digits, '-', or '.', start and end with a letter or a \
-             digit, and have no '--' or '..'",
-        ),
-        (&manifest("a--b", &json!({})), "name: 'a--b' must be"),
-        (&manifest("-a", &json!({})), "name: '-a' must be"),
+        (&manifest("../x", &json!({})), "name: '../x' must be a folder name"),
+        (&manifest("..", &json!({})), "name: '..' must be a folder name"),
+        (&manifest("", &json!({})), "name: '' must be a folder name"),
         (
             &fields(json!({ "activation": { "workspaceContains": "Cargo.toml" } })),
             "unknown field `activation`",

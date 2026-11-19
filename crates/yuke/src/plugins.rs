@@ -374,24 +374,14 @@ fn plugin_of(root: &Path, manifest: Manifest, data: &Path, options: Map<String, 
     })
 }
 
-/// Check the Agent Plugins name rule: 1 to 64 lowercase letters, digits, `-`, and `.`, a letter or a digit at each end,
-/// and no `--` or `..`.
+/// Check that `name` is one folder name, because the data folder of the plugin is `<data>/plugins/<name>`.
 pub(crate) fn valid_name(name: &str) -> Result<(), String> {
-    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.';
-    let ends = |c: Option<char>| c.is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
-    let valid = (1..=64).contains(&name.len())
-        && name.chars().all(allowed)
-        && ends(name.chars().next())
-        && ends(name.chars().last())
-        && !name.contains("--")
-        && !name.contains("..");
-    if valid {
-        Ok(())
-    } else {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
         Err(format!(
-            "name: '{name}' must be 1 to 64 lowercase letters, digits, '-', or '.', start and end with a letter or a \
-             digit, and have no '--' or '..'"
+            "name: '{name}' must be a folder name: not empty, not '.' or '..', and with no '/' or '\\'"
         ))
+    } else {
+        Ok(())
     }
 }
 
