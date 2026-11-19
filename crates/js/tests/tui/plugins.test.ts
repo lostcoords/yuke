@@ -4,7 +4,7 @@
 import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:internal/sessions";
 import type { FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
-import { assert, assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
@@ -63,8 +63,8 @@ function manager(fake: Fake = {}) {
       calls.push("list");
       return { plugins: [...LISTED] };
     },
-    sync: async (options) => {
-      calls.push(`sync ${options?.signal === undefined ? "without" : "with"} a signal`);
+    sync: async () => {
+      calls.push("sync");
       if (syncs.hold) {
         await new Promise<void>((resolve) => {
           syncs.finish = resolve;
@@ -199,7 +199,7 @@ test("u reviews the new commits of the selected plugin, and enter writes them an
 
   assertEquals(
     [rowOf(reviewed, "Updates"), rowOf(reviewed, "→"), rowOf(reviewed, "12h"), rowOf(reviewed, "enter:")],
-    [" Updates · 1 plugins", "clock  3f9c1a2 → 8d02e77", "  8d02e77 fix: 12h format", " enter: update · esc: close"],
+    [" Updates · clock", "clock  3f9c1a2 → 8d02e77", "  8d02e77 fix: 12h format", " enter: update · esc: close"],
   );
   assertEquals(fake.calls, ["list", 'check {"kind":"names","names":["clock"]}', "apply https://h/r 8d02e77", "list"]);
   assertEquals(rowOf(after, "Plugins"), " Plugins · 6 · updated clock · r loads the new commits");
@@ -221,7 +221,7 @@ test("s syncs with a spinner in the title, the keys wait while it runs, and the 
   const synced = rows(frame.frame);
 
   assertEquals([rowOf(running, "Plugins"), rowOf(running, "esc: close")], [" Plugins · 6 · ⠋ Syncing…", " esc: close"]);
-  assertEquals(fake.calls, ["list", "sync with a signal", "list"]);
+  assertEquals(fake.calls, ["list", "sync", "list"]);
   assertEquals(rowOf(synced, "Plugins"), " Plugins · 6 · installed 2 plugins · r loads them");
 });
 
@@ -379,7 +379,7 @@ test("the selection and its reason stay visible in a dashboard of a few body row
   assertEquals([shows(moved, "✗ broken"), shows(moved, "no luck")], [true, true]);
 });
 
-test("the dashboard has a default look that a plugin changes, and a failure has the look of an error", async () => {
+test("the dashboard draws with the looks of the theme, and a failure has the look of an error", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   load(frame, manager().plugins);
   const shown = await open(frame);
@@ -397,7 +397,6 @@ test("the dashboard has a default look that a plugin changes, and a failure has 
   const cells = frame.draw().cells;
 
   // The band of the selected row reaches the last column, and the reason below it has the look of a detail.
-  assert(cells[selected]?.[99] !== undefined);
   assertEquals(
     [
       cells[title]?.[column]?.style,

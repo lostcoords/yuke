@@ -80,17 +80,14 @@ function keyOf(plugin: ManagedPlugin): string {
   return JSON.stringify(plugin.source);
 }
 
-/** Whether `plugin` needs the user: it is not installed, or it does not load. */
-function needsAttention(plugin: ManagedPlugin): boolean {
-  return plugin.state.kind === "notInstalled" || plugin.load.kind === "failed";
-}
+/** The titles of the sections of the dashboard, in order. */
+const SECTIONS = ["Needs attention", "Git", "Local"] as const;
 
-/** The sections of the dashboard, in order, with the test of the plugins of each one. */
-const SECTIONS: readonly { readonly title: string; readonly has: (plugin: ManagedPlugin) => boolean }[] = [
-  { title: "Needs attention", has: needsAttention },
-  { title: "Git", has: (plugin) => !needsAttention(plugin) && plugin.state.kind === "installed" },
-  { title: "Local", has: (plugin) => !needsAttention(plugin) && plugin.state.kind === "local" },
-];
+/** The index in `SECTIONS` of the section of `plugin`: a plugin that is not installed or does not load needs attention. */
+function sectionOf(plugin: ManagedPlugin): number {
+  if (plugin.state.kind === "notInstalled" || plugin.load.kind === "failed") return 0;
+  return plugin.state.kind === "installed" ? 1 : 2;
+}
 
 /** The mark and the state word of each load of a plugin that is installed. */
 const LOADS = {
@@ -107,17 +104,17 @@ function statusOf(plugin: ManagedPlugin): { readonly mark: string; readonly stat
   return plugin.state.kind === "notInstalled" ? { mark: "!", state: "not installed" } : LOADS[plugin.load.kind];
 }
 
-/** Why `plugin` needs attention, or `undefined` when it does not. */
-function reasonOf(plugin: ManagedPlugin): string | undefined {
-  if (plugin.state.kind === "notInstalled") return "s installs it";
-  return plugin.load.kind === "failed" ? plugin.load.error : undefined;
+/** Why `plugin` needs attention, with the look of the text, or `undefined` when it does not. */
+function reasonOf(plugin: ManagedPlugin): { readonly text: string; readonly style: string } | undefined {
+  if (plugin.state.kind === "notInstalled") return { text: "s installs it", style: DETAIL };
+  return plugin.load.kind === "failed" ? { text: plugin.load.error, style: ERROR } : undefined;
 }
 
 /** One row of the dashboard: a section title, a plugin, or the reason of a plugin that needs attention. */
 type Row =
   | { readonly kind: "title"; readonly text: string }
   | { readonly kind: "plugin"; readonly plugin: ManagedPlugin; readonly nameWidth: number; readonly selected: boolean }
-  | { readonly kind: "reason"; readonly plugin: ManagedPlugin; readonly text: string; readonly failed: boolean };
+  | { readonly kind: "reason"; readonly plugin: ManagedPlugin; readonly text: string; readonly style: string };
 
 /** The id of `row` in the list. */
 function idOf(row: Row): string {
@@ -130,7 +127,7 @@ function render(row: Row, width: number): readonly TextRow[] {
   if (row.kind === "reason") {
     const indent = "      ";
     return wrap(row.text, Math.max(1, width - indent.length)).map((part) => ({
-      segments: [{ text: `${indent}${row.text.slice(part.start, part.end)}`, style: row.failed ? ERROR : DETAIL }],
+      segments: [{ text: `${indent}${row.text.slice(part.start, part.end)}`, style: row.style }],
       join: "\n",
     }));
   }
@@ -154,6 +151,8 @@ const MOVES: Readonly<Record<string, number>> = { up: -1, k: -1, down: 1, j: 1 }
 class PluginList implements View {
   readonly focusable = true;
   readonly #list = new ScrollList<Row>({ id: idOf, render });
+  /** The plugins of each section, in the order of `SECTIONS`. */
+  #sections: readonly (readonly ManagedPlugin[])[] = [];
   #plugins: readonly ManagedPlugin[] = [];
   #selected = 0;
   /** The selection moved, so the next layout shows it. */
@@ -177,7 +176,8 @@ class PluginList implements View {
   /** Replace the plugins. The selection stays on the same plugin when it is still there, else on its place. */
   setPlugins(plugins: readonly ManagedPlugin[]): void {
     const kept = this.selected === undefined ? undefined : keyOf(this.selected);
-    this.#plugins = SECTIONS.flatMap((section) => plugins.filter(section.has));
+    this.#sections = SECTIONS.map((_, index) => plugins.filter((plugin) => sectionOf(plugin) === index));
+    this.#plugins = this.#sections.flat();
     const index = this.#plugins.findIndex((plugin) => keyOf(plugin) === kept);
     this.#select(index >= 0 ? index : this.#selected);
   }
@@ -187,15 +187,12 @@ class PluginList implements View {
     const nameWidth = Math.max(0, ...this.#plugins.map((plugin) => nameOf(plugin).length));
     const selected = this.selected;
     const rows: Row[] = [];
-    for (const section of SECTIONS) {
-      const plugins = this.#plugins.filter(section.has);
-      if (plugins.length > 0) rows.push({ kind: "title", text: `${section.title} (${plugins.length})` });
+    for (const [index, plugins] of this.#sections.entries()) {
+      if (plugins.length > 0) rows.push({ kind: "title", text: `${SECTIONS[index]} (${plugins.length})` });
       for (const plugin of plugins) {
         rows.push({ kind: "plugin", plugin, nameWidth, selected: plugin === selected });
         const reason = reasonOf(plugin);
-        if (reason !== undefined) {
-          rows.push({ kind: "reason", plugin, text: reason, failed: plugin.state.kind !== "notInstalled" });
-        }
+        if (reason !== undefined) rows.push({ kind: "reason", plugin, ...reason });
       }
     }
     this.#list.setItems(rows);
@@ -237,10 +234,9 @@ function startSpinner(tui: Tui): { readonly frame: () => string; readonly stop: 
   return { frame: () => spinner(tui.now() - start), stop: () => cancel() };
 }
 
-/** The names of `plugins` as a list for a sentence: `a`, `a and b`, or `2 plugins`. */
-function namesOf(plugins: readonly { readonly name: string }[]): string {
-  if (plugins.length > 2) return `${plugins.length} plugins`;
-  return plugins.map((plugin) => plugin.name).join(" and ");
+/** The plugins of `changes` for a sentence: the name of one, else their count. */
+function namesOf(changes: readonly PluginChange[]): string {
+  return changes.length === 1 ? (changes[0] as PluginChange).name : `${changes.length} plugins`;
 }
 
 /** Open the dashboard. The title shows the count of the plugins and the state of the last action. */
@@ -253,27 +249,26 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
    * Run `action` with `doing` and a spinner in the title. Then show the text that it gives, or give a notice of its
    * failure, and load the list again.
    */
-  const run = (doing: string, action: () => Promise<string>): void => {
-    running = startSpinner(tui);
+  const run = async (doing: string, action: () => Promise<string>): Promise<void> => {
+    const spin = startSpinner(tui);
+    running = spin;
     status = doing;
     tui.requestFrame();
-    action()
-      .then(
-        (done) => {
-          status = done;
-        },
-        (error: unknown) => {
-          status = "";
-          if (!dialog.signal.aborted) ctx.notify("error", `${doing} failed: ${messageOf(error)}`);
-        },
-      )
-      .then(async () => list.setPlugins((await plugins.list()).plugins))
-      .catch((error: unknown) => ctx.notify("error", `The plugins did not load: ${messageOf(error)}`))
-      .finally(() => {
-        running?.stop();
-        running = undefined;
-        tui.requestFrame();
-      });
+    try {
+      status = await action();
+    } catch (error) {
+      status = "";
+      if (!dialog.signal.aborted) ctx.notify("error", `${doing} failed: ${messageOf(error)}`);
+    }
+    try {
+      list.setPlugins((await plugins.list()).plugins);
+    } catch (error) {
+      ctx.notify("error", `The plugins did not load: ${messageOf(error)}`);
+    } finally {
+      spin.stop();
+      running = undefined;
+      tui.requestFrame();
+    }
   };
   const idle = () => running === undefined;
   const named = () => list.selected?.name;
@@ -301,7 +296,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
   });
   const sync = (): void => {
     const missing = list.plugins.filter((plugin) => plugin.state.kind === "notInstalled").length;
-    run("Syncing", async () => {
+    void run("Syncing", async () => {
       await plugins.sync({ signal: dialog.signal });
       return missing === 0 ? "each Git plugin is installed" : `installed ${missing} plugins · r loads them`;
     });
@@ -311,7 +306,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     review(tui, plugins, target, dialog.signal).then(
       (chosen) => {
         if (chosen === undefined) return;
-        run("Updating", async () => {
+        void run("Updating", async () => {
           await plugins.apply(chosen.map((change) => ({ source: change.source, commit: change.new })));
           return `updated ${namesOf(chosen)} · r loads the new commits`;
         });
@@ -320,6 +315,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     );
   };
   const add = async (): Promise<void> => {
+    let git = "";
     let found: readonly FoundPlugin[] = [];
     // A URL that gives no new plugin keeps the prompt open with its text and the reason.
     const line = await tui.input({
@@ -327,16 +323,16 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       placeholder: "URL of a Git repository",
       signal: dialog.signal,
       onSubmit: async (text) => {
-        if (text.trim() === "") throw new Error("type the URL of a Git repository");
+        git = text.trim();
+        if (git === "") throw new Error("type the URL of a Git repository");
         const added = new Set(list.plugins.map(nameOf));
-        const all = (await plugins.find({ git: text.trim() }, { signal: dialog.signal })).plugins;
+        const all = (await plugins.find({ git }, { signal: dialog.signal })).plugins;
         found = all.filter((plugin) => !added.has(plugin.name));
         if (all.length === 0) throw new Error("the repository has no plugin.json");
         if (found.length === 0) throw new Error("config.json has each plugin of the repository already");
       },
     });
     if (line === undefined) return;
-    const git = line.trim();
     const chosen =
       found.length === 1
         ? found[0]
@@ -348,7 +344,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
             signal: dialog.signal,
           });
     if (chosen === undefined) return;
-    run(`Adding ${chosen.name}`, async () => {
+    void run(`Adding ${chosen.name}`, async () => {
       await plugins.add({ git, names: [chosen.name] }, { signal: dialog.signal });
       return `added ${chosen.name} · r loads it`;
     });
@@ -363,7 +359,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       signal: dialog.signal,
     });
     if (!confirmed) return;
-    run(`Removing ${name}`, async () => {
+    void run(`Removing ${name}`, async () => {
       await plugins.remove(name);
       return `removed ${name} · r unloads it`;
     });
@@ -372,17 +368,17 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
 
 /** The review of `changes`: each plugin with its move and the log of the move, or one line without a change. */
 function reviewOf(changes: readonly PluginChange[] | undefined): TextDocument {
-  const items =
+  const items: readonly { readonly label: string; readonly log?: string }[] =
     changes === undefined
-      ? [{ label: "Checking each Git plugin for a new commit", lines: [] }]
+      ? [{ label: "Checking each Git plugin for a new commit" }]
       : changes.length === 0
-        ? [{ label: "Each Git plugin is at the newest commit of its ref", lines: [] }]
+        ? [{ label: "Each Git plugin is at the newest commit of its ref" }]
         : changes.map((change) => ({
             label: `${change.name}  ${short(change.old)} → ${short(change.new)}`,
-            lines:
+            log:
               change.log.kind === "commits"
-                ? change.log.commits.map((line) => `  ${line}`)
-                : [`  no log: ${change.log.error}`],
+                ? change.log.commits.map((line) => `  ${line}`).join("\n")
+                : `  no log: ${change.log.error}`,
           }));
   return {
     id: "plugins-review",
@@ -390,7 +386,7 @@ function reviewOf(changes: readonly PluginChange[] | undefined): TextDocument {
       id: String(index),
       sections: [
         { id: "label", kind: "label", text: item.label },
-        ...(item.lines.length === 0 ? [] : [{ id: "log", kind: "text" as const, text: item.lines.join("\n") }]),
+        ...(item.log === undefined || item.log === "" ? [] : [{ id: "log", kind: "text" as const, text: item.log }]),
       ],
     })),
   };
@@ -411,8 +407,7 @@ async function review(
   const text = new TextView({ document: reviewOf(undefined) });
   const checking = startSpinner(tui);
   const dialog = tui.dialog({
-    title: () =>
-      changes === undefined ? `Updates · ${checking.frame()} checking…` : `Updates · ${changes.length} plugins`,
+    title: () => (changes === undefined ? `Updates · ${checking.frame()} checking…` : `Updates · ${namesOf(changes)}`),
     body: text,
     scroll: text.scroll,
     signal,

@@ -1168,15 +1168,8 @@ declare module "yuke:tui" {
   /** The milliseconds between two frames of `spinner`. */
   export const SPINNER_INTERVAL: number;
   /**
-   * The frame of a spinner `elapsed` milliseconds after its start. To animate it, draw again each `SPINNER_INTERVAL`:
-   *
-   * ```ts
-   * const start = tui.now();
-   * const tick = () => {
-   *   stop = running ? tui.addTimer(SPINNER_INTERVAL, tick) : undefined;
-   * };
-   * const mark = spinner(tui.now() - start); // in draw
-   * ```
+   * The frame of a spinner `elapsed` milliseconds after its start. Draw again each `SPINNER_INTERVAL` to animate it:
+   * `tui.addTimer(SPINNER_INTERVAL, tick)` in `tick`, and `spinner(tui.now() - start)` in `draw`.
    */
   export function spinner(elapsed: number): string;
   /**
