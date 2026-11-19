@@ -1,4 +1,4 @@
-//! The plugin manager of `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`, `plugin/add`, and
+//! The plugin manager of `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`, `plugin/find`, `plugin/add`, and
 //! `plugin/remove`: the plugins of `config.json` and the commits of the Git plugins in `plugins.lock`.
 
 use std::fmt;
@@ -63,31 +63,45 @@ pub struct ManagedPlugin {
     /// The name of its `plugin.json`, when the server can read it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Whether the running plugins hold a plugin of this name. A plugin can be installed and not loaded, or loaded
-    /// from an older commit until `profile/reload`.
-    pub loaded: bool,
     /// Its state on disk.
     pub state: PluginState,
+    /// Whether the running plugins hold it.
+    pub load: PluginLoad,
 }
 
 /// The state on disk of one plugin of `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PluginState {
     /// A folder of the user.
     Local,
-    /// A Git plugin with no commit in `plugins.lock`. `plugin/sync` locks it.
-    NotLocked,
-    /// A Git plugin whose locked commit is not on disk. `plugin/sync` installs it.
+    /// A Git plugin that is not on disk. `plugin/sync` installs it.
     NotInstalled {
-        /// The full commit id of the lock.
-        commit: String,
+        /// The full commit id of the lock. Without it, `plugin/sync` locks the plugin at the commit of its ref.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
     },
     /// A Git plugin at its locked commit.
     Installed {
         /// The full commit id of the lock.
         commit: String,
+    },
+}
+
+/// Whether the running plugins hold one plugin of `plugin/list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PluginLoad {
+    /// The plugin runs. It runs the commit of the last load until `profile/reload`.
+    Loaded,
+    /// The plugin does not run yet, for example after `plugin/add` or a sync. `profile/reload` loads it.
+    Pending,
+    /// The plugin does not load.
+    Failed {
+        /// Why, with the name of the plugin.
+        error: String,
     },
 }
 
@@ -100,25 +114,14 @@ pub struct ListPluginsResult {
     pub plugins: Vec<ManagedPlugin>,
 }
 
-/// The params of `plugin/sync`.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct SyncPluginsParams {
-    /// Fail when `plugins.lock` does not match `config.json`, and never write it. A missing flag is `false`.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
-    pub locked: bool,
-}
-
-/// The commit of one Git plugin after `plugin/sync`.
+/// A Git plugin and its commit in `plugins.lock`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-pub struct SyncedPlugin {
+pub struct LockedPlugin {
     /// The plugin.
     pub source: PluginSource,
-    /// The full commit id in the lock.
+    /// The full commit id.
     pub commit: String,
 }
 
@@ -128,7 +131,7 @@ pub struct SyncedPlugin {
 #[serde(rename_all = "camelCase")]
 pub struct SyncPluginsResult {
     /// Each Git plugin of `config.json` with its commit, in list order.
-    pub plugins: Vec<SyncedPlugin>,
+    pub plugins: Vec<LockedPlugin>,
     /// Whether `plugins.lock` changed.
     pub written: bool,
 }
@@ -204,43 +207,79 @@ pub struct CheckPluginsResult {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyPluginsParams {
-    /// Changes of `plugin/check`. The server writes the `new` commit of each one whose source is in the lock.
-    pub changes: Vec<PluginChange>,
+    /// The new commits to write, as the `changes` of `plugin/check` give them. Each plugin must be in the lock.
+    pub plugins: Vec<LockedPlugin>,
 }
 
-/// The result of `plugin/apply`.
+/// The params of `plugin/find`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[serde(rename_all = "camelCase")]
+pub struct FindPluginsParams {
+    /// The URL of the repository, as `git` takes it.
+    pub git: String,
+    /// The branch, tag, or commit to look at. Without it, the default branch.
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+/// One plugin of a repository: a folder with a `plugin.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[serde(rename_all = "camelCase")]
+pub struct FoundPlugin {
+    /// The name of its `plugin.json`.
+    pub name: String,
+    /// The folder in the repository. Without it, the plugin is the root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
+/// The result of `plugin/find`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-pub struct ApplyPluginsResult {
-    /// Whether `plugins.lock` changed.
-    pub written: bool,
+pub struct FindPluginsResult {
+    /// The plugins of the repository, in the order of their folders.
+    pub plugins: Vec<FoundPlugin>,
 }
 
 /// The params of `plugin/add`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
-pub struct AddPluginParams {
-    /// The Git plugin to add.
-    pub source: PluginSource,
-    /// The options of the plugin. Without them, the plugin gets no options.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
-    pub options: Option<serde_json::Map<String, serde_json::Value>>,
+pub struct AddPluginsParams {
+    /// The URL of the repository, as `git` takes it.
+    pub git: String,
+    /// The names of the plugins to add, as `plugin/find` gives them. Without them, the repository must have one plugin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>"))]
+    pub names: Vec<String>,
+    /// The branch, tag, or commit that an update follows. Without it, an update follows the default branch.
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
-/// The result of `plugin/add`.
+/// One plugin that `plugin/add` added.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-pub struct AddPluginResult {
+pub struct AddedPlugin {
     /// The name of its `plugin.json`.
     pub name: String,
     /// The plugin, as `config.json` and `plugins.lock` hold it now.
     pub source: PluginSource,
     /// The full commit id in the lock.
     pub commit: String,
+}
+
+/// The result of `plugin/add`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AddPluginsResult {
+    /// The added plugins, in the order of the names.
+    pub plugins: Vec<AddedPlugin>,
 }
 
 /// The params of `plugin/remove`.

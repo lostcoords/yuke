@@ -10,10 +10,10 @@ use async_trait::async_trait;
 use tokio::sync::oneshot;
 use yuke_js::{FactSink, Sessions, SessionsError, ViewSink};
 use yuke_protocol::{
-    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
-    InteractionId, InteractionResponse, Job, JobId, ListCatalogResult, ListPluginsResult, ListSessionsParams,
-    ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpServer, SessionId, SessionRow, SessionSettings,
-    SessionTitle, SetApiKeyParams, StoredEvent, SyncPluginsParams, SyncPluginsResult,
+    AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult, EventNumber,
+    FindPluginsParams, FindPluginsResult, Input, InputId, InteractionId, InteractionResponse, Job, JobId,
+    ListCatalogResult, ListPluginsResult, ListSessionsParams, ListSessionsResult, LoginId, LoginOutcome, LoginResult,
+    McpServer, SessionId, SessionRow, SessionSettings, SessionTitle, SetApiKeyParams, StoredEvent, SyncPluginsResult,
 };
 
 use super::sessions::SessionService;
@@ -185,23 +185,24 @@ impl Sessions for PluginSessions {
         Ok(self.shared.list_plugins()?)
     }
 
-    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, SessionsError> {
-        Ok(self.shared.sync_plugins(params).await?)
+    async fn sync_plugins(&self) -> Result<SyncPluginsResult, SessionsError> {
+        Ok(self.shared.sync_plugins().await?)
     }
 
     async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError> {
         Ok(self.shared.check_plugins(params).await?)
     }
 
-    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
+    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<(), SessionsError> {
         Ok(self.shared.apply_plugins(params).await?)
     }
 
-    async fn add_plugin(
-        &self,
-        params: yuke_protocol::AddPluginParams,
-    ) -> Result<yuke_protocol::AddPluginResult, SessionsError> {
-        Ok(self.shared.add_plugin(params).await?)
+    async fn find_plugins(&self, params: FindPluginsParams) -> Result<FindPluginsResult, SessionsError> {
+        Ok(self.shared.find_plugins(params).await?)
+    }
+
+    async fn add_plugins(&self, params: AddPluginsParams) -> Result<AddPluginsResult, SessionsError> {
+        Ok(self.shared.add_plugins(params).await?)
     }
 
     async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), SessionsError> {

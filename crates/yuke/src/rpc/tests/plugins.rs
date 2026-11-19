@@ -35,7 +35,9 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     let source = json!({ "git": url, "folder": "plugins/clock" });
     assert_eq!(
         listed,
-        Ok(json!({ "plugins": [{ "source": source, "loaded": false, "state": { "kind": "notLocked" } }] }))
+        Ok(
+            json!({ "plugins": [{ "source": source, "state": { "kind": "notInstalled" }, "load": { "kind": "pending" } }] })
+        )
     );
     assert_eq!(synced["plugins"][0]["commit"], json!(commit));
     assert_eq!(synced["written"], json!(true));
@@ -43,14 +45,14 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     assert_eq!(
         loaded,
         Ok(
-            json!({ "plugins": [{ "source": source, "name": "clock", "loaded": true, "state": { "kind": "installed", "commit": commit } }] })
+            json!({ "plugins": [{ "source": source, "name": "clock", "state": { "kind": "installed", "commit": commit }, "load": { "kind": "loaded" } }] })
         )
     );
     client.end().await;
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_plugin_that_does_not_load_at_the_start_lists_as_not_loaded() {
+async fn a_plugin_that_does_not_load_at_the_start_lists_as_failed_with_its_reason() {
     let place = Place::new("rpc", "plugins_not_loaded");
     place.plugin("broken", "export function apply() { throw new Error('no'); }");
     place.plugin("fine", "export function apply() {}");
@@ -63,13 +65,17 @@ async fn a_plugin_that_does_not_load_at_the_start_lists_as_not_loaded() {
 
     let listed = client.call("plugin/list", json!({})).await.unwrap();
 
-    let loaded: Vec<(&str, bool)> = listed["plugins"]
+    let loads: Vec<(&Value, &Value)> = listed["plugins"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|plugin| (plugin["name"].as_str().unwrap(), plugin["loaded"].as_bool().unwrap()))
+        .map(|plugin| (&plugin["name"], &plugin["load"]))
         .collect();
-    assert_eq!(loaded, [("broken", false), ("fine", true)]);
+    assert_eq!(loads[1], (&json!("fine"), &json!({ "kind": "loaded" })));
+    assert_eq!(loads[0].0, "broken");
+    assert_eq!(loads[0].1["kind"], "failed");
+    let error = loads[0].1["error"].as_str().unwrap();
+    assert!(error.starts_with("plugin broken did not load: Error: no"), "{error}");
     client.end().await;
 }
 
@@ -83,11 +89,9 @@ async fn plugin_add_writes_config_json_and_the_lock_and_plugin_remove_takes_both
     std::fs::write(place.paths.config.join("config.json"), "{\n  // mine\n}\n").unwrap();
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([]))).await;
 
+    let found = client.call("plugin/find", json!({ "git": url })).await;
     let added = client
-        .call(
-            "plugin/add",
-            json!({ "source": { "git": url, "folder": "plugins/clock" } }),
-        )
+        .call("plugin/add", json!({ "git": url, "names": ["clock"] }))
         .await;
     let listed = client.call("plugin/list", json!({})).await.unwrap();
     let removed = client.call("plugin/remove", json!({ "name": "clock" })).await;
@@ -95,8 +99,14 @@ async fn plugin_add_writes_config_json_and_the_lock_and_plugin_remove_takes_both
     let lock = std::fs::read_to_string(place.paths.config.join("plugins.lock")).unwrap();
 
     assert_eq!(
+        found,
+        Ok(json!({ "plugins": [{ "name": "clock", "folder": "plugins/clock" }] }))
+    );
+    assert_eq!(
         added,
-        Ok(json!({ "name": "clock", "source": { "git": url, "folder": "plugins/clock" }, "commit": commit }))
+        Ok(
+            json!({ "plugins": [{ "name": "clock", "source": { "git": url, "folder": "plugins/clock" }, "commit": commit }] })
+        )
     );
     assert_eq!(listed["plugins"][0]["state"]["kind"], json!("installed"));
     assert_eq!(removed, Ok(json!({})));

@@ -2,14 +2,14 @@
 import type { PluginSource } from "./PluginSource.ts";
 
 /**
- * The params of `plugin/add`.
+ * A Git plugin and its commit in `plugins.lock`.
  */
-export type AddPluginParams = { 
+export type LockedPlugin = { 
 /**
- * The Git plugin to add.
+ * The plugin.
  */
 source: PluginSource, 
 /**
- * The options of the plugin. Without them, the plugin gets no options.
+ * The full commit id.
  */
-options?: Record<string, unknown>, };
+commit: string, };

@@ -16,13 +16,18 @@ const LISTED: readonly ManagedPlugin[] = [
   {
     source: { git: "https://h/r", folder: "plugins/clock" },
     name: "clock",
-    loaded: true,
     state: { kind: "installed", commit: OLD },
+    load: { kind: "loaded" },
   },
-  { source: "./notes", name: "notes", loaded: true, state: { kind: "local" } },
-  { source: { git: "https://h/tools" }, name: "tools", loaded: false, state: { kind: "installed", commit: OLD } },
-  { source: { git: "https://h/weather" }, loaded: false, state: { kind: "notLocked" } },
-  { source: { git: "https://h/maps" }, loaded: false, state: { kind: "notInstalled", commit: NEW } },
+  { source: "./notes", name: "notes", state: { kind: "local" }, load: { kind: "loaded" } },
+  {
+    source: { git: "https://h/tools" },
+    name: "tools",
+    state: { kind: "installed", commit: OLD },
+    load: { kind: "pending" },
+  },
+  { source: { git: "https://h/weather" }, state: { kind: "notInstalled" }, load: { kind: "pending" } },
+  { source: { git: "https://h/maps" }, state: { kind: "notInstalled", commit: NEW }, load: { kind: "pending" } },
 ];
 
 const CHANGE: PluginChange = {
@@ -47,7 +52,7 @@ function manager(changes: readonly PluginChange[], hold = false, fail?: string) 
       return { plugins: [...LISTED] };
     },
     sync: async (options) => {
-      calls.push(`sync ${String(options?.locked)} ${options?.signal === undefined ? "without" : "with"} a signal`);
+      calls.push(`sync ${options?.signal === undefined ? "without" : "with"} a signal`);
       if (syncs.hold) {
         await new Promise<void>((resolve) => {
           syncs.finish = resolve;
@@ -67,12 +72,15 @@ function manager(changes: readonly PluginChange[], hold = false, fail?: string) 
       });
     },
     apply: async (chosen) => {
-      calls.push(`apply ${chosen.map((change) => `${change.name} ${change.new.slice(0, 7)}`).join(", ")}`);
-      return { written: true };
+      calls.push(`apply ${chosen.map((plugin) => `${plugin.source.git} ${plugin.commit.slice(0, 7)}`).join(", ")}`);
     },
-    add: async (plugin) => {
-      calls.push(`add ${JSON.stringify(plugin.source)}`);
-      return { name: "news", source: plugin.source, commit: NEW };
+    find: async (params) => {
+      calls.push(`find ${JSON.stringify(params)}`);
+      return { plugins: [{ name: "news" }] };
+    },
+    add: async (params) => {
+      calls.push(`add ${JSON.stringify(params)}`);
+      return { plugins: [{ name: "news", source: { git: params.git }, commit: NEW }] };
     },
     remove: async (name) => {
       calls.push(`remove ${name}`);
@@ -135,7 +143,7 @@ test("the dashboard shows the plugins in sections with their state, and enter sh
     [
       shows(opened, "Plugins · 5"),
       shows(opened, "Needs sync (2)"),
-      showsRow(opened, "https://h/weather", "not locked"),
+      showsRow(opened, "https://h/weather", "not installed"),
       showsRow(opened, "https://h/maps", "8d02e77", "not installed"),
       shows(opened, "Installed (2)"),
       showsRow(opened, "●", "clock", SOURCE, "3f9c1a2"),
@@ -174,7 +182,7 @@ test("u reviews the new commits of the selected plugin, and enter writes them an
     [true, true],
   );
   assertEquals(shows(reviewed, "enter: write plugins.lock · esc: close"), true);
-  assertEquals(fake.calls, ["list", 'check {"kind":"names","names":["clock"]}', "apply clock 8d02e77", "list"]);
+  assertEquals(fake.calls, ["list", 'check {"kind":"names","names":["clock"]}', "apply https://h/r 8d02e77", "list"]);
   assertEquals(shows(after, "Plugins · 5 · plugins.lock written: R reloads"), true);
   // The dashboard tells the result in its title, not in a notice.
   assertEquals(notices, []);
@@ -197,28 +205,26 @@ test("S syncs and shows the result in the title, and the actions wait while it r
     [shows(running, "Plugins · 5 · syncing"), shows(running, "S: sync"), shows(running, "/: search")],
     [true, false, false],
   );
-  assertEquals(fake.calls, ["list", "sync undefined with a signal", "list"]);
+  assertEquals(fake.calls, ["list", "sync with a signal", "list"]);
   assertEquals(shows(synced, "Plugins · 5 · plugins.lock written: R reloads"), true);
 });
 
-test("a adds the plugin of a line in the form of yuke plugin add, and a line without a URL says why", async () => {
+test("a adds the plugin of a URL, and an empty line says why", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   const fake = manager([]);
   load(frame, fake.plugins);
 
   await run(frame, "plugins:open");
   frame.key("a");
-  frame.paste("https://h/news --folder p --ref v1");
+  frame.paste(" https://h/news ");
   const added = await press(frame, "enter");
   frame.key("a");
-  frame.paste("--ref v1");
   const refused = await press(frame, "enter");
 
-  assertEquals(fake.calls, ["list", 'add {"git":"https://h/news","folder":"p","ref":"v1"}', "list"]);
-  assertEquals(shows(added, "news added at 8d02e77: R reloads"), true);
-  assertEquals(shows(refused, "give the URL of the repository first"), true);
-  // The prompt stays open with its draft after the error.
-  assertEquals(shows(refused, "--ref v1"), true);
+  assertEquals(fake.calls, ["list", 'add {"git":"https://h/news"}', "list"]);
+  assertEquals(shows(added, "news added: R reloads"), true);
+  // The prompt stays open after the error.
+  assertEquals(shows(refused, "type the URL first"), true);
 });
 
 test("d asks before it removes the selected plugin, and esc keeps it", async () => {
@@ -313,7 +319,7 @@ test("the sync command tells its start and its result", async () => {
 
   await run(frame, "plugins:sync");
 
-  assertEquals(fake.calls, ["sync undefined with a signal"]);
+  assertEquals(fake.calls, ["sync with a signal"]);
   assertEquals(notices, ["info The sync of the Git plugins runs", "info plugins.lock written: run /reload"]);
 });
 
@@ -325,7 +331,7 @@ test("the command update writes the chosen commits with a notice", async () => {
   await run(frame, "plugins:update");
   await press(frame, "enter");
 
-  assertEquals(fake.calls, ['check {"kind":"all"}', "apply clock 8d02e77"]);
+  assertEquals(fake.calls, ['check {"kind":"all"}', "apply https://h/r 8d02e77"]);
   assertEquals(notices, ["info plugins.lock written: run /reload to load the new commits"]);
 });
 

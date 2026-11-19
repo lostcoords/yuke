@@ -148,6 +148,25 @@ pub(crate) async fn export(cache: &Path, commit: &str, folder: &Path) -> Result<
     Ok(())
 }
 
+/// The path of each file named `name` at the commit `commit` of the cache repository `cache`, in path order.
+pub(crate) async fn files_named(cache: &Path, commit: &str, name: &str) -> Result<Vec<String>, String> {
+    let mut tree = git(Some(cache));
+    tree.args(["ls-tree", "-r", "-z", "--name-only", "--end-of-options", commit]);
+    let text = run(tree, "ls-tree").await?;
+    Ok(text
+        .split('\0')
+        .filter(|path| *path == name || path.ends_with(&format!("/{name}")))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// The text of the file `path` at the commit `commit` of the cache repository `cache`.
+pub(crate) async fn show(cache: &Path, commit: &str, path: &str) -> Result<String, String> {
+    let mut show = git(Some(cache));
+    show.args(["show", "--end-of-options"]).arg(format!("{commit}:{path}"));
+    run(show, "show").await
+}
+
 /// The commits after `old` up to `new` in the cache repository `cache`, newest first, as a short id and a subject.
 pub(crate) async fn log(cache: &Path, old: &str, new: &str) -> Result<Vec<String>, String> {
     let mut log = git(Some(cache));

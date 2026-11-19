@@ -198,10 +198,7 @@ impl crate::Sessions for NoSessions {
     async fn list_plugins(&self) -> Result<yuke_protocol::ListPluginsResult, crate::SessionsError> {
         no_sessions()
     }
-    async fn sync_plugins(
-        &self,
-        _: yuke_protocol::SyncPluginsParams,
-    ) -> Result<yuke_protocol::SyncPluginsResult, crate::SessionsError> {
+    async fn sync_plugins(&self) -> Result<yuke_protocol::SyncPluginsResult, crate::SessionsError> {
         no_sessions()
     }
     async fn check_plugins(
@@ -210,16 +207,19 @@ impl crate::Sessions for NoSessions {
     ) -> Result<yuke_protocol::CheckPluginsResult, crate::SessionsError> {
         no_sessions()
     }
-    async fn apply_plugins(
-        &self,
-        _: yuke_protocol::ApplyPluginsParams,
-    ) -> Result<yuke_protocol::ApplyPluginsResult, crate::SessionsError> {
+    async fn apply_plugins(&self, _: yuke_protocol::ApplyPluginsParams) -> Result<(), crate::SessionsError> {
         no_sessions()
     }
-    async fn add_plugin(
+    async fn find_plugins(
         &self,
-        _: yuke_protocol::AddPluginParams,
-    ) -> Result<yuke_protocol::AddPluginResult, crate::SessionsError> {
+        _: yuke_protocol::FindPluginsParams,
+    ) -> Result<yuke_protocol::FindPluginsResult, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn add_plugins(
+        &self,
+        _: yuke_protocol::AddPluginsParams,
+    ) -> Result<yuke_protocol::AddPluginsResult, crate::SessionsError> {
         no_sessions()
     }
     async fn remove_plugin(&self, _: yuke_protocol::RemovePluginParams) -> Result<(), crate::SessionsError> {

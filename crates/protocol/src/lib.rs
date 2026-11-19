@@ -40,9 +40,10 @@ pub use message::{
     UpdateCredentialParams,
 };
 pub use plugin::{
-    AddPluginParams, AddPluginResult, ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult,
-    ListPluginsResult, ManagedPlugin, PluginChange, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget,
-    RemovePluginParams, SyncPluginsParams, SyncPluginsResult, SyncedPlugin,
+    AddPluginsParams, AddPluginsResult, AddedPlugin, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult,
+    FindPluginsParams, FindPluginsResult, FoundPlugin, ListPluginsResult, LockedPlugin, ManagedPlugin, PluginChange,
+    PluginLoad, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget, RemovePluginParams,
+    SyncPluginsResult,
 };
 pub use session::{InvalidSessionTitle, ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle};
 pub use update::{

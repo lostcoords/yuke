@@ -2,11 +2,15 @@
 import type { PluginSource } from "./PluginSource.ts";
 
 /**
- * The commit of one Git plugin after `plugin/sync`.
+ * One plugin that `plugin/add` added.
  */
-export type SyncedPlugin = { 
+export type AddedPlugin = { 
 /**
- * The plugin.
+ * The name of its `plugin.json`.
+ */
+name: string, 
+/**
+ * The plugin, as `config.json` and `plugins.lock` hold it now.
  */
 source: PluginSource, 
 /**

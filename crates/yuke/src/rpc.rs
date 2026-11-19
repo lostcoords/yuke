@@ -470,16 +470,20 @@ impl Server {
                 Ok(ServerResult::UpdateCredential(EmptyResult {}))
             }
             ClientRequest::ListPlugins(EmptyParams {}) => Ok(ServerResult::ListPlugins(app.shared().list_plugins()?)),
-            ClientRequest::SyncPlugins(params) => {
-                Ok(ServerResult::SyncPlugins(app.shared().sync_plugins(params).await?))
+            ClientRequest::SyncPlugins(EmptyParams {}) => {
+                Ok(ServerResult::SyncPlugins(app.shared().sync_plugins().await?))
             }
             ClientRequest::CheckPlugins(params) => {
                 Ok(ServerResult::CheckPlugins(app.shared().check_plugins(params).await?))
             }
             ClientRequest::ApplyPlugins(params) => {
-                Ok(ServerResult::ApplyPlugins(app.shared().apply_plugins(params).await?))
+                app.shared().apply_plugins(params).await?;
+                Ok(ServerResult::ApplyPlugins(EmptyResult {}))
             }
-            ClientRequest::AddPlugin(params) => Ok(ServerResult::AddPlugin(app.shared().add_plugin(params).await?)),
+            ClientRequest::FindPlugins(params) => {
+                Ok(ServerResult::FindPlugins(app.shared().find_plugins(params).await?))
+            }
+            ClientRequest::AddPlugins(params) => Ok(ServerResult::AddPlugins(app.shared().add_plugins(params).await?)),
             ClientRequest::RemovePlugin(params) => {
                 app.shared().remove_plugin(params).await?;
                 Ok(ServerResult::RemovePlugin(EmptyResult {}))

@@ -14,14 +14,18 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   `session/removeInput`, `session/setSettings`, `session/rename`, `session/list`, `session/get`, `session/remove`, `auth/login`,
   `auth/cancelLogin`, `auth/logout`, `auth/setApiKey`, `catalog/list`, `job/list`, `job/stop`,
   `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`,
-  `plugin/apply`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
+  `plugin/apply`, `plugin/find`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
 - `plugin/list` gives each plugin of `config.json` with its `source` (the folder text of a local plugin, or the
-  `{ git, folder?, ref? }` object of a Git plugin), `state` (the kind `local`, `notLocked`, `notInstalled`, or
-  `installed`, the last two with their `commit`), and `loaded`. It uses no network. `plugin/sync { locked? }` installs the commits of
-  `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes `{ "kind": "all" }` or
-  `{ "kind": "names", "names": [...] }`, installs each new commit, and answers the `changes` with their `log`. `plugin/apply { changes }`
-  writes their `new` commits into `plugins.lock`. `plugin/add { source, options? }` adds a Git plugin to `config.json`,
-  installs it, locks it, and answers its `name`, `source`, and `commit`. `plugin/remove { name }` removes a plugin from
+  `{ git, folder?, ref? }` object of a Git plugin), its `state` on disk (the kind `local`, `notInstalled` with the
+  `commit?` of the lock, or `installed` with its `commit`), and its `load` (the kind `loaded`, `pending` until the next
+  `profile/reload`, or `failed` with its `error`). It uses no network. `plugin/sync` installs the commits of
+  `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes
+  `{ "kind": "all" }` or `{ "kind": "names", "names": [...] }`, installs each new commit of an installed Git plugin, and
+  answers the `changes` with their `log`. `plugin/apply { plugins }` writes the `{ source, commit }` of each plugin into
+  `plugins.lock`, and fails for a plugin that the lock does not have. `plugin/find { git, ref? }` answers the `plugins`
+  of a repository: the `name` and the `folder?` of each `plugin.json`. `plugin/add { git, names?, ref? }` adds those
+  plugins to `config.json` by name, installs them, locks them, and answers each one with its `name`, `source`, and
+  `commit`. Without `names`, the repository must have one plugin. `plugin/remove { name }` removes a plugin from
   `config.json` and `plugins.lock`. Each edit keeps the comments of `config.json`. Git asks for no password. A new
   commit loads at `profile/reload`.
 - `blob/put { sessionId, data }` decodes the base64 `data` and saves the bytes in a saved session. It

@@ -4,20 +4,33 @@
 /**
  * The params of `plugin/add`.
  */
-export type AddPluginParams = { 
+export type AddPluginsParams = { 
 /**
- * The Git plugin to add.
+ * The URL of the repository, as `git` takes it.
  */
-source: PluginSource, 
+git: string, 
 /**
- * The options of the plugin. Without them, the plugin gets no options.
+ * The names of the plugins to add, as `plugin/find` gives them. Without them, the repository must have one plugin.
  */
-options?: Record<string, unknown>, };
+names?: Array<string>, 
+/**
+ * The branch, tag, or commit that an update follows. Without it, an update follows the default branch.
+ */
+ref?: string, };
 
 /**
  * The result of `plugin/add`.
  */
-export type AddPluginResult = { 
+export type AddPluginsResult = { 
+/**
+ * The added plugins, in the order of the names.
+ */
+plugins: Array<AddedPlugin>, };
+
+/**
+ * One plugin that `plugin/add` added.
+ */
+export type AddedPlugin = { 
 /**
  * The name of its `plugin.json`.
  */
@@ -53,18 +66,9 @@ finishReason: FinishReason, };
  */
 export type ApplyPluginsParams = { 
 /**
- * Changes of `plugin/check`. The server writes the `new` commit of each one whose source is in the lock.
+ * The new commits to write, as the `changes` of `plugin/check` give them. Each plugin must be in the lock.
  */
-changes: Array<PluginChange>, };
-
-/**
- * The result of `plugin/apply`.
- */
-export type ApplyPluginsResult = { 
-/**
- * Whether `plugins.lock` changed.
- */
-written: boolean, };
+plugins: Array<LockedPlugin>, };
 
 /**
  * Assistant text, and the phase that the provider gave it.
@@ -392,10 +396,45 @@ request: string,
 data: unknown, };
 
 /**
+ * The params of `plugin/find`.
+ */
+export type FindPluginsParams = { 
+/**
+ * The URL of the repository, as `git` takes it.
+ */
+git: string, 
+/**
+ * The branch, tag, or commit to look at. Without it, the default branch.
+ */
+ref?: string, };
+
+/**
+ * The result of `plugin/find`.
+ */
+export type FindPluginsResult = { 
+/**
+ * The plugins of the repository, in the order of their folders.
+ */
+plugins: Array<FoundPlugin>, };
+
+/**
  * Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
  * `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
  */
 export type FinishReason = "stop" | "length" | "contentFilter" | "refusal" | "toolCalls" | "pause" | "unknown";
+
+/**
+ * One plugin of a repository: a folder with a `plugin.json`.
+ */
+export type FoundPlugin = { 
+/**
+ * The name of its `plugin.json`.
+ */
+name: string, 
+/**
+ * The folder in the repository. Without it, the plugin is the root.
+ */
+folder?: string, };
 
 /**
  * An accepted input. It holds the blocks that the user saw, and other blocks for the model when they differ. The model
@@ -628,6 +667,19 @@ nextCursor?: string, };
 export type LiveUpdate = { "kind": "state" } & StateUpdate | { "kind": "job" } & JobUpdate | { "kind": "inputAccepted" } & InputAccepted | { "kind": "interactionRequested" } & InteractionRequested | { "kind": "interactionClosed" } & InteractionClosed | { "kind": "mcpServer" } & McpServer | { "kind": "inputRemoved" } & InputRemoved | { "kind": "turnUnconfirmed" } | { "kind": "draftStarted" } & DraftStarted | { "kind": "model" } & DraftModelUpdate | { "kind": "draftCommitted" } & DraftCommitted | { "kind": "draftDiscarded" } & DraftDiscarded | { "kind": "toolStarted" } & ToolStarted | { "kind": "toolOutput" } & ToolOutput | { "kind": "toolFinished" } & ToolFinished | { "kind": "retryScheduled" } & RetryScheduled | { "kind": "roundFailed" } & RoundFailed;
 
 /**
+ * A Git plugin and its commit in `plugins.lock`.
+ */
+export type LockedPlugin = { 
+/**
+ * The plugin.
+ */
+source: PluginSource, 
+/**
+ * The full commit id.
+ */
+commit: string, };
+
+/**
  * The id of a login of `auth/login`. A server process gives each login a larger id than the logins before it.
  */
 export type LoginId = number;
@@ -671,14 +723,13 @@ source: PluginOrigin,
  */
 name?: string, 
 /**
- * Whether the running plugins hold a plugin of this name. A plugin can be installed and not loaded, or loaded
- * from an older commit until `profile/reload`.
- */
-loaded: boolean, 
-/**
  * Its state on disk.
  */
-state: PluginState, };
+state: PluginState, 
+/**
+ * Whether the running plugins hold it.
+ */
+load: PluginLoad, };
 
 /**
  * One MCP server of a session.
@@ -881,6 +932,15 @@ new: string,
 log: PluginLog, };
 
 /**
+ * Whether the running plugins hold one plugin of `plugin/list`.
+ */
+export type PluginLoad = { "kind": "loaded" } | { "kind": "pending" } | { "kind": "failed", 
+/**
+ * Why, with the name of the plugin.
+ */
+error: string, };
+
+/**
  * The commits between the locked commit and the new one, or why the server cannot read them.
  */
 export type PluginLog = { "kind": "commits", 
@@ -919,11 +979,11 @@ ref?: string, };
 /**
  * The state on disk of one plugin of `plugin/list`.
  */
-export type PluginState = { "kind": "local" } | { "kind": "notLocked" } | { "kind": "notInstalled", 
+export type PluginState = { "kind": "local" } | { "kind": "notInstalled", 
 /**
- * The full commit id of the lock.
+ * The full commit id of the lock. Without it, `plugin/sync` locks the plugin at the commit of its ref.
  */
-commit: string, } | { "kind": "installed", 
+commit?: string, } | { "kind": "installed", 
 /**
  * The full commit id of the lock.
  */
@@ -1451,39 +1511,17 @@ kind: SubjectKind, };
 export type SubjectKind = "text" | "file" | "uri";
 
 /**
- * The params of `plugin/sync`.
- */
-export type SyncPluginsParams = { 
-/**
- * Fail when `plugins.lock` does not match `config.json`, and never write it. A missing flag is `false`.
- */
-locked?: boolean, };
-
-/**
  * The result of `plugin/sync`.
  */
 export type SyncPluginsResult = { 
 /**
  * Each Git plugin of `config.json` with its commit, in list order.
  */
-plugins: Array<SyncedPlugin>, 
+plugins: Array<LockedPlugin>, 
 /**
  * Whether `plugins.lock` changed.
  */
 written: boolean, };
-
-/**
- * The commit of one Git plugin after `plugin/sync`.
- */
-export type SyncedPlugin = { 
-/**
- * The plugin.
- */
-source: PluginSource, 
-/**
- * The full commit id in the lock.
- */
-commit: string, };
 
 /**
  * Answer text arrives.

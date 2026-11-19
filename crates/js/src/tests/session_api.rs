@@ -7,12 +7,11 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use yuke_protocol::{
-    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
-    InputKind, InputRemoved, InputSource, InteractionClosed, InteractionId, InteractionRequested, InteractionResponse,
-    Job, JobUpdate, ListCatalogResult, ListPluginsResult, ListSessionsParams, ListSessionsResult, LiveUpdate, LoginId,
-    LoginOutcome, LoginResult, McpServer, ModelReference, SessionId, SessionRow, SessionSettings, SessionSnapshot,
-    SessionState, SessionTitle, SessionUpdate, SetApiKeyParams, StateUpdate, StoredEvent, SyncPluginsParams,
-    SyncPluginsResult,
+    ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId, InputKind, InputRemoved,
+    InputSource, InteractionClosed, InteractionId, InteractionRequested, InteractionResponse, Job, JobUpdate,
+    ListCatalogResult, ListPluginsResult, ListSessionsParams, ListSessionsResult, LiveUpdate, LoginId, LoginOutcome,
+    LoginResult, McpServer, ModelReference, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState,
+    SessionTitle, SessionUpdate, SetApiKeyParams, StateUpdate, StoredEvent, SyncPluginsResult,
 };
 
 use super::{evaluate, folder, load_entry, options, write};
@@ -318,8 +317,8 @@ impl Sessions for Scripted {
         self.record("plugins list".to_owned());
         Ok(ListPluginsResult { plugins: Vec::new() })
     }
-    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, SessionsError> {
-        self.record(format!("plugins sync {:?}", params.locked));
+    async fn sync_plugins(&self) -> Result<SyncPluginsResult, SessionsError> {
+        self.record("plugins sync".to_owned());
         Ok(SyncPluginsResult {
             plugins: Vec::new(),
             written: true,
@@ -331,19 +330,37 @@ impl Sessions for Scripted {
         let _hold = Hold(Rc::clone(&self.released));
         std::future::pending().await
     }
-    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
-        self.record(format!("plugins apply {}", params.changes[0].new));
-        Ok(ApplyPluginsResult { written: false })
+    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<(), SessionsError> {
+        self.record(format!("plugins apply {}", params.plugins[0].commit));
+        Ok(())
     }
-    async fn add_plugin(
+    async fn find_plugins(
         &self,
-        params: yuke_protocol::AddPluginParams,
-    ) -> Result<yuke_protocol::AddPluginResult, SessionsError> {
-        self.record(format!("plugins add {} {:?}", params.source.git, params.options));
-        Ok(yuke_protocol::AddPluginResult {
-            name: "clock".to_owned(),
-            source: params.source,
-            commit: "c".repeat(40),
+        params: yuke_protocol::FindPluginsParams,
+    ) -> Result<yuke_protocol::FindPluginsResult, SessionsError> {
+        self.record(format!("plugins find {} {:?}", params.git, params.reference));
+        Ok(yuke_protocol::FindPluginsResult {
+            plugins: vec![yuke_protocol::FoundPlugin {
+                name: "clock".to_owned(),
+                folder: Some("plugins/clock".to_owned()),
+            }],
+        })
+    }
+    async fn add_plugins(
+        &self,
+        params: yuke_protocol::AddPluginsParams,
+    ) -> Result<yuke_protocol::AddPluginsResult, SessionsError> {
+        self.record(format!("plugins add {} {:?}", params.git, params.names));
+        Ok(yuke_protocol::AddPluginsResult {
+            plugins: vec![yuke_protocol::AddedPlugin {
+                name: "clock".to_owned(),
+                source: yuke_protocol::PluginSource {
+                    git: params.git,
+                    folder: Some("plugins/clock".to_owned()),
+                    reference: None,
+                },
+                commit: "c".repeat(40),
+            }],
         })
     }
     async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), SessionsError> {
@@ -747,15 +764,14 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     let answers = evaluate::<String>(
         &runtime,
         "const listed = await plugins.list();
-         const synced = await plugins.sync({ locked: true });
-         const change = { name: 'clock', source: { git: 'https://host/repo' }, old: 'a'.repeat(40),
-                          new: 'b'.repeat(40), log: { kind: 'commits', commits: [] } };
-         const applied = await plugins.apply([change]);
+         const synced = await plugins.sync();
+         const applied = await plugins.apply([{ source: { git: 'https://host/repo' }, commit: 'b'.repeat(40) }]);
          globalThis.controller = new AbortController();
          globalThis.checked = plugins.check({ kind: 'names', names: ['clock'] }, { signal: controller.signal });
-         const added = await plugins.add({ source: { git: 'https://host/clock' }, options: { format: '24h' } });
+         const found = await plugins.find({ git: 'https://host/tools', ref: 'v1' });
+         const added = await plugins.add({ git: 'https://host/tools', names: ['clock'] });
          await plugins.remove('clock');
-         return JSON.stringify([listed, synced.written, applied.written, added.name]);",
+         return JSON.stringify([listed, synced.written, applied, found.plugins, added.plugins[0].source]);",
     )
     .await
     .unwrap();
@@ -771,17 +787,21 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     // The abort of the task drops it at the next poll of the host runtime.
     crate::wait_for_settled().await;
 
-    assert_eq!(answers, r#"[{"plugins":[]},true,false,"clock"]"#);
+    assert_eq!(
+        answers,
+        r#"[{"plugins":[]},true,null,[{"name":"clock","folder":"plugins/clock"}],{"git":"https://host/tools","folder":"plugins/clock"}]"#
+    );
     assert!(aborted);
     assert_eq!(scripted.released.get(), 1);
     assert_eq!(
         scripted.calls(),
         [
             "plugins list".to_owned(),
-            "plugins sync true".to_owned(),
+            "plugins sync".to_owned(),
             format!("plugins apply {}", "b".repeat(40)),
             r#"plugins check Names { names: ["clock"] }"#.to_owned(),
-            r#"plugins add https://host/clock Some({"format": String("24h")})"#.to_owned(),
+            r#"plugins find https://host/tools Some("v1")"#.to_owned(),
+            r#"plugins add https://host/tools ["clock"]"#.to_owned(),
             "plugins remove clock".to_owned(),
         ]
     );

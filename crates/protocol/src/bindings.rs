@@ -16,15 +16,16 @@ use crate::{
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
 const PLUGIN_TYPES: &[&str] = &[
-    "AddPluginParams",
-    "AddPluginResult",
+    "AddPluginsParams",
+    "AddPluginsResult",
     "ApplyPluginsParams",
-    "ApplyPluginsResult",
     "Block",
     "CheckPluginsParams",
     "CheckPluginsResult",
     "DisplayBlock",
     "EventNumber",
+    "FindPluginsParams",
+    "FindPluginsResult",
     "ExtensionEventParams",
     "ExtensionRequestParams",
     "FinishReason",
@@ -56,7 +57,6 @@ const PLUGIN_TYPES: &[&str] = &[
     "SetApiKeyParams",
     "RequestSettings",
     "StoredEvent",
-    "SyncPluginsParams",
     "SyncPluginsResult",
     "ToolHints",
     "Usage",

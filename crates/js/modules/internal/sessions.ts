@@ -13,6 +13,7 @@ import {
   pluginsAdd,
   pluginsApply,
   pluginsCheck,
+  pluginsFind,
   pluginsList,
   pluginsRemove,
   pluginsSync,
@@ -43,13 +44,14 @@ import {
 } from "yuke:internal/native";
 import type { Catalog, OpenOptions, SessionHandle, SessionHandleEvent, Sessions } from "yuke:plugins";
 import type {
-  AddPluginParams,
-  AddPluginResult,
-  ApplyPluginsResult,
+  AddPluginsParams,
+  AddPluginsResult,
   CheckPluginsResult,
+  FindPluginsParams,
+  FindPluginsResult,
   ListPluginsResult,
+  LockedPlugin,
   LoginOutcome,
-  PluginChange,
   PluginTarget,
   SessionId,
   SyncPluginsResult,
@@ -228,29 +230,32 @@ export interface Auth {
 }
 
 /**
- * The plugin manager of the profile, for the bundled plugin `plugins`, as the requests `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`,
- * `plugin/add`, and `plugin/remove` give it. No call runs plugin code, and a new commit loads at the next reload. Git asks for no password.
+ * The plugin manager of the profile, for the bundled plugin `plugins`. Each method calls the plugin manager of yuke in
+ * this process, the same one that the protocol methods `plugin/*` reach. No call runs plugin code, and a new commit
+ * loads at the next reload. Git asks for no password.
  */
 export interface PluginManager {
   /** The plugins of `config.json` with their state on disk, and whether each one runs. It uses no network. */
   readonly list: () => Promise<ListPluginsResult>;
   /**
-   * Install the locked commit of each Git plugin, and lock each new one at the commit of its ref. With
-   * `options.locked`, the lock must match `config.json`, and it stays as it is. `options.signal` stops the work.
+   * Install the locked commit of each Git plugin, and lock each new one at the commit of its ref. `options.signal`
+   * stops the work.
    */
-  readonly sync: (options?: { readonly locked?: boolean; readonly signal?: AbortSignal }) => Promise<SyncPluginsResult>;
+  readonly sync: (options?: { readonly signal?: AbortSignal }) => Promise<SyncPluginsResult>;
   /**
-   * The new commit of each Git plugin of `target` whose ref moved, with the log of the move. Each new commit is
-   * installed, and `plugins.lock` stays as it is until `apply`. `options.signal` stops the work.
+   * The new commit of each installed Git plugin of `target` whose ref moved, with the log of the move. Each new commit
+   * is installed, and `plugins.lock` stays as it is until `apply`. `options.signal` stops the work.
    */
   readonly check: (target: PluginTarget, options?: { readonly signal?: AbortSignal }) => Promise<CheckPluginsResult>;
-  /** Write the new commit of each change of `check` into `plugins.lock`. */
-  readonly apply: (changes: readonly PluginChange[]) => Promise<ApplyPluginsResult>;
+  /** Write the commit of each plugin of `plugins` into `plugins.lock`. Each plugin must be in the lock. */
+  readonly apply: (plugins: readonly LockedPlugin[]) => Promise<void>;
+  /** The plugins of a Git repository: each folder with a `plugin.json`. `options.signal` stops the work. */
+  readonly find: (params: FindPluginsParams, options?: { readonly signal?: AbortSignal }) => Promise<FindPluginsResult>;
   /**
-   * Add the Git plugin `plugin` to `config.json`, install it, and lock it at the commit of its ref. The comments of
-   * `config.json` stay. `options.signal` stops the work.
+   * Add plugins of a Git repository to `config.json` by their names, install them, and lock them at the commit of the
+   * ref. The comments of `config.json` stay. `options.signal` stops the work.
    */
-  readonly add: (plugin: AddPluginParams, options?: { readonly signal?: AbortSignal }) => Promise<AddPluginResult>;
+  readonly add: (params: AddPluginsParams, options?: { readonly signal?: AbortSignal }) => Promise<AddPluginsResult>;
   /** Remove the plugin `name` from `config.json` and `plugins.lock`. Its install stays on disk. */
   readonly remove: (name: string) => Promise<void>;
 }
@@ -281,10 +286,13 @@ export const auth: Auth = Object.freeze({
 /** The plugin manager of the profile. */
 export const plugins: PluginManager = Object.freeze({
   list: () => pluginsList(null),
-  sync: (options) => underStop(options?.signal, () => pluginsSync({ locked: options?.locked === true })),
+  sync: (options) => underStop(options?.signal, () => pluginsSync(null)),
   check: (target, options) => underStop(options?.signal, () => pluginsCheck({ target })),
-  apply: (changes) => pluginsApply({ changes: [...changes] }),
-  add: (plugin, options) => underStop(options?.signal, () => pluginsAdd(plugin)),
+  async apply(plugins) {
+    await pluginsApply({ plugins: [...plugins] });
+  },
+  find: (params, options) => underStop(options?.signal, () => pluginsFind(params)),
+  add: (params, options) => underStop(options?.signal, () => pluginsAdd(params)),
   async remove(name) {
     await pluginsRemove({ name });
   },

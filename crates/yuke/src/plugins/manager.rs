@@ -1,4 +1,4 @@
-//! `yuke plugin`: list, sync, update, add, and remove the plugins of `config.json`. It runs no plugin code.
+//! `yuke plugin`: list, sync, update, find, add, and remove the plugins of `config.json`. It runs no plugin code.
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -6,108 +6,185 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 use yuke_protocol::{
-    AddPluginResult, ManagedPlugin, PluginChange, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget,
-    SyncPluginsResult, SyncedPlugin,
+    AddedPlugin, FoundPlugin, LockedPlugin, ManagedPlugin, PluginChange, PluginLoad, PluginLog, PluginOrigin,
+    PluginSource, PluginState, PluginTarget, SyncPluginsResult,
 };
 
 use super::lock::Lock;
-use super::{git, git_folder, manifest_plugin, read_manifest, repository_key};
+use super::{Failure, MANIFEST, Outcome, PluginList, git, git_folder, manifest_plugin, parse_manifest, repository_key};
 use crate::config::{Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, write_text};
 use crate::paths::Paths;
 
-/// The plugins of `config.json`, with the state of each one. A plugin is loaded when `loaded` has its name. It uses no
-/// network and changes nothing.
+/// The plugins of `config.json`, with the state of each one on disk. `running` holds the outcomes of the last load, and
+/// a plugin without one is pending. It uses no network and changes nothing.
 ///
 /// # Errors
 ///
 /// Returns a text for a bad `config.json` or `plugins.lock`.
-pub(crate) fn list(paths: &Paths, loaded: &[String]) -> Result<Vec<ManagedPlugin>, String> {
+pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlugin>, String> {
     let config = read_config(paths)?;
     let lock = Lock::read_for(&paths.config, &config)?;
-    Ok(config
-        .plugins
-        .iter()
-        .map(|plugin| {
-            let name = name_of(paths, &lock, &plugin.source);
-            let (source, state) = match &plugin.source {
-                Source::Folder(folder) => (PluginOrigin::Folder(folder.clone()), PluginState::Local),
+    Ok(resolve(paths, &config)?
+        .outcomes
+        .into_iter()
+        .map(|outcome| {
+            let (source, state) = match outcome.source {
+                Source::Folder(folder) => (PluginOrigin::Folder(folder), PluginState::Local),
                 Source::Git(source) => {
-                    let state = match (lock.commits.get(source), &name) {
-                        (None, _) => PluginState::NotLocked,
-                        (Some(commit), Some(_)) => PluginState::Installed { commit: commit.clone() },
-                        (Some(commit), None) => PluginState::NotInstalled { commit: commit.clone() },
+                    let commit = lock.commits.get(&source).cloned();
+                    let state = match commit {
+                        Some(commit) if outcome.failure != Some(Failure::NotInstalled) => {
+                            PluginState::Installed { commit }
+                        }
+                        commit => PluginState::NotInstalled { commit },
                     };
-                    (PluginOrigin::Git(source.clone()), state)
+                    (PluginOrigin::Git(source), state)
                 }
+            };
+            let last = running.iter().find(|running| match &running.source {
+                Source::Folder(folder) => source == PluginOrigin::Folder(folder.clone()),
+                Source::Git(git) => source == PluginOrigin::Git(git.clone()),
+            });
+            // A problem on disk shows first, and a failure of the code shows until the next load.
+            let load = match (&outcome.failure, last.map(|last| &last.failure)) {
+                (Some(Failure::Invalid(error)), _) | (_, Some(Some(Failure::Invalid(error)))) => {
+                    PluginLoad::Failed { error: error.clone() }
+                }
+                (None, Some(None)) => PluginLoad::Loaded,
+                _ => PluginLoad::Pending,
             };
             ManagedPlugin {
                 source,
-                loaded: name.as_ref().is_some_and(|name| loaded.contains(name)),
-                name,
+                name: outcome.name,
                 state,
+                load,
             }
         })
         .collect())
 }
 
-/// Add the Git plugin `source` with `options` to `config.json`, install it, and lock it at the commit of its ref. The
-/// comments and the layout of `config.json` stay. A stop after the write of `config.json` leaves the plugin unlocked,
-/// and a sync locks it.
+/// The plugins of the repository `url` at the commit of `reference`, with no change of a file of the profile.
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file, a plugin that `config.json` has already, or a failed fetch or install.
+/// Returns a text for a failed resolve or fetch.
+pub(crate) async fn find(paths: &Paths, url: &str, reference: Option<&str>) -> Result<Vec<FoundPlugin>, String> {
+    let _held = hold(&paths.data).await?;
+    Ok(found(paths, url, reference).await?.1)
+}
+
+/// The commit of `reference` in the repository `url`, and each folder of that commit with a `plugin.json` whose name
+/// reads. The commit goes into the cache.
+async fn found(paths: &Paths, url: &str, reference: Option<&str>) -> Result<(String, Vec<FoundPlugin>), String> {
+    let fail = |message: String| format!("{url}: {message}");
+    let commit = git::resolve(url, reference).await.map_err(fail)?;
+    let cache = cache(paths, url);
+    git::fetch(&cache, url, &commit).await.map_err(fail)?;
+    let mut plugins = Vec::new();
+    for path in git::files_named(&cache, &commit, MANIFEST).await.map_err(fail)? {
+        let text = git::show(&cache, &commit, &path).await.map_err(fail)?;
+        if let Ok(manifest) = parse_manifest(&text) {
+            let folder = path.strip_suffix(MANIFEST).unwrap_or_default().trim_end_matches('/');
+            plugins.push(FoundPlugin {
+                name: manifest.name,
+                folder: (!folder.is_empty()).then(|| folder.to_owned()),
+            });
+        }
+    }
+    Ok((commit, plugins))
+}
+
+/// Add the plugins `names` of the repository `url` to `config.json`, install them, and lock them at the commit of
+/// `reference`. Without `names`, the repository must have one plugin. The comments and the layout of `config.json`
+/// stay.
+///
+/// # Errors
+///
+/// Returns a text for a bad file, a name that the repository does not have, a plugin that `config.json` has already, or
+/// a failed fetch or install.
 pub(crate) async fn add(
     paths: &Paths,
-    source: PluginSource,
-    options: Map<String, Value>,
-) -> Result<AddPluginResult, String> {
+    url: &str,
+    names: &[String],
+    reference: Option<&str>,
+) -> Result<Vec<AddedPlugin>, String> {
     let _held = hold(&paths.data).await?;
-    let source = git_source(source.git, source.folder.as_deref(), source.reference);
-    let fail = |message: String| format!("plugin {source}: {message}");
     let config = read_config(paths)?;
-    if git_sources(&config).contains(&&source) {
-        return Err(fail("config.json has this plugin already".to_owned()));
-    }
-    let commit = git::resolve(&source.git, source.reference.as_deref())
-        .await
-        .map_err(fail)?;
-    install(paths, &source, &commit).await.map_err(fail)?;
-    let name = read_manifest(&root(paths, &source, &commit)).map_err(fail)?.name;
-    // The loader refuses two plugins of one name, so a clash would stop the next reload.
-    let lock = Lock::read_for(&paths.config, &config)?;
-    if config
-        .plugins
-        .iter()
-        .any(|plugin| name_of(paths, &lock, &plugin.source).as_deref() == Some(name.as_str()))
-    {
-        return Err(fail(format!("config.json has a plugin of the name '{name}' already")));
+    let known = resolve(paths, &config)?.outcomes;
+    let (commit, found) = found(paths, url, reference).await?;
+    let found_names = || {
+        let names: Vec<&str> = found.iter().map(|plugin| plugin.name.as_str()).collect();
+        names.join(", ")
+    };
+    let chosen: Vec<&FoundPlugin> = match (names, found.as_slice()) {
+        (_, []) => return Err(format!("{url} has no {MANIFEST}")),
+        ([], [plugin]) => vec![plugin],
+        ([], _) => {
+            return Err(format!(
+                "{url} has {} plugins: {}: name the ones to add",
+                found.len(),
+                found_names()
+            ));
+        }
+        (names, _) => names
+            .iter()
+            .map(|name| {
+                found
+                    .iter()
+                    .find(|plugin| plugin.name == *name)
+                    .ok_or_else(|| format!("{url} has no plugin '{name}': it has {}", found_names()))
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    let mut added = Vec::with_capacity(chosen.len());
+    for plugin in chosen {
+        let source = git_source(url.to_owned(), plugin.folder.as_deref(), reference.map(str::to_owned));
+        let fail = |message: String| format!("plugin {}: {message}", plugin.name);
+        // The loader skips the second of two plugins of one name, so a clash would hide a plugin.
+        if known
+            .iter()
+            .any(|outcome| outcome.name.as_deref() == Some(plugin.name.as_str()))
+        {
+            return Err(fail("config.json has a plugin of this name already".to_owned()));
+        }
+        install(paths, &source, &commit).await.map_err(fail)?;
+        added.push(AddedPlugin {
+            name: plugin.name.clone(),
+            source,
+            commit: commit.clone(),
+        });
     }
     let path = paths.config.join("config.json");
-    let mut fields = vec![format!("\"git\": {}", Value::from(source.git.as_str()))];
-    if let Some(folder) = &source.folder {
-        fields.push(format!("\"folder\": {}", Value::from(folder.as_str())));
-    }
-    if let Some(reference) = &source.reference {
-        fields.push(format!("\"ref\": {}", Value::from(reference.as_str())));
-    }
-    if !options.is_empty() {
-        fields.push(format!("\"options\": {}", Value::Object(options)));
-    }
-    let item = format!("{{ {} }}", fields.join(", "));
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => add_plugin_item(&text, &item),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => format!("{{\n  \"plugins\": [{item}]\n}}\n"),
+    let mut text = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
+    for plugin in &added {
+        let source = &plugin.source;
+        let mut fields = vec![format!("\"git\": {}", Value::from(source.git.as_str()))];
+        if let Some(folder) = &source.folder {
+            fields.push(format!("\"folder\": {}", Value::from(folder.as_str())));
+        }
+        if let Some(reference) = &source.reference {
+            fields.push(format!("\"ref\": {}", Value::from(reference.as_str())));
+        }
+        let item = format!("{{ {} }}", fields.join(", "));
+        text = Some(match text {
+            Some(text) => add_plugin_item(&text, &item),
+            None => format!("{{\n  \"plugins\": [\n    {item}\n  ]\n}}\n"),
+        });
+    }
     // Read the lock before the config write, so a bad lock changes no file.
     let mut lock = Lock::read(&paths.config)?;
     let sources = git_sources(&config);
     lock.commits.retain(|locked, _| sources.contains(&locked));
-    lock.commits.insert(source.clone(), commit.clone());
-    write_text(&path, &text)?;
+    for plugin in &added {
+        lock.commits.insert(plugin.source.clone(), plugin.commit.clone());
+    }
+    write_text(&path, text.as_deref().unwrap_or_default())?;
     lock.write(&paths.config)?;
-    Ok(AddPluginResult { name, source, commit })
+    Ok(added)
 }
 
 /// Remove the plugin `name` from `config.json`, and its entry from `plugins.lock`. The comments and the layout of
@@ -120,10 +197,10 @@ pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
     let _held = hold(&paths.data).await?;
     let config = read_config(paths)?;
     let mut lock = Lock::read_for(&paths.config, &config)?;
-    let index = config
-        .plugins
+    let index = resolve(paths, &config)?
+        .outcomes
         .iter()
-        .position(|plugin| name_of(paths, &lock, &plugin.source).as_deref() == Some(name))
+        .position(|outcome| outcome.name.as_deref() == Some(name))
         .ok_or_else(|| format!("no plugin of config.json has the name '{name}': see `yuke plugin list`"))?;
     let path = paths.config.join("config.json");
     let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -137,13 +214,9 @@ pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The name of the manifest of the plugin of `source`: of its folder, or of its locked and installed commit.
-fn name_of(paths: &Paths, lock: &Lock, source: &Source) -> Option<String> {
-    let root = match source {
-        Source::Folder(folder) => paths.config.join(folder),
-        Source::Git(source) => root(paths, source, lock.commits.get(source)?),
-    };
-    read_manifest(&root).ok().map(|manifest| manifest.name)
+/// The plugins of `config` as a load sees them on disk now.
+fn resolve(paths: &Paths, config: &Config) -> Result<PluginList, String> {
+    super::plugins(&paths.config, config, &paths.data)
 }
 
 /// Install the commit of `plugins.lock` of each Git plugin, and lock each new Git plugin at the commit of its ref. The
@@ -175,7 +248,7 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
         };
         install(paths, source, &commit).await.map_err(fail)?;
         commits.commits.insert(source.clone(), commit.clone());
-        plugins.push(SyncedPlugin {
+        plugins.push(LockedPlugin {
             source: source.clone(),
             commit,
         });
@@ -184,37 +257,28 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
     Ok(SyncPluginsResult { plugins, written })
 }
 
-/// The new commit of each Git plugin of `target` whose ref moved, with the log of the move. Each new commit is installed,
-/// and `plugins.lock` stays as it is until [`apply`].
+/// The new commit of each installed Git plugin of `target` whose ref moved, with the log of the move. Each new commit is
+/// installed, and `plugins.lock` stays as it is until [`apply`].
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file, a name that no installed Git plugin has, a plugin that `sync` did not install, or a
-/// failed fetch or install.
+/// Returns a text for a bad file, a name that no installed Git plugin has, or a failed fetch or install.
 pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<PluginChange>, String> {
     let _held = hold(&paths.data).await?;
     let config = read_config(paths)?;
     let lock = Lock::read_for(&paths.config, &config)?;
-    // The name of a Git plugin comes from the manifest of its locked commit. A plugin with no readable name cannot be one
-    // of the named plugins, so only `all` needs it.
-    let mut targets = Vec::new();
-    for source in git_sources(&config) {
-        let fail = |message: String| format!("plugin {source}: {message}");
-        let named = lock
-            .commits
-            .get(source)
-            .ok_or_else(|| fail("plugins.lock has no commit for this plugin: run `yuke plugin sync`".to_owned()));
-        let named = named.and_then(|old| {
-            let manifest = read_manifest(&root(paths, source, old))
-                .map_err(|error| fail(format!("{error}: run `yuke plugin sync`")))?;
-            Ok((old, manifest.name))
-        });
-        match (named, target) {
-            (Ok((old, name)), _) => targets.push((source, old, name)),
-            (Err(error), PluginTarget::All) => return Err(error),
-            (Err(_), PluginTarget::Names { .. }) => {}
-        }
-    }
+    // A plugin that is not installed has no name, so a sync comes before its update.
+    let mut targets: Vec<(PluginSource, String, String)> = resolve(paths, &config)?
+        .outcomes
+        .into_iter()
+        .filter_map(|outcome| match (outcome.source, outcome.name) {
+            (Source::Git(source), Some(name)) => {
+                let commit = lock.commits.get(&source)?.clone();
+                Some((source, commit, name))
+            }
+            _ => None,
+        })
+        .collect();
     if let PluginTarget::Names { names } = target {
         if let Some(missing) = names
             .iter()
@@ -228,24 +292,24 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
     }
     let mut changes = Vec::new();
     for (source, old, name) in targets {
-        let fail = |message: String| format!("plugin {source}: {message}");
+        let fail = |message: String| format!("plugin {name}: {message}");
         let new = git::resolve(&source.git, source.reference.as_deref())
             .await
             .map_err(fail)?;
-        if new == *old {
+        if new == old {
             continue;
         }
-        install(paths, source, &new).await.map_err(fail)?;
+        install(paths, &source, &new).await.map_err(fail)?;
         let cache = cache(paths, &source.git);
         // A new cache does not have the old commit yet.
-        let log = match git::fetch(&cache, &source.git, old).await {
-            Ok(()) => git::log(&cache, old, &new).await,
+        let log = match git::fetch(&cache, &source.git, &old).await {
+            Ok(()) => git::log(&cache, &old, &new).await,
             Err(error) => Err(error),
         };
         changes.push(PluginChange {
             name,
-            source: source.clone(),
-            old: old.clone(),
+            source,
+            old,
             new,
             log: match log {
                 Ok(commits) => PluginLog::Commits { commits },
@@ -256,30 +320,32 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
     Ok(changes)
 }
 
-/// Write the new commit of each change of `changes` into `plugins.lock`. A change whose plugin is not in the lock writes
-/// nothing. Gives whether the lock changed.
+/// Write the commit of each plugin of `plugins` into `plugins.lock`.
 ///
 /// # Errors
 ///
-/// Returns a text for a bad commit of a change, or when the file does not read or write.
-pub(crate) async fn apply(paths: &Paths, changes: &[PluginChange]) -> Result<bool, String> {
+/// Returns a text for a plugin that is not in the lock, a commit that is not a full id, or when the file does not read
+/// or write.
+pub(crate) async fn apply(paths: &Paths, plugins: &[LockedPlugin]) -> Result<(), String> {
     let _held = hold(&paths.data).await?;
     let mut lock = Lock::read(&paths.config)?;
-    for change in changes {
-        // A change can come from a client, so its commit gets the check of a lock entry.
+    for plugin in plugins {
+        // A plugin can come from a client, so its source takes the form of the lock, and its commit the check of an entry.
         let source = git_source(
-            change.source.git.clone(),
-            change.source.folder.as_deref(),
-            change.source.reference.clone(),
+            plugin.source.git.clone(),
+            plugin.source.folder.as_deref(),
+            plugin.source.reference.clone(),
         );
-        if !git::is_commit(&change.new) {
-            return Err(format!("plugin {source}: '{}' is not a full commit id", change.new));
+        if !git::is_commit(&plugin.commit) {
+            return Err(format!("plugin {source}: '{}' is not a full commit id", plugin.commit));
         }
-        if let Some(commit) = lock.commits.get_mut(&source) {
-            commit.clone_from(&change.new);
-        }
+        let commit = lock
+            .commits
+            .get_mut(&source)
+            .ok_or_else(|| format!("plugin {source} is not in plugins.lock"))?;
+        commit.clone_from(&plugin.commit);
     }
-    lock.write(&paths.config)
+    lock.write(&paths.config).map(|_| ())
 }
 
 /// Install the commit `commit` of `source` in `<data>/git`, unless it is there, and check the manifest of its folder. The

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use yuke_ai::Blob;
 
 use crate::{
-    AddPluginResult, ApplyPluginsResult, CheckPluginsResult, EventNumber, InputId, InstanceId,
+    AddPluginsResult, CheckPluginsResult, EventNumber, FindPluginsResult, InputId, InstanceId,
     InteractionRespondParams, ListCatalogResult, ListMcpServersResult, ListPluginsResult, LoginResult, SessionId,
     SessionRow, SessionSettings, SessionTitle, SessionUpdateParams, SyncPluginsResult,
 };
@@ -161,16 +161,19 @@ client_requests!(
     /// Install the commit of `plugins.lock` of each Git plugin, and lock each new one at the commit of its ref. The lock
     /// keeps only the plugins of `config.json`. Git asks for no password: the credential helper and the ssh agent of
     /// the user serve. No plugin code runs.
-    "plugin/sync" => SyncPlugins(crate::SyncPluginsParams) -> SyncPluginsResult,
+    "plugin/sync" => SyncPlugins(EmptyParams) -> SyncPluginsResult,
     /// Resolve the ref of each Git plugin of the target again, and install each new commit. `plugins.lock` stays as it
     /// is until `plugin/apply`.
     "plugin/check" => CheckPlugins(crate::CheckPluginsParams) -> CheckPluginsResult,
-    /// Write the new commits of changes of `plugin/check` into `plugins.lock`. The running plugins keep their commits
-    /// until `profile/reload`.
-    "plugin/apply" => ApplyPlugins(crate::ApplyPluginsParams) -> ApplyPluginsResult,
-    /// Add a Git plugin to `config.json`, install it, and lock it at the commit of its ref. The comments and the layout of
-    /// `config.json` stay. It fails when `config.json` has the plugin already.
-    "plugin/add" => AddPlugin(crate::AddPluginParams) -> AddPluginResult,
+    /// Write the new commits of changes of `plugin/check` into `plugins.lock`. It fails for a plugin that is not in the
+    /// lock. The running plugins keep their commits until `profile/reload`.
+    "plugin/apply" => ApplyPlugins(crate::ApplyPluginsParams) -> EmptyResult,
+    /// List the plugins of a Git repository at the commit of a ref: each folder with a `plugin.json`. It fetches the
+    /// commit, and changes no file of the profile.
+    "plugin/find" => FindPlugins(crate::FindPluginsParams) -> FindPluginsResult,
+    /// Add plugins of a Git repository to `config.json` by their names, install them, and lock them at the commit of the
+    /// ref. The comments and the layout of `config.json` stay. It fails when `config.json` has one of them already.
+    "plugin/add" => AddPlugins(crate::AddPluginsParams) -> AddPluginsResult,
     /// Remove a plugin of `config.json` by the name of its `plugin.json`, and its entry of `plugins.lock`. Its install
     /// stays on disk.
     "plugin/remove" => RemovePlugin(crate::RemovePluginParams) -> EmptyResult,

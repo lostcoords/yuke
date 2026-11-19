@@ -7,7 +7,7 @@
 
 import { plugins as manager, type PluginManager } from "yuke:internal/sessions";
 import type { PluginContext } from "yuke:plugins";
-import type { AddPluginParams, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
+import type { LockedPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import { type Canvas, type KeyEvent, strokeOf, type TextDocument, TextView, type Tui, type View } from "yuke:tui";
 
 const TITLE = "plugins.title";
@@ -47,15 +47,15 @@ function short(commit: string): string {
 
 /** The sections of the dashboard, in order, with the test of the plugins of each one. */
 const SECTIONS: readonly { readonly title: string; readonly has: (plugin: ManagedPlugin) => boolean }[] = [
-  { title: "Needs sync", has: (plugin) => plugin.state.kind === "notLocked" || plugin.state.kind === "notInstalled" },
+  { title: "Needs sync", has: (plugin) => plugin.state.kind === "notInstalled" },
   { title: "Installed", has: (plugin) => plugin.state.kind === "installed" },
   { title: "Local", has: (plugin) => plugin.state.kind === "local" },
 ];
 
 /** The mark of `plugin`: loaded, not loaded, or a problem that a sync fixes. */
 function markOf(plugin: ManagedPlugin): string {
-  if (plugin.state.kind === "notLocked" || plugin.state.kind === "notInstalled") return "!";
-  return plugin.loaded ? "●" : "○";
+  if (plugin.state.kind === "notInstalled") return "!";
+  return plugin.load.kind === "loaded" ? "●" : "○";
 }
 
 /** The source of `plugin` as text, as `yuke plugin list` prints it: the folder, or the Git URL with its folder and ref. */
@@ -72,22 +72,22 @@ function sourceOf(plugin: ManagedPlugin): string {
 /** The state of `plugin` after its source on its row. */
 function stateOf(plugin: ManagedPlugin): string {
   const state = plugin.state;
+  const loaded = plugin.load.kind === "loaded";
   switch (state.kind) {
     case "local":
-      return plugin.loaded ? "" : "not loaded";
-    case "notLocked":
-      return "not locked";
+      return loaded ? "" : "not loaded";
     case "notInstalled":
-      return `${short(state.commit)} not installed`;
+      return state.commit === undefined ? "not installed" : `${short(state.commit)} not installed`;
     case "installed":
-      return plugin.loaded ? short(state.commit) : `${short(state.commit)} not loaded`;
+      return loaded ? short(state.commit) : `${short(state.commit)} not loaded`;
   }
 }
 
 /** The details of `plugin` under its row. */
 function detailsOf(plugin: ManagedPlugin): string {
-  const commit = "commit" in plugin.state ? ` · commit ${plugin.state.commit}` : "";
-  return `${sourceOf(plugin)}${commit} · ${plugin.loaded ? "loaded" : "not loaded"}`;
+  const commit =
+    "commit" in plugin.state && plugin.state.commit !== undefined ? ` · commit ${plugin.state.commit}` : "";
+  return `${sourceOf(plugin)}${commit} · ${plugin.load.kind === "loaded" ? "loaded" : "not loaded"}`;
 }
 
 /** One row of the dashboard: a section title, a plugin, or the details of a plugin. */
@@ -182,23 +182,6 @@ class PluginList implements View {
   }
 }
 
-/** The params of `plugins.add` of a line in the form of `yuke plugin add`: `URL [--folder FOLDER] [--ref REF]`. */
-function addOf(line: string): AddPluginParams {
-  const [git, ...rest] = line.trim().split(/\s+/);
-  if (git === undefined || git === "" || git.startsWith("--")) throw new Error("give the URL of the repository first");
-  const source: { git: string; folder?: string; ref?: string } = { git };
-  for (let index = 0; index < rest.length; index += 2) {
-    const flag = rest[index];
-    const value = rest[index + 1];
-    if (value === undefined || (flag !== "--folder" && flag !== "--ref")) {
-      throw new Error(`'${flag ?? ""}' is not --folder FOLDER or --ref REF`);
-    }
-    if (flag === "--folder") source.folder = value;
-    else source.ref = value;
-  }
-  return { source };
-}
-
 /** Open the dashboard. The title shows the count of the plugins and the state of the last action. */
 async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promise<void> {
   const list = new PluginList();
@@ -267,9 +250,10 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     review(tui, plugins, target, dialog.signal).then(
       (chosen) => {
         if (chosen === undefined) return;
-        run("writing plugins.lock", async () =>
-          (await plugins.apply(chosen)).written ? "plugins.lock written: R reloads" : "plugins.lock unchanged",
-        );
+        run("writing plugins.lock", async () => {
+          await plugins.apply(lockedOf(chosen));
+          return "plugins.lock written: R reloads";
+        });
       },
       (error: unknown) => {
         status = `the check failed: ${String(error)}`;
@@ -278,21 +262,20 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     );
   };
   const add = async (): Promise<void> => {
-    let params: AddPluginParams | undefined;
-    // A line that does not parse keeps the prompt with its draft, so a fix needs no new typing.
+    // An empty line keeps the prompt open, so the user sees why.
     const line = await tui.input({
       title: "Add a Git plugin",
-      placeholder: "URL [--folder FOLDER] [--ref REF]",
+      placeholder: "URL of the repository",
       signal: dialog.signal,
       onSubmit: (text) => {
-        params = addOf(text);
+        if (text.trim() === "") throw new Error("type the URL first");
       },
     });
-    if (line === undefined || params === undefined) return;
-    const chosen = params;
-    run(`adding ${chosen.source.git}`, async () => {
-      const added = await plugins.add(chosen, { signal: dialog.signal });
-      return `${added.name} added at ${short(added.commit)}: R reloads`;
+    if (line === undefined) return;
+    const git = line.trim();
+    run(`adding ${git}`, async () => {
+      const added = await plugins.add({ git }, { signal: dialog.signal });
+      return `${added.plugins.map((plugin) => plugin.name).join(", ")} added: R reloads`;
     });
   };
   const remove = async (name: string): Promise<void> => {
@@ -319,6 +302,11 @@ async function sync(ctx: PluginContext, plugins: PluginManager): Promise<void> {
   ctx.notify("info", "The sync of the Git plugins runs");
   const synced = await plugins.sync({ signal: ctx.signal });
   ctx.notify("info", synced.written ? "plugins.lock written: run /reload" : "Each Git plugin is at its locked commit");
+}
+
+/** The new commit of each change of `changes`, for `apply`. */
+function lockedOf(changes: readonly PluginChange[]): readonly LockedPlugin[] {
+  return changes.map((change) => ({ source: change.source, commit: change.new }));
 }
 
 /** A document of one text item for each entry of `items`: a label and its lines. */
@@ -352,11 +340,8 @@ function reviewOf(changes: readonly PluginChange[]): TextDocument {
 async function update(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promise<void> {
   const chosen = await review(tui, plugins, { kind: "all" }, ctx.signal);
   if (chosen === undefined) return;
-  const applied = await plugins.apply(chosen);
-  ctx.notify(
-    "info",
-    applied.written ? "plugins.lock written: run /reload to load the new commits" : "plugins.lock unchanged",
-  );
+  await plugins.apply(lockedOf(chosen));
+  ctx.notify("info", "plugins.lock written: run /reload to load the new commits");
 }
 
 /**

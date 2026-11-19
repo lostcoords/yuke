@@ -4,9 +4,9 @@ use super::*;
 use crate::plugins::Outcome;
 use crate::testing::commit_plugin;
 
-/// The sync result of `source` at `commit`.
-fn at(source: PluginSource, commit: &str) -> SyncedPlugin {
-    SyncedPlugin {
+/// The lock entry of `source` at `commit`.
+fn at(source: PluginSource, commit: &str) -> LockedPlugin {
+    LockedPlugin {
         source,
         commit: commit.to_owned(),
     }
@@ -71,7 +71,9 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
     let loaded = super::super::plugins(&paths.config, &config, &paths.data).unwrap();
     let changes = check(&paths, &PluginTarget::All).await.unwrap();
     let before_apply = Lock::read(&paths.config).unwrap();
-    let applied = apply(&paths, &changes).await.unwrap();
+    apply(&paths, &[at(changes[0].source.clone(), &changes[0].new)])
+        .await
+        .unwrap();
     let after_apply = check(&paths, &PluginTarget::All).await.unwrap();
 
     assert_eq!(synced, [at(clock(&root, Some("main")), &first)]);
@@ -98,7 +100,6 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
     let (short, subject) = log[0].split_once(' ').unwrap();
     assert!(second.starts_with(short) && subject == "feat: seconds", "{log:?}");
     assert_eq!(before_apply.commits[&clock(&root, Some("main"))], first);
-    assert!(applied);
     assert!(after_apply.is_empty(), "{after_apply:?}");
     assert_eq!(
         Lock::read(&paths.config).unwrap().commits[&clock(&root, Some("main"))],
@@ -221,32 +222,74 @@ async fn a_linked_lock_stays_a_link_and_its_target_gets_the_commits() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn an_apply_with_a_commit_that_is_not_a_full_id_fails_and_keeps_the_lock() {
-    let (root, paths) = place("apply_short");
+async fn an_apply_with_a_short_commit_or_a_plugin_out_of_the_lock_fails_and_keeps_the_lock() {
+    let (root, paths) = place("apply_bad");
     let first = commit(&root, "first");
     write_config(
         &paths,
         &json!([{ "git": clock(&root, None).git, "folder": "plugins/clock" }]),
     );
     sync(&paths, false).await.unwrap();
-    let change = PluginChange {
-        name: "clock".to_owned(),
-        source: clock(&root, None),
-        old: first.clone(),
-        new: "3f9c1a2".to_owned(),
-        log: PluginLog::Commits { commits: Vec::new() },
-    };
 
-    let error = apply(&paths, &[change]).await.unwrap_err();
+    let short = apply(&paths, &[at(clock(&root, None), "3f9c1a2")]).await.unwrap_err();
+    let removed = apply(&paths, &[at(clock(&root, Some("v2")), &"b".repeat(40))])
+        .await
+        .unwrap_err();
 
-    assert_eq!(
-        error,
-        format!(
-            "plugin {} (folder plugins/clock): '3f9c1a2' is not a full commit id",
-            clock(&root, None).git
-        )
-    );
+    let label = format!("plugin {} (folder plugins/clock", clock(&root, None).git);
+    assert_eq!(short, format!("{label}): '3f9c1a2' is not a full commit id"));
+    assert_eq!(removed, format!("{label}, ref v2) is not in plugins.lock"));
     assert_eq!(Lock::read(&paths.config).unwrap().commits[&clock(&root, None)], first);
+}
+
+#[tokio::test(flavor = "local")]
+async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
+    let (root, paths) = place("find_add");
+    commit(&root, "first");
+    let last = commit_plugin(&root.join("remote"), "weather", "second");
+    let url = clock(&root, None).git;
+
+    let found = find(&paths, &url, None).await.unwrap();
+    let unnamed = add(&paths, &url, &[], None).await.unwrap_err();
+    let unknown = add(&paths, &url, &["sun".to_owned()], None).await.unwrap_err();
+    let added = add(&paths, &url, &["weather".to_owned(), "clock".to_owned()], None)
+        .await
+        .unwrap();
+    let listed = list(&paths, &[]).unwrap();
+
+    let at_folder = |name: &str| FoundPlugin {
+        name: name.to_owned(),
+        folder: Some(format!("plugins/{name}")),
+    };
+    assert_eq!(found, [at_folder("clock"), at_folder("weather")]);
+    assert_eq!(
+        unnamed,
+        format!("{url} has 2 plugins: clock, weather: name the ones to add")
+    );
+    assert_eq!(unknown, format!("{url} has no plugin 'sun': it has clock, weather"));
+    let names: Vec<(&str, &str)> = added
+        .iter()
+        .map(|plugin| {
+            (
+                plugin.name.as_str(),
+                plugin.source.folder.as_deref().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(names, [("weather", "plugins/weather"), ("clock", "plugins/clock")]);
+    assert!(added.iter().all(|plugin| plugin.commit == last));
+    let states: Vec<(Option<&str>, &PluginState, &PluginLoad)> = listed
+        .iter()
+        .map(|plugin| (plugin.name.as_deref(), &plugin.state, &plugin.load))
+        .collect();
+    let installed = PluginState::Installed { commit: last.clone() };
+    assert_eq!(
+        states,
+        [
+            (Some("weather"), &installed, &PluginLoad::Pending),
+            (Some("clock"), &installed, &PluginLoad::Pending),
+        ]
+    );
 }
 
 #[tokio::test(flavor = "local")]
@@ -256,12 +299,6 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     let url = clock(&root, None).git;
     let original = "{\n  // mine\n  \"plugins\": [\n    \"./notes\"\n  ]\n}\n";
     fs::write(paths.config.join("config.json"), original).unwrap();
-    let source = PluginSource {
-        git: url.clone(),
-        folder: Some("./plugins/clock/".to_owned()),
-        reference: Some("main".to_owned()),
-    };
-
     // An entry of a plugin that config.json no longer has, as a stop of a remove leaves it.
     let stale = PluginSource {
         git: "https://h/gone".to_owned(),
@@ -274,10 +311,10 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     .write(&paths.config)
     .unwrap();
 
-    let added = add(&paths, source.clone(), Map::new()).await.unwrap();
+    let added = add(&paths, &url, &[], Some("main")).await.unwrap();
     let text = fs::read_to_string(paths.config.join("config.json")).unwrap();
     let locked = Lock::read(&paths.config).unwrap();
-    let again = add(&paths, source, Map::new()).await.unwrap_err();
+    let again = add(&paths, &url, &[], None).await.unwrap_err();
     remove(&paths, "clock").await.unwrap();
     let after = fs::read_to_string(paths.config.join("config.json")).unwrap();
     let unlocked = Lock::read(&paths.config).unwrap();
@@ -285,16 +322,16 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     fs::create_dir_all(paths.config.join("clock")).unwrap();
     fs::write(paths.config.join("clock/plugin.json"), r#"{ "name": "clock" }"#).unwrap();
     fs::write(paths.config.join("config.json"), r#"{ "plugins": ["./clock"] }"#).unwrap();
-    let clash = add(&paths, clock(&root, None), Map::new()).await.unwrap_err();
+    let clash = add(&paths, &url, &[], None).await.unwrap_err();
 
     let main = clock(&root, Some("main"));
     assert_eq!(
         added,
-        AddPluginResult {
+        [AddedPlugin {
             name: "clock".to_owned(),
             source: main.clone(),
             commit: first.clone(),
-        }
+        }]
     );
     let url_text = Value::from(url.as_str()).to_string();
     assert_eq!(
@@ -305,20 +342,14 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     );
     assert_eq!(locked.commits[&main], first);
     assert!(!locked.commits.contains_key(&stale));
-    assert_eq!(again, format!("plugin {main}: config.json has this plugin already"));
+    assert_eq!(again, "plugin clock: config.json has a plugin of this name already");
     assert_eq!(after, original);
     assert!(unlocked.commits.is_empty());
     assert_eq!(
         unknown,
         "no plugin of config.json has the name 'nope': see `yuke plugin list`"
     );
-    assert_eq!(
-        clash,
-        format!(
-            "plugin {}: config.json has a plugin of the name 'clock' already",
-            clock(&root, None)
-        )
-    );
+    assert_eq!(clash, "plugin clock: config.json has a plugin of this name already");
     assert_eq!(
         fs::read_to_string(paths.config.join("config.json")).unwrap(),
         r#"{ "plugins": ["./clock"] }"#
@@ -351,8 +382,10 @@ async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
         [ManagedPlugin {
             source: PluginOrigin::Folder("./clock".to_owned()),
             name: Some("clock".to_owned()),
-            loaded: false,
             state: PluginState::Local,
+            load: PluginLoad::Failed {
+                error: "plugin clock did not load: entry: 'main.txt' is not a .ts or a .js file".to_owned(),
+            },
         }]
     );
     assert_eq!(

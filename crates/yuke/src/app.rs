@@ -34,11 +34,11 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, PluginCode, Processes, Report, Runtime};
 use yuke_protocol::{
-    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, ExtensionRequestParams,
-    InteractionId, JobId, ListCatalogResult, ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome,
-    LoginResult, ModelReference, NoticeLevel, NoticeParams, ProviderCredential, ProviderState, ResponseError,
-    ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent, SyncPluginsParams, SyncPluginsResult,
-    UpdateCredentialParams,
+    AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult,
+    ExtensionRequestParams, FindPluginsParams, FindPluginsResult, InteractionId, JobId, ListCatalogResult,
+    ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, ModelReference, NoticeLevel,
+    NoticeParams, ProviderCredential, ProviderState, ResponseError, ServerNotification, SessionEvent, SessionId,
+    SessionSettings, StoredEvent, SyncPluginsResult, UpdateCredentialParams,
 };
 use yuke_store::FileStore;
 
@@ -469,17 +469,14 @@ impl Shared {
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
     pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
-        let loaded: Vec<String> = (self.profile.borrow().outcomes.iter())
-            .filter(|outcome| outcome.failure.is_none())
-            .filter_map(|outcome| outcome.name.clone())
-            .collect();
-        let plugins = plugins::manager::list(&self.machine.paths, &loaded).map_err(AppError::Invalid)?;
+        let running = Rc::clone(&self.profile.borrow().outcomes);
+        let plugins = plugins::manager::list(&self.machine.paths, &running).map_err(AppError::Invalid)?;
         Ok(ListPluginsResult { plugins })
     }
 
     /// Install the locked commits and lock the new Git plugins, for `plugin/sync`.
-    pub(crate) async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, AppError> {
-        plugins::manager::sync(&self.machine.paths, params.locked)
+    pub(crate) async fn sync_plugins(&self) -> Result<SyncPluginsResult, AppError> {
+        plugins::manager::sync(&self.machine.paths, false)
             .await
             .map_err(AppError::Invalid)
     }
@@ -493,22 +490,31 @@ impl Shared {
     }
 
     /// Write the new commits of changes into `plugins.lock`, for `plugin/apply`.
-    pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, AppError> {
-        let written = plugins::manager::apply(&self.machine.paths, &params.changes)
-            .await
-            .map_err(AppError::Invalid)?;
-        Ok(ApplyPluginsResult { written })
-    }
-
-    /// Add a Git plugin to `config.json`, and install and lock it, for `plugin/add`.
-    pub(crate) async fn add_plugin(
-        &self,
-        params: yuke_protocol::AddPluginParams,
-    ) -> Result<yuke_protocol::AddPluginResult, AppError> {
-        let options = params.options.unwrap_or_default();
-        plugins::manager::add(&self.machine.paths, params.source, options)
+    pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<(), AppError> {
+        plugins::manager::apply(&self.machine.paths, &params.plugins)
             .await
             .map_err(AppError::Invalid)
+    }
+
+    /// The plugins of a Git repository, for `plugin/find`.
+    pub(crate) async fn find_plugins(&self, params: FindPluginsParams) -> Result<FindPluginsResult, AppError> {
+        let plugins = plugins::manager::find(&self.machine.paths, &params.git, params.reference.as_deref())
+            .await
+            .map_err(AppError::Invalid)?;
+        Ok(FindPluginsResult { plugins })
+    }
+
+    /// Add plugins of a Git repository to `config.json`, and install and lock them, for `plugin/add`.
+    pub(crate) async fn add_plugins(&self, params: AddPluginsParams) -> Result<AddPluginsResult, AppError> {
+        let plugins = plugins::manager::add(
+            &self.machine.paths,
+            &params.git,
+            &params.names,
+            params.reference.as_deref(),
+        )
+        .await
+        .map_err(AppError::Invalid)?;
+        Ok(AddPluginsResult { plugins })
     }
 
     /// Remove a plugin from `config.json` and `plugins.lock`, for `plugin/remove`.

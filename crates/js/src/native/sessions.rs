@@ -18,7 +18,6 @@ use yuke_engine::chain_text;
 use yuke_protocol::{
     ApplyPluginsParams, CheckPluginsParams, EventNumber, Input, InputId, InputKind, InputSource, InteractionId,
     InteractionResponse, ListSessionsParams, LoginId, SessionId, SessionSettings, SessionTitle, SetApiKeyParams,
-    SyncPluginsParams,
 };
 
 use super::delivery::{Delivery, Queue};
@@ -230,11 +229,9 @@ fn add_plugin_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Res
     request.add(object, "pluginsList", |sessions, (): ()| async move {
         sessions.list_plugins().await
     })?;
-    request.add_operation(
-        object,
-        "pluginsSync",
-        |sessions, params: SyncPluginsParams| async move { sessions.sync_plugins(params).await },
-    )?;
+    request.add_operation(object, "pluginsSync", |sessions, (): ()| async move {
+        sessions.sync_plugins().await
+    })?;
     request.add_operation(
         object,
         "pluginsCheck",
@@ -247,8 +244,13 @@ fn add_plugin_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Res
     )?;
     request.add_operation(
         object,
+        "pluginsFind",
+        |sessions, params: yuke_protocol::FindPluginsParams| async move { sessions.find_plugins(params).await },
+    )?;
+    request.add_operation(
+        object,
         "pluginsAdd",
-        |sessions, params: yuke_protocol::AddPluginParams| async move { sessions.add_plugin(params).await },
+        |sessions, params: yuke_protocol::AddPluginsParams| async move { sessions.add_plugins(params).await },
     )?;
     request.add(
         object,

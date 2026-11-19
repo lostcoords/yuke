@@ -27,11 +27,10 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-use serde_json::Map;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, TurnEnd, chain_text};
-use yuke_protocol::{PluginLog, PluginSource, PluginState, PluginTarget, ReasoningLevel, SessionId};
+use yuke_protocol::{LockedPlugin, PluginLog, PluginState, PluginTarget, ReasoningLevel, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
@@ -145,14 +144,14 @@ enum PluginCommand {
         #[arg(long)]
         yes: bool,
     },
-    /// Add a Git plugin to config.json, install it, and lock it at the commit of its ref. The comments of config.json
-    /// stay.
+    /// Add plugins of a Git repository to config.json, install them, and lock them at the commit of the ref. The
+    /// comments of config.json stay.
     Add {
         /// The URL of the repository, as git takes it.
         url: String,
-        /// The plugin folder in the repository. The default is its root.
-        #[arg(long)]
-        folder: Option<String>,
+        /// The plugins to add, by the name of their plugin.json. A repository with one plugin needs no name.
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
         /// The branch, tag, or commit that an update follows. The default is the default branch.
         #[arg(long = "ref", value_name = "REF")]
         reference: Option<String>,
@@ -334,10 +333,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             for plugin in manager::list(&paths, &[])? {
                 let state = match &plugin.state {
                     PluginState::Local => "local".to_owned(),
-                    PluginState::NotLocked => "not locked: run `yuke plugin sync`".to_owned(),
-                    PluginState::NotInstalled { commit } => {
-                        format!("{} not installed: run `yuke plugin sync`", short(commit))
-                    }
+                    PluginState::NotInstalled { .. } => "not installed: run `yuke plugin sync`".to_owned(),
                     PluginState::Installed { commit } => short(commit),
                 };
                 say(&format!(
@@ -391,18 +387,21 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                 say("plugins.lock unchanged")?;
                 return Ok(ExitCode::SUCCESS);
             }
-            manager::apply(&paths, &changes).await?;
+            let locked: Vec<LockedPlugin> = changes
+                .into_iter()
+                .map(|change| LockedPlugin {
+                    source: change.source,
+                    commit: change.new,
+                })
+                .collect();
+            manager::apply(&paths, &locked).await?;
             say("plugins.lock written: run /reload in open sessions")?;
         }
-        PluginCommand::Add { url, folder, reference } => {
-            let source = PluginSource {
-                git: url,
-                folder,
-                reference,
-            };
-            let added = manager::add(&paths, source, Map::new()).await?;
-            say(&format!("{}  {}  {}", added.name, added.source, short(&added.commit)))?;
-            say("config.json and plugins.lock written: run /reload in open sessions")?;
+        PluginCommand::Add { url, names, reference } => {
+            for added in manager::add(&paths, &url, &names, reference.as_deref()).await? {
+                say(&format!("Added {} at {}", added.name, short(&added.commit)))?;
+            }
+            say("Run /reload in open sessions.")?;
         }
         PluginCommand::Remove { name } => {
             manager::remove(&paths, &name).await?;

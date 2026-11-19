@@ -9,11 +9,11 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use serde::Serialize;
 use yuke_protocol::{
-    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
-    InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
-    ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpServer, NoticeParams, SessionId, SessionRow,
-    SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate, SetApiKeyParams, StoredEvent,
-    SyncPluginsParams, SyncPluginsResult,
+    AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult, EventNumber,
+    FindPluginsParams, FindPluginsResult, Input, InputId, InteractionId, InteractionResponse, Job, ListCatalogResult,
+    ListPluginsResult, ListSessionsParams, ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpServer,
+    NoticeParams, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate,
+    SetApiKeyParams, StoredEvent, SyncPluginsResult,
 };
 
 /// The failure of a request. The plugin gets its text.
@@ -286,7 +286,7 @@ pub trait Sessions {
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, SessionsError>;
+    async fn sync_plugins(&self) -> Result<SyncPluginsResult, SessionsError>;
 
     /// The new commits of the Git plugins of the target, as `plugin/check` gives them.
     ///
@@ -300,17 +300,21 @@ pub trait Sessions {
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError>;
+    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<(), SessionsError>;
 
-    /// Add a Git plugin to `config.json`, and install and lock it, as `plugin/add` does.
+    /// The plugins of a Git repository, as `plugin/find` gives them.
     ///
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn add_plugin(
-        &self,
-        params: yuke_protocol::AddPluginParams,
-    ) -> Result<yuke_protocol::AddPluginResult, SessionsError>;
+    async fn find_plugins(&self, params: FindPluginsParams) -> Result<FindPluginsResult, SessionsError>;
+
+    /// Add plugins of a Git repository to `config.json`, and install and lock them, as `plugin/add` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn add_plugins(&self, params: AddPluginsParams) -> Result<AddPluginsResult, SessionsError>;
 
     /// Remove a plugin from `config.json` and `plugins.lock`, as `plugin/remove` does.
     ///

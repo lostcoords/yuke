@@ -2,10 +2,9 @@
 
 declare module "yuke:internal/native" {
   import type {
-    AddPluginParams,
-    AddPluginResult,
+    AddPluginsParams,
+    AddPluginsResult,
     ApplyPluginsParams,
-    ApplyPluginsResult,
     Blob,
     Block,
     CheckPluginsParams,
@@ -13,6 +12,8 @@ declare module "yuke:internal/native" {
     DisplayBlock,
     EventNumber,
     ExtensionEventParams,
+    FindPluginsParams,
+    FindPluginsResult,
     InputId,
     InteractionId,
     InteractionResponse,
@@ -37,7 +38,6 @@ declare module "yuke:internal/native" {
     SessionUpdate,
     SetApiKeyParams,
     StoredEvent,
-    SyncPluginsParams,
     SyncPluginsResult,
     ToolHints,
   } from "yuke:protocol";
@@ -556,10 +556,11 @@ declare module "yuke:internal/native" {
   export function authSetApiKey(params: SetApiKeyParams): Promise<void>;
   export function authLogout(provider: string): Promise<void>;
   export function pluginsList(nothing: null): Promise<ListPluginsResult>;
-  export function pluginsSync(params: SyncPluginsParams): Operation<SyncPluginsResult>;
+  export function pluginsSync(nothing: null): Operation<SyncPluginsResult>;
   export function pluginsCheck(params: CheckPluginsParams): Operation<CheckPluginsResult>;
-  export function pluginsApply(params: ApplyPluginsParams): Promise<ApplyPluginsResult>;
-  export function pluginsAdd(params: AddPluginParams): Operation<AddPluginResult>;
+  export function pluginsApply(params: ApplyPluginsParams): Promise<null>;
+  export function pluginsFind(params: FindPluginsParams): Operation<FindPluginsResult>;
+  export function pluginsAdd(params: AddPluginsParams): Operation<AddPluginsResult>;
   export function pluginsRemove(params: RemovePluginParams): Promise<Record<string, never>>;
 
   /** What the host of a test recorded. */

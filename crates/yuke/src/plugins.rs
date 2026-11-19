@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use yuke_js::{Plugin, PluginCode};
 
 use self::lock::Lock;
-use crate::config::{Config, ConfigPlugin, Source, read_json};
+use crate::config::{Config, ConfigPlugin, Source, read_json, without_comments};
 
 /// The name of the manifest in each plugin folder.
 const MANIFEST: &str = "plugin.json";
@@ -337,6 +337,13 @@ pub(crate) fn load_order(plugins: Vec<Plugin>) -> Vec<Plugin> {
 fn read_manifest(root: &Path) -> Result<Manifest, String> {
     let path = root.join(MANIFEST);
     let manifest: Manifest = read_json(&path)?.ok_or_else(|| format!("{}: the file does not exist", path.display()))?;
+    valid_name(&manifest.name)?;
+    Ok(manifest)
+}
+
+/// The manifest of the text `text` of a `plugin.json`, with its name checked.
+fn parse_manifest(text: &str) -> Result<Manifest, String> {
+    let manifest: Manifest = serde_json::from_str(&without_comments(text)).map_err(|error| error.to_string())?;
     valid_name(&manifest.name)?;
     Ok(manifest)
 }

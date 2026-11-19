@@ -36,7 +36,7 @@ A plugin that does not load does not stop the others. This covers a plugin that 
 
 | Command | Description |
 |---|---|
-| `yuke plugin add URL` | Add a Git plugin to `config.json`, install it, and lock its commit in `plugins.lock`. `--folder` and `--ref` select the folder and the ref. |
+| `yuke plugin add URL [NAME...]` | Add the plugins of a Git repository to `config.json` by the names of their `plugin.json`, install them, and lock their commit in `plugins.lock`. yuke finds the folder of each one. A repository with one plugin needs no name. `--ref` selects the branch or tag to follow. |
 | `yuke plugin remove NAME` | Remove a plugin from `config.json` and `plugins.lock`. Its files stay on disk. |
 | `yuke plugin list` | Show each plugin, its locked commit, and whether it is installed. |
 | `yuke plugin sync` | Install the locked commits, and lock each new Git plugin. With `--locked`, fail instead when `plugins.lock` does not match `config.json`. |
