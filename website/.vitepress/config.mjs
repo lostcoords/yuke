@@ -17,7 +17,7 @@ function sourcesOf(url) {
   if (path === '') return ['docs/index.md', 'website/.vitepress/theme', 'website/styles'];
   if (path === 'docs' || path === 'docs/') return ['docs/guide/index.md'];
   const slug = path.replace(/^docs\//, '').replace(/\/$/, '');
-  return [slug === 'themes' ? 'docs/themes.md' : `docs/guide/${slug}.md`];
+  return [`docs/guide/${slug}.md`];
 }
 
 function committedAt(url) {
@@ -48,8 +48,8 @@ const redirect = (target) => `<!doctype html>
 export default defineConfig({
   // The pages are the Markdown in docs/; this folder holds only the theme and the static files.
   srcDir: '../docs',
-  // Serve every guide under /docs/ without moving the theme guide from main.
-  rewrites: Object.fromEntries(slugs.map((slug) => [slug === 'themes' ? 'themes.md' : `guide/${slug}.md`, `docs/${slug}.md`])),
+  // Serve every guide under /docs/.
+  rewrites: Object.fromEntries(slugs.map((slug) => [`guide/${slug}.md`, `docs/${slug}.md`])),
   // Vite resolves a page's imports from docs/, which has no node_modules, so Vue comes from here.
   vite: { publicDir, resolve: { alias: { vue: join(project, 'node_modules/vue') } } },
   base,
@@ -143,6 +143,6 @@ export default defineConfig({
     outline: [2, 3],
     search: { provider: 'local' },
     socialLinks: [{ icon: 'github', link: repository }],
-    editLink: { pattern: `${repository}/edit/site/docs/:path`, text: 'Edit this page on GitHub' },
+    editLink: { pattern: `${repository}/edit/main/docs/:path`, text: 'Edit this page on GitHub' },
   },
 });

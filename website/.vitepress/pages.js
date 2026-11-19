@@ -1,4 +1,4 @@
-// Guides use docs/guide/<slug>.md. The theme guide stays at docs/themes.md with the source on main.
+// Guides use docs/guide/<slug>.md from main.
 export const groups = [
   { text: 'Start here', pages: [['get-started', 'Quick start']] },
   {
@@ -21,13 +21,11 @@ export const groups = [
   {
     text: 'Extend',
     pages: [
-      ['customize', 'Customize yuke'],
       ['first-plugin', 'Your first plugin'],
       ['plugins', 'Plugins'],
       ['ui', 'UI'],
       ['tools', 'Tools'],
       ['engine', 'Engine'],
-      ['types', 'Types'],
     ],
   },
 ];
@@ -37,8 +35,10 @@ export const slugs = ['index', ...groups.flatMap(({ pages }) => pages.map(([slug
 // Old public links still lead to the relevant guide.
 export const moved = {
   'docs/configuration': '/docs/config',
-  'docs/configuration/modules': '/docs/types',
+  'docs/configuration/modules': '/docs/plugins',
   'docs/configuration/plugins': '/docs/plugins',
+  'docs/customize': '/docs/plugins',
   'docs/profile': '/docs/config',
   'docs/protocol': '/docs/rpc',
+  'docs/types': '/docs/plugins',
 };
