@@ -71,6 +71,23 @@ async fn a_plugin_that_does_not_load_at_the_start_lists_as_failed_with_its_reaso
     client.end().await;
 }
 
+#[tokio::test(flavor = "local")]
+async fn a_bad_plugin_request_is_invalid_params_and_a_failed_git_call_is_an_internal_error() {
+    let place = Place::new("rpc", "plugins_error_codes");
+    let missing = place.work.join("no-such-repository").to_string_lossy().into_owned();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([]))).await;
+
+    let unknown = client
+        .call("plugin/remove", json!({ "name": "nope" }))
+        .await
+        .unwrap_err();
+    let failed = client.call("plugin/find", json!({ "git": missing })).await.unwrap_err();
+
+    assert_eq!(unknown["code"], json!(ResponseError::INVALID_PARAMS));
+    assert_eq!(failed["code"], json!(ResponseError::INTERNAL_ERROR));
+    client.end().await;
+}
+
 // The manager tests check the files that an add and a remove change. This test checks the messages.
 #[tokio::test(flavor = "local")]
 async fn plugin_find_add_and_remove_answer_in_their_wire_shapes() {

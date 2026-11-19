@@ -198,7 +198,7 @@ async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
 
     assert_eq!(
         error,
-        "no installed Git plugin of config.json has the name 'nope': see `yuke plugin list`"
+        Error::Invalid("no installed Git plugin of config.json has the name 'nope': see `yuke plugin list`".to_owned())
     );
 }
 
@@ -221,7 +221,9 @@ async fn a_sync_installs_and_locks_the_plugins_that_install_and_names_the_others
 
     assert_eq!(
         error,
-        "plugin sun: no branch or tag 'v9'; plugin moon: the commit has no plugins/moon/plugin.json"
+        Error::Internal(
+            "plugin sun: no branch or tag 'v9'; plugin moon: the commit has no plugins/moon/plugin.json".to_owned()
+        )
     );
     assert_eq!(
         Lock::read(&paths.config).unwrap().commits,
@@ -241,7 +243,7 @@ async fn a_locked_sync_fails_and_changes_nothing_when_the_lock_misses_a_plugin()
 
     assert_eq!(
         error,
-        "plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`"
+        Error::Invalid("plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`".to_owned())
     );
     assert!(!paths.config.join("plugins.lock").exists());
     assert!(!paths.data.join("git").join(repository_key(&url)).exists());
@@ -300,8 +302,14 @@ async fn an_apply_with_a_short_commit_or_a_plugin_out_of_the_lock_fails_and_keep
         .unwrap_err();
 
     let label = format!("plugin {} (folder plugins/clock", clock(&root, None).git);
-    assert_eq!(short, format!("{label}): '3f9c1a2' is not a full commit id"));
-    assert_eq!(removed, format!("{label}, ref v2) is not in plugins.lock"));
+    assert_eq!(
+        short,
+        Error::Invalid(format!("{label}): '3f9c1a2' is not a full commit id"))
+    );
+    assert_eq!(
+        removed,
+        Error::Invalid(format!("{label}, ref v2) is not in plugins.lock"))
+    );
     assert_eq!(Lock::read(&paths.config).unwrap().commits[&clock(&root, None)], first);
 }
 
@@ -327,9 +335,12 @@ async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
     assert_eq!(found, [at_folder("clock"), at_folder("weather")]);
     assert_eq!(
         unnamed,
-        format!("{url} has 2 plugins: clock, weather: name the ones to add")
+        Error::Invalid(format!("{url} has 2 plugins: clock, weather: name the ones to add"))
     );
-    assert_eq!(unknown, format!("{url} has no plugin 'sun': it has clock, weather"));
+    assert_eq!(
+        unknown,
+        Error::Invalid(format!("{url} has no plugin 'sun': it has clock, weather"))
+    );
     let names: Vec<&str> = added.iter().map(|plugin| plugin.name.as_str()).collect();
     assert_eq!(names, ["weather", "clock"]);
     assert!(added.iter().all(|plugin| plugin.commit == last));
@@ -383,14 +394,20 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
         )
     );
     assert_eq!(locked.commits[&main], first);
-    assert_eq!(again, "plugin clock: config.json has a plugin of this name already");
+    assert_eq!(
+        again,
+        Error::Invalid("plugin clock: config.json has a plugin of this name already".to_owned())
+    );
     assert_eq!(after, original);
     assert!(unlocked.commits.is_empty());
     assert_eq!(
         unknown,
-        "no plugin of config.json has the name 'nope': see `yuke plugin list`"
+        Error::Invalid("no plugin of config.json has the name 'nope': see `yuke plugin list`".to_owned())
     );
-    assert_eq!(clash, "plugin clock: config.json has a plugin of this name already");
+    assert_eq!(
+        clash,
+        Error::Invalid("plugin clock: config.json has a plugin of this name already".to_owned())
+    );
     assert_eq!(
         fs::read_to_string(paths.config.join("config.json")).unwrap(),
         r#"{ "plugins": ["./clock"] }"#

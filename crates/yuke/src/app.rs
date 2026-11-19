@@ -463,8 +463,7 @@ impl Shared {
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
     pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
-        let plugins =
-            plugins::manager::list(&self.machine.paths, &self.profile.borrow().outcomes).map_err(AppError::Invalid)?;
+        let plugins = plugins::manager::list(&self.machine.paths, &self.profile.borrow().outcomes)?;
         Ok(ListPluginsResult { plugins })
     }
 
@@ -472,28 +471,28 @@ impl Shared {
     pub(crate) async fn sync_plugins(&self) -> Result<SyncPluginsResult, AppError> {
         plugins::manager::sync(&self.machine.paths, false, &|_| {})
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// The new commits of the Git plugins of the target, for `plugin/check`.
     pub(crate) async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
         plugins::manager::check(&self.machine.paths, &params.target, &|_| {})
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// Write the new commits of changes into `plugins.lock`, for `plugin/apply`.
     pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<(), AppError> {
         plugins::manager::apply(&self.machine.paths, &params.plugins)
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// The plugins of a Git repository, for `plugin/find`.
     pub(crate) async fn find_plugins(&self, params: FindPluginsParams) -> Result<FindPluginsResult, AppError> {
         let plugins = plugins::manager::find(&self.machine.paths, &params.git)
             .await
-            .map_err(AppError::Invalid)?;
+            .map_err(AppError::from)?;
         Ok(FindPluginsResult { plugins })
     }
 
@@ -507,7 +506,7 @@ impl Shared {
             &|_| {},
         )
         .await
-        .map_err(AppError::Invalid)?;
+        .map_err(AppError::from)?;
         Ok(AddPluginsResult { plugins })
     }
 
@@ -515,7 +514,7 @@ impl Shared {
     pub(crate) async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), AppError> {
         plugins::manager::remove(&self.machine.paths, &params.name)
             .await
-            .map_err(AppError::Invalid)
+            .map_err(AppError::from)
     }
 
     /// The plugin folders now.
@@ -810,6 +809,15 @@ impl fmt::Display for AppError {
             AppError::Reloading => f.write_str("a reload runs: try again when the reload ends"),
             AppError::Stopped => f.write_str("yuke shuts down"),
             AppError::Store(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl From<plugins::manager::Error> for AppError {
+    fn from(error: plugins::manager::Error) -> Self {
+        match error {
+            plugins::manager::Error::Invalid(text) => AppError::Invalid(text),
+            plugins::manager::Error::Internal(text) => AppError::Internal(text),
         }
     }
 }
