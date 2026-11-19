@@ -3164,7 +3164,7 @@ dependencies = [
 
 [[package]]
 name = "yuke"
-version = "0.0.1-alpha.20261026.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3186,7 +3186,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-agent"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -3200,7 +3200,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-ai"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "base64",
  "bytes",
@@ -3214,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-engine"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "fastrand",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-http"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "http",
@@ -3246,7 +3246,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-js"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3277,7 +3277,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-mcp"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3295,7 +3295,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-protocol"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "base64",
  "serde",
@@ -3308,7 +3308,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-store"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -3323,7 +3323,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-term"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "libc",
  "rustix",
@@ -3333,7 +3333,7 @@ dependencies = [
 
 [[package]]
 name = "yuke-testing"
-version = "0.0.1-dev"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "yuke-ai",

@@ -1,10 +1,11 @@
 [package]
 name = "yuke-store"
-version = "0.0.1-dev"
+version.workspace = true
 description = "A file store for the sessions of yuke-agent."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

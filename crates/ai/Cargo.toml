@@ -1,6 +1,6 @@
 [package]
 name = "yuke-ai"
-version = "0.0.1-dev"
+version.workspace = true
 description = "Provider-neutral model calls over three wire protocols."
 edition.workspace = true
 rust-version.workspace = true

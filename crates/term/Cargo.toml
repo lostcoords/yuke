@@ -1,10 +1,11 @@
 [package]
 name = "yuke-term"
-version = "0.0.1-dev"
+version.workspace = true
 description = "The terminal of yuke: raw mode, an input parser, and a cell grid that writes only its changes."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

@@ -10,3 +10,6 @@
 
 # macOS creates local directory metadata.
 .DS_Store
+
+# Notes of the maintainers. They are not part of the repository.
+notes/

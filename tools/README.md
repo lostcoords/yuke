@@ -34,7 +34,16 @@ The installer writes `~/.local/bin/yuke` and `~/.local/lib/yuke` and preserves u
 ## Releases
 
 A `vVERSION` tag runs CI, and `gh release create` publishes the four tested archives.
-The tag must match `crates/yuke/Cargo.toml` without `-dev`. A hyphen suffix creates a prerelease.
+The tag must match the `version` of `[workspace.package]` in `Cargo.toml`, and the version must not hold `-dev`.
+A hyphen suffix creates a prerelease.
+
+To release:
+
+1. Set the version in `Cargo.toml`, and run `mise exec -- cargo update --workspace`.
+2. Add the section `## VERSION` to `CHANGELOG.md`. The release job publishes it as the notes, and fails without it.
+3. Commit, tag `vVERSION`, and push the tag.
+4. Set the next version with `-dev`, for example `0.2.0-dev`, so that a nightly sorts after the release.
+
 Successful push CI on `main` builds the rolling nightly. The nightly job deletes the release and the tag `nightly`,
 and creates them again on the new commit, so the nightly is absent for a few seconds.
 If an upload fails, `gh` leaves a draft release. Delete the draft, then run the job again.
