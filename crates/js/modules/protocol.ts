@@ -794,9 +794,10 @@ mimeType: string,
 filename?: string, };
 
 /**
- * A kind of content that a model reads.
+ * A kind of content: what an attachment holds, and what a model reads or writes. `Other` is a media type that no
+ * protocol names, and no model lists.
  */
-export type Modality = "text" | "image" | "audio" | "video" | "pdf";
+export type Modality = "text" | "image" | "audio" | "video" | "pdf" | "other";
 
 /**
  * A model of a provider.
@@ -835,7 +836,7 @@ tools?: boolean,
  */
 toolSearch?: boolean, 
 /**
- * The kinds of content that the model reads. Empty when the catalog does not know them.
+ * The kinds of content that the model reads. Empty when the catalog does not know them. It never lists `other`.
  */
 input: Array<Modality>, };
 
@@ -1167,7 +1168,7 @@ export type ReasoningChoice = {
 /**
  * The level.
  */
-level: ReasoningLevel, 
+level: ReasoningSelection, 
 /**
  * The reasoning settings that a session sends for this level, as the `reasoning` of its settings.
  */
@@ -1185,11 +1186,6 @@ blockId: number,
  * The new text.
  */
 text: string, };
-
-/**
- * A reasoning level of a model. JSON holds each level as its name: `default`, `off`, or the name of the effort.
- */
-export type ReasoningLevel = "default" | "off" | Effort;
 
 /**
  * Provider state, and the origin that may receive it again. The state must return to its provider verbatim.
@@ -1216,6 +1212,12 @@ export type ReasoningSectionStarted = {
  * The block id.
  */
 blockId: number, };
+
+/**
+ * What a user selects for the reasoning of a model: the default of the endpoint, no reasoning, or an effort. JSON
+ * holds each selection as its name: `default`, `off`, or the name of the effort.
+ */
+export type ReasoningSelection = "default" | "off" | Effort;
 
 /**
  * The reasoning one request asks for, as the caller chose it for the model. Each serializer writes the settings its

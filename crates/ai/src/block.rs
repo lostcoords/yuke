@@ -128,7 +128,9 @@ impl From<ReasoningReplayRef<'_>> for ReasoningReplay {
 
 /// A kind of content: what an attachment holds, and what a model reads or writes. `Other` is a media type that no
 /// protocol names, and no model lists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
 pub enum Modality {
     /// Text.
     Text,

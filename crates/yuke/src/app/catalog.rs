@@ -1,10 +1,8 @@
 //! The answer of `catalog/list`: the providers of the profile with their state, and their models.
 
 use yuke_ai::catalog::{Model, Provider, ReasoningLevel};
-use yuke_ai::{Modality as AiModality, ReasoningSettings};
-use yuke_protocol::{
-    Modality, ModelInfo, PriceBand, ProviderInfo, ProviderState, ReasoningChoice, ReasoningLevel as Level,
-};
+use yuke_ai::{Modality, ReasoningSettings};
+use yuke_protocol::{ModelInfo, PriceBand, ProviderInfo, ProviderState, ReasoningChoice, ReasoningSelection};
 
 /// The info of `provider` in `state`. A provider that is not ready has no models.
 pub(super) fn provider_info(provider: &Provider, state: ProviderState) -> ProviderInfo {
@@ -46,7 +44,9 @@ fn model_info(model: &Model) -> ModelInfo {
             .modalities
             .input
             .iter()
-            .filter_map(|kind| modality(*kind))
+            .copied()
+            // The catalog never lists `Other`, and the protocol does not name it.
+            .filter(|kind| *kind != Modality::Other)
             .collect(),
     }
 }
@@ -55,7 +55,7 @@ fn model_info(model: &Model) -> ModelInfo {
 /// takes, each once. An effort that the catalog does not list is not a choice.
 pub(super) fn reasoning_choices(model: &Model) -> Vec<ReasoningChoice> {
     let mut choices = vec![ReasoningChoice {
-        level: Level::Default,
+        level: ReasoningSelection::Default,
         settings: ReasoningSettings::default(),
     }];
     let efforts = model.reasoning_levels.iter().filter_map(|level| *level);
@@ -63,8 +63,8 @@ pub(super) fn reasoning_choices(model: &Model) -> Vec<ReasoningChoice> {
     for level in levels {
         if let Ok(settings) = model.reasoning(level) {
             let level = match level {
-                ReasoningLevel::Off => Level::Off,
-                ReasoningLevel::Effort(effort) => Level::Effort(effort),
+                ReasoningLevel::Off => ReasoningSelection::Off,
+                ReasoningLevel::Effort(effort) => ReasoningSelection::Effort(effort),
             };
             // `providers.json` can list a level twice, and a client keys the choices by level.
             if choices.iter().all(|choice| choice.level != level) {
@@ -73,16 +73,4 @@ pub(super) fn reasoning_choices(model: &Model) -> Vec<ReasoningChoice> {
         }
     }
     choices
-}
-
-/// The protocol kind of `kind`, or `None` for a kind that the protocol does not name. The catalog never lists `Other`.
-fn modality(kind: AiModality) -> Option<Modality> {
-    match kind {
-        AiModality::Text => Some(Modality::Text),
-        AiModality::Image => Some(Modality::Image),
-        AiModality::Audio => Some(Modality::Audio),
-        AiModality::Video => Some(Modality::Video),
-        AiModality::Pdf => Some(Modality::Pdf),
-        AiModality::Other => None,
-    }
 }

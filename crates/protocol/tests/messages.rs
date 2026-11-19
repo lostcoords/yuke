@@ -8,7 +8,7 @@ use yuke_protocol::{
     DraftStarted, EventNumber, ExtensionCancelParams, ExtensionEventParams, ExtensionRequestParams, Input,
     InputAccepted, InputError, InputId, InputKind, InputRemoved, InputSource, JobId, JobKind, JobState, JobUpdate,
     ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
-    NoticeParams, Notification, PendingInput, ReasoningLevel, Request, Response, ServerNotification, ServerRequest,
+    NoticeParams, Notification, PendingInput, ReasoningSelection, Request, Response, ServerNotification, ServerRequest,
     SessionEvent, SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StateUpdate,
     StoredEvent, TextDelta, ToolOutput,
 };
@@ -241,23 +241,25 @@ fn a_request_with_an_unknown_method_or_another_version_does_not_read() {
     assert!(serde_json::from_value::<Request<ClientRequest>>(version).is_err());
 }
 
-// Each level is its bare name, so an effort reads the same as before the level held the effort type.
+// Each selection is its bare name.
 #[test]
-fn each_reasoning_level_reads_and_writes_its_name() {
-    let levels = [
-        (json!("default"), ReasoningLevel::Default),
-        (json!("off"), ReasoningLevel::Off),
-        (json!("minimal"), ReasoningLevel::Effort(yuke_ai::Effort::Minimal)),
-        (json!("xhigh"), ReasoningLevel::Effort(yuke_ai::Effort::Xhigh)),
-        (json!("max"), ReasoningLevel::Effort(yuke_ai::Effort::Max)),
+fn each_reasoning_selection_reads_and_writes_its_name() {
+    let selections = [
+        (json!("default"), ReasoningSelection::Default),
+        (json!("off"), ReasoningSelection::Off),
+        (json!("minimal"), ReasoningSelection::Effort(yuke_ai::Effort::Minimal)),
+        (json!("xhigh"), ReasoningSelection::Effort(yuke_ai::Effort::Xhigh)),
+        (json!("max"), ReasoningSelection::Effort(yuke_ai::Effort::Max)),
     ];
-    for (json, level) in levels {
-        assert_eq!(json.as_str().unwrap().parse(), Ok(level));
-        assert_json(&json, &level);
+    for (json, selection) in selections {
+        assert_eq!(json.as_str().unwrap().parse(), Ok(selection));
+        assert_json(&json, &selection);
     }
-    assert!(serde_json::from_value::<ReasoningLevel>(json!("extreme")).is_err());
+    assert!(serde_json::from_value::<ReasoningSelection>(json!("extreme")).is_err());
     assert_eq!(
-        "extreme".parse::<ReasoningLevel>().map_err(|error| error.to_string()),
+        "extreme"
+            .parse::<ReasoningSelection>()
+            .map_err(|error| error.to_string()),
         Err("`extreme` is not a reasoning level".to_owned())
     );
 }

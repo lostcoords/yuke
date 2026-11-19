@@ -102,8 +102,8 @@ pub struct ModelInfo {
     /// Whether the model takes deferred tools. It is absent when the catalog does not know it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_search: Option<bool>,
-    /// The kinds of content that the model reads. Empty when the catalog does not know them.
-    pub input: Vec<Modality>,
+    /// The kinds of content that the model reads. Empty when the catalog does not know them. It never lists `other`.
+    pub input: Vec<yuke_ai::Modality>,
 }
 
 /// A reasoning level that a user can pick for a model, and the reasoning settings that a session sends for it.
@@ -112,16 +112,18 @@ pub struct ModelInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ReasoningChoice {
     /// The level.
-    pub level: ReasoningLevel,
+    pub level: ReasoningSelection,
     /// The reasoning settings that a session sends for this level, as the `reasoning` of its settings.
     pub settings: yuke_ai::ReasoningSettings,
 }
 
-/// A reasoning level of a model. JSON holds each level as its name: `default`, `off`, or the name of the effort.
+/// What a user selects for the reasoning of a model: the default of the endpoint, no reasoning, or an effort. JSON
+/// holds each selection as its name: `default`, `off`, or the name of the effort.
+// The catalog type `yuke_ai::catalog::ReasoningLevel` has no `Default`, because a model always has a level to ask for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-pub enum ReasoningLevel {
+pub enum ReasoningSelection {
     /// No reasoning control, so the endpoint chooses.
     Default,
     /// No reasoning.
@@ -131,8 +133,8 @@ pub enum ReasoningLevel {
     Effort(yuke_ai::Effort),
 }
 
-/// Parse the name of a level, as JSON holds it.
-impl std::str::FromStr for ReasoningLevel {
+/// Parse the name of a selection, as JSON holds it.
+impl std::str::FromStr for ReasoningSelection {
     type Err = yuke_ai::ParseError;
 
     fn from_str(text: &str) -> Result<Self, yuke_ai::ParseError> {
@@ -169,21 +171,4 @@ pub struct PriceBand {
     /// The price of a token that the prompt cache keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_write: Option<f64>,
-}
-
-/// A kind of content that a model reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub enum Modality {
-    /// Text.
-    Text,
-    /// An image.
-    Image,
-    /// Sound.
-    Audio,
-    /// A moving picture.
-    Video,
-    /// A PDF document.
-    Pdf,
 }

@@ -1,11 +1,11 @@
 /** The saved pick of the bundled chat in `choice.json`: the model and the level of the first session of a pane. */
 
 import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
-import type { ModelReference, ReasoningLevel } from "yuke:protocol";
+import type { ModelReference, ReasoningSelection } from "yuke:protocol";
 
 interface Choice {
   readonly model: ModelReference;
-  readonly reasoning: ReasoningLevel;
+  readonly reasoning: ReasoningSelection;
 }
 
 /** The pick of `value`, a parsed `choice.json`, or `undefined` when it has another shape. */

@@ -40,6 +40,6 @@ tools?: boolean,
  */
 toolSearch?: boolean, 
 /**
- * The kinds of content that the model reads. Empty when the catalog does not know them.
+ * The kinds of content that the model reads. Empty when the catalog does not know them. It never lists `other`.
  */
 input: Array<Modality>, };

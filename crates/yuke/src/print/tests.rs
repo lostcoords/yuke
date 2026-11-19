@@ -48,7 +48,7 @@ fn task(prompt: &str, session: SessionChoice) -> Task {
         prompt: prompt.to_owned(),
         // Only a new session gets a model and a reasoning choice here; a continued session keeps its saved ones.
         model: (session == SessionChoice::New).then(|| MODEL.to_owned()),
-        reasoning: (session == SessionChoice::New).then_some(ReasoningLevel::Default),
+        reasoning: (session == SessionChoice::New).then_some(ReasoningSelection::Default),
         session,
     }
 }
@@ -268,7 +268,7 @@ async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
 async fn a_level_that_the_model_does_not_take_is_an_error() {
     let place = Place::new("print", "bad_level");
     let task = Task {
-        reasoning: Some(ReasoningLevel::Effort(yuke_ai::Effort::Low)),
+        reasoning: Some(ReasoningSelection::Effort(yuke_ai::Effort::Low)),
         ..task("Hi.", SessionChoice::New)
     };
 
@@ -517,12 +517,12 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         .unwrap();
     let level = Task {
         model: None,
-        reasoning: Some(ReasoningLevel::Effort(yuke_ai::Effort::High)),
+        reasoning: Some(ReasoningSelection::Effort(yuke_ai::Effort::High)),
         ..task("Second.", SessionChoice::Newest)
     };
     let model = Task {
         model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
-        reasoning: Some(ReasoningLevel::Default),
+        reasoning: Some(ReasoningSelection::Default),
         ..task("Third.", SessionChoice::Newest)
     };
 
@@ -579,7 +579,7 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
     place.store().await.accept_input(first.session, waiting).await.unwrap();
     let model = Task {
         model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
-        reasoning: Some(ReasoningLevel::Default),
+        reasoning: Some(ReasoningSelection::Default),
         ..task("Next.", SessionChoice::Newest)
     };
 

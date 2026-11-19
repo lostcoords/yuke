@@ -30,7 +30,7 @@ use clap::{Parser, Subcommand};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, TurnEnd, chain_text};
-use yuke_protocol::{CheckPluginsResult, LockedPlugin, PluginLog, PluginTarget, ReasoningLevel, SessionId};
+use yuke_protocol::{CheckPluginsResult, LockedPlugin, PluginLog, PluginTarget, ReasoningSelection, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
@@ -81,7 +81,7 @@ struct Cli {
     /// The reasoning level: default, off, or an effort such as low or high. A new session needs it, and so does
     /// --model on a continued session.
     #[arg(long, value_name = "LEVEL", requires = "prompt")]
-    reasoning: Option<ReasoningLevel>,
+    reasoning: Option<ReasoningSelection>,
 
     /// Resume the session with this id, in any folder.
     #[arg(short = 'r', long, value_name = "ID", conflicts_with = "continue_newest")]
@@ -740,7 +740,7 @@ mod tests {
                 task: Task {
                     prompt: "Hi.".to_owned(),
                     model: Some("a/b".to_owned()),
-                    reasoning: Some(ReasoningLevel::Effort(yuke_ai::Effort::Xhigh)),
+                    reasoning: Some(ReasoningSelection::Effort(yuke_ai::Effort::Xhigh)),
                     session: SessionChoice::Newest,
                 },
                 json: true,
@@ -749,7 +749,7 @@ mod tests {
         let Ok(Mode::Print { task, .. }) = mode(&["-p", "Hi.", "--reasoning", "default"]) else {
             panic!("no print mode");
         };
-        assert_eq!(task.reasoning, Some(ReasoningLevel::Default));
+        assert_eq!(task.reasoning, Some(ReasoningSelection::Default));
         assert_eq!(
             mode(&["-p", "Hi.", "--reasoning", "extreme"]),
             Err(ErrorKind::ValueValidation)

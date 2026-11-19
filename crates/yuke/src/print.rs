@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use yuke_protocol::{
-    CommitEvent, Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ReasoningLevel,
-    ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams,
-    StateUpdate, StoredEvent,
+    CommitEvent, Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams,
+    ReasoningSelection, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate,
+    SessionUpdateParams, StateUpdate, StoredEvent,
 };
 
 use serde::Serialize;
@@ -30,7 +30,7 @@ pub(crate) struct Task {
     /// session, and the run then needs a reasoning choice too.
     pub(crate) model: Option<String>,
     /// The reasoning choice. A new session needs it. For an existing session, it replaces the level of the session.
-    pub(crate) reasoning: Option<ReasoningLevel>,
+    pub(crate) reasoning: Option<ReasoningSelection>,
     /// The session of the turn.
     pub(crate) session: SessionChoice,
 }
@@ -178,7 +178,7 @@ const NO_REASONING: &str =
 fn new_settings(
     providers: &Providers,
     selector: &str,
-    choice: ReasoningLevel,
+    choice: ReasoningSelection,
     cwd: &Path,
 ) -> Result<SessionSettings, String> {
     let (model, reasoning) = choose(providers, selector, choice)?;
@@ -223,15 +223,15 @@ async fn existing_session(task: &Task, id: SessionId, app: &App) -> Result<Sessi
 fn choose(
     providers: &Providers,
     selector: &str,
-    choice: ReasoningLevel,
+    choice: ReasoningSelection,
 ) -> Result<(ModelReference, yuke_ai::ReasoningSettings), String> {
     let entry = providers
         .lookup(selector)
         .map_err(|error| format!("{selector}: {error}"))?;
     let level = match choice {
-        ReasoningLevel::Default => None,
-        ReasoningLevel::Off => Some(yuke_ai::catalog::ReasoningLevel::Off),
-        ReasoningLevel::Effort(effort) => Some(yuke_ai::catalog::ReasoningLevel::Effort(effort)),
+        ReasoningSelection::Default => None,
+        ReasoningSelection::Off => Some(yuke_ai::catalog::ReasoningLevel::Off),
+        ReasoningSelection::Effort(effort) => Some(yuke_ai::catalog::ReasoningLevel::Effort(effort)),
     };
     let reasoning = match level {
         Some(level) => entry
