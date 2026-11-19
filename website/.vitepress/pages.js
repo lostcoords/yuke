@@ -1,6 +1,13 @@
 // Guides use docs/guide/<slug>.md from main.
 export const groups = [
-  { text: 'Start here', pages: [['get-started', 'Quick start']] },
+  {
+    text: 'Start here',
+    pages: [
+      ['get-started', 'Quick start'],
+      ['use', 'Use the TUI'],
+      ['cli', 'Command line'],
+    ],
+  },
   {
     text: 'Configure',
     pages: [
@@ -23,7 +30,7 @@ export const groups = [
     pages: [
       ['first-plugin', 'Your first plugin'],
       ['plugins', 'Plugins'],
-      ['ui', 'UI'],
+      ['ui', 'TUI plugin API'],
       ['tools', 'Tools'],
       ['engine', 'Engine'],
     ],
