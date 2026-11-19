@@ -30,7 +30,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     let notice = started.iter().find(|message| message["method"] == "notice").unwrap();
     assert_eq!(
         notice["params"]["text"],
-        "plugin clock did not load: it is not installed: /plugins or `yuke plugin sync` installs it"
+        "Plugin clock did not load: it is not installed · /plugins or `yuke plugin sync` installs it"
     );
     let source = json!({ "git": url, "folder": "plugins/clock" });
     assert_eq!(

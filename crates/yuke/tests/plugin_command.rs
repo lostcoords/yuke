@@ -100,7 +100,7 @@ fn list_shows_why_a_plugin_does_not_load_and_how_to_install_a_missing_one() {
         texts(&listed).0,
         "NAME    STATE          SOURCE\n\
          broken  failed         ./broken\n\
-         \x20       plugin broken did not load: entry: 'main.py' is not a .ts or a .js file\n\
+         \x20       Plugin broken did not load: entry: 'main.py' is not a .ts or a .js file\n\
          sun     not installed  https://h/tools (folder plugins/sun)\n\
          `yuke plugin sync` installs the plugins that are not installed.\n"
     );

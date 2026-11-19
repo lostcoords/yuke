@@ -418,7 +418,7 @@ async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
             name: Some("clock".to_owned()),
             state: PluginState::Local,
             load: PluginLoad::Failed {
-                error: "plugin clock did not load: entry: 'main.txt' is not a .ts or a .js file".to_owned(),
+                error: "Plugin clock did not load: entry: 'main.txt' is not a .ts or a .js file".to_owned(),
             },
         }]
     );

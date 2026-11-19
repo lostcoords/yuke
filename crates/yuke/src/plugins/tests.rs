@@ -156,7 +156,7 @@ fn a_bad_folder_or_manifest_skips_its_plugin_names_the_problem_and_the_others_lo
         assert_eq!(names(&list), ["fine"]);
         assert_eq!(failures.len(), 1);
         assert!(
-            failures[0].starts_with(&format!("plugin {label} did not load: ")),
+            failures[0].starts_with(&format!("Plugin {label} did not load: ")),
             "{}",
             failures[0]
         );
@@ -167,7 +167,7 @@ fn a_bad_folder_or_manifest_skips_its_plugin_names_the_problem_and_the_others_lo
     let failures = failures(&list);
     assert_eq!(names(&list), ["fine"]);
     assert!(
-        failures[0].starts_with("plugin absent did not load: "),
+        failures[0].starts_with("Plugin absent did not load: "),
         "{}",
         failures[0]
     );
@@ -210,8 +210,8 @@ fn a_provider_loads_before_its_users_and_the_rest_keeps_the_list_order() {
     assert_eq!(
         failures(&twice),
         [
-            "plugin notes2 did not load: plugin notes provides 'notes' already",
-            "plugin reader did not load: another plugin of the list has this name",
+            "Plugin notes2 did not load: plugin notes provides 'notes' already",
+            "Plugin reader did not load: another plugin of the list has this name",
         ]
     );
 }
@@ -362,7 +362,7 @@ fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() 
     assert_eq!(
         failures(&refused),
         [
-            "plugin first did not load: a bundled plugin has this name: add \"first\" to \"disable\" in config.json to \
+            "Plugin first did not load: a bundled plugin has this name: add \"first\" to \"disable\" in config.json to \
              replace it"
         ]
     );
@@ -455,8 +455,8 @@ fn a_git_plugin_without_its_commit_in_the_lock_or_on_disk_is_not_installed_and_t
     assert_eq!(
         failures(&list),
         [
-            "plugin yuke-plugin did not load: it is not installed: /plugins or `yuke plugin sync` installs it",
-            "plugin clock did not load: it is not installed: /plugins or `yuke plugin sync` installs it",
+            "Plugin yuke-plugin did not load: it is not installed · /plugins or `yuke plugin sync` installs it",
+            "Plugin clock did not load: it is not installed · /plugins or `yuke plugin sync` installs it",
         ]
     );
 }

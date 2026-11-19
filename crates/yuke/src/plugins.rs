@@ -152,7 +152,7 @@ impl Outcome {
     pub(crate) fn failure_text(&self) -> Option<String> {
         Some(match self.failure.as_ref()? {
             Failure::NotInstalled => format!(
-                "plugin {} did not load: it is not installed: /plugins or `yuke plugin sync` installs it",
+                "Plugin {} did not load: it is not installed · /plugins or `yuke plugin sync` installs it",
                 self.label()
             ),
             Failure::Invalid(text) => text.clone(),
@@ -247,7 +247,7 @@ fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data
                     None
                 }
                 Err(error) => Some(Failure::Invalid(format!(
-                    "plugin {} did not load: {error}",
+                    "Plugin {} did not load: {error}",
                     outcome.label()
                 ))),
             };
