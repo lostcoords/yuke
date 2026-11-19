@@ -349,8 +349,6 @@ impl SessionService {
         mut settings: SessionSettings,
         parent: Option<SessionId>,
     ) -> Result<SessionId, AppError> {
-        // A refusal before the work saves no session in the common case. The reserve checks again.
-        admit(self.registry.borrow().phase)?;
         if let Some(parent) = parent {
             self.shared.store.session_summary(parent).await?;
         }
@@ -381,7 +379,6 @@ impl SessionService {
     /// Returns [`AppError::Store`] when the store fails, [`AppError::Invalid`] for a model that cannot run,
     /// [`AppError::Internal`] when the plugins do not open, [`AppError::Reloading`], and [`AppError::Stopped`].
     pub(crate) async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, AppError> {
-        admit(self.registry.borrow().phase)?;
         let session = Session::fork(Arc::clone(&self.shared.store), id, through).await?;
         self.start_new(session).await
     }
