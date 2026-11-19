@@ -287,13 +287,18 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
         if new == old {
             continue;
         }
-        install(paths, &source, &new).await.map_err(fail)?;
         let cache = cache(paths, &source.git);
+        git::fetch(&cache, &source.git, &new).await.map_err(fail)?;
         // A new cache does not have the old commit yet.
         let log = match git::fetch(&cache, &source.git, &old).await {
-            Ok(()) => git::log(&cache, &old, &new).await,
+            Ok(()) => git::log(&cache, &old, &new, source.folder.as_deref()).await,
             Err(error) => Err(error),
         };
+        // The new commits of other folders of the repository change nothing of the plugin.
+        if matches!(&log, Ok(commits) if commits.is_empty()) {
+            continue;
+        }
+        install(paths, &source, &new).await.map_err(fail)?;
         changes.push(PluginChange {
             name,
             source,

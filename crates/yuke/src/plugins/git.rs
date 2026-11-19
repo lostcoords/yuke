@@ -169,8 +169,9 @@ pub(crate) async fn show(cache: &Path, commit: &str, path: &str) -> Result<Strin
     run(show, "show").await
 }
 
-/// The commits after `old` up to `new` in the cache repository `cache`, newest first, as a short id and a subject.
-pub(crate) async fn log(cache: &Path, old: &str, new: &str) -> Result<Vec<String>, String> {
+/// The commits after `old` up to `new` in the cache repository `cache` that change the folder `folder`, or any file
+/// without it. Newest first, as a short id and a subject.
+pub(crate) async fn log(cache: &Path, old: &str, new: &str, folder: Option<&str>) -> Result<Vec<String>, String> {
     let mut log = git(Some(cache));
     log.args([
         "--no-pager",
@@ -180,5 +181,8 @@ pub(crate) async fn log(cache: &Path, old: &str, new: &str) -> Result<Vec<String
         "--end-of-options",
     ])
     .arg(format!("{old}..{new}"));
+    if let Some(folder) = folder {
+        log.args(["--", folder]);
+    }
     Ok(run(log, "log").await?.lines().map(str::to_owned).collect())
 }

@@ -139,6 +139,38 @@ async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_check_gives_only_the_plugins_whose_folder_changed_with_the_commits_of_that_folder() {
+    let (root, paths) = place("folder_log");
+    let remote = root.join("remote");
+    commit(&root, "first clock");
+    let first = commit_plugin(&remote, "weather", "first weather");
+    let url = clock(&root, None).git;
+    add(&paths, &url, &["clock".to_owned(), "weather".to_owned()], None)
+        .await
+        .unwrap();
+    let last = commit_plugin(&remote, "weather", "feat: wind");
+    commit_plugin(&remote, "weather", "fix: gusts");
+
+    let changes = check(&paths, &PluginTarget::All).await.unwrap();
+
+    let moves: Vec<(&str, &str, &PluginLog)> = changes
+        .iter()
+        .map(|change| (change.name.as_str(), change.old.as_str(), &change.log))
+        .collect();
+    let subjects = |log: &PluginLog| match log {
+        PluginLog::Commits { commits } => commits
+            .iter()
+            .map(|line| line.split_once(' ').unwrap().1.to_owned())
+            .collect::<Vec<_>>(),
+        PluginLog::Failed { error } => panic!("no log: {error}"),
+    };
+    assert_eq!(moves.len(), 1, "{changes:?}");
+    assert_eq!((moves[0].0, moves[0].1), ("weather", first.as_str()));
+    assert_eq!(subjects(moves[0].2), ["fix: gusts", "feat: wind"]);
+    assert_ne!(changes[0].new, last);
+}
+
+#[tokio::test(flavor = "local")]
 async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
     let (root, paths) = place("unknown_name");
     commit(&root, "first");
