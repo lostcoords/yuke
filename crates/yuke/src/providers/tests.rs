@@ -49,8 +49,8 @@ fn a_written_field_replaces_the_built_in_value_and_an_omitted_one_keeps_it() {
         r#"{
           // A proxy in front of OpenAI.
           "providers": [{
-            "id": "openai", "base_url": "http://127.0.0.1:8080/v1", "name": "Proxy",
-            "headers": [{ "name": "x-team", "value": "core" }], "session_header": "session_id"
+            "id": "openai", "baseUrl": "http://127.0.0.1:8080/v1", "name": "Proxy",
+            "headers": [{ "name": "x-team", "value": "core" }], "sessionHeader": "session_id"
           }]
         }"#,
     )
@@ -69,11 +69,11 @@ fn a_written_field_replaces_the_built_in_value_and_an_omitted_one_keeps_it() {
 fn a_model_with_a_built_in_id_replaces_that_model_and_a_new_id_adds_one() {
     let providers = parse(
         r#"{ "id": "openai", "models": [
-            { "id": "gpt-5.5", "upstream_id": "proxy-gpt", "limits": { "max_output_tokens": 1000 } },
-            { "id": "mini", "name": "Mini", "reasoning_levels": [null, "high"],
-              "cost": [{ "input": 1, "output": 2 }, { "min_prompt_tokens": 1000, "input": 3 }],
-              "flags": { "supports_tool_search": true, "can_disable_reasoning": false,
-                         "supports_cache_breakpoint": true } }
+            { "id": "gpt-5.5", "upstreamId": "proxy-gpt", "limits": { "maxOutputTokens": 1000 } },
+            { "id": "mini", "name": "Mini", "reasoningLevels": [null, "high"],
+              "cost": [{ "input": 1, "output": 2 }, { "minPromptTokens": 1000, "input": 3 }],
+              "flags": { "supportsToolSearch": true, "canDisableReasoning": false,
+                         "supportsCacheBreakpoint": true } }
         ] }"#,
     )
     .unwrap();
@@ -135,7 +135,7 @@ fn a_model_with_a_built_in_id_replaces_that_model_and_a_new_id_adds_one() {
 fn endpoints_replace_the_whole_list_and_every_model_still_needs_one() {
     let providers = parse(
         r#"{ "id": "openai", "endpoints": [
-            { "protocol": "openai_responses", "credential_header": "api_key", "responses_dialect": "codex" }
+            { "protocol": "openai_responses", "credentialHeader": "api_key", "responsesDialect": "codex" }
         ] }"#,
     )
     .unwrap();
@@ -151,7 +151,7 @@ fn endpoints_replace_the_whole_list_and_every_model_still_needs_one() {
         }]
     );
     assert_eq!(
-        parse(r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "credential_header": "api_key" }] }"#),
+        parse(r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "credentialHeader": "api_key" }] }"#),
         Err(format!(
             "provider openai: model {}: the catalog provider declares no endpoint for the model protocol",
             built_in("openai").models[0].id
@@ -162,15 +162,15 @@ fn endpoints_replace_the_whole_list_and_every_model_still_needs_one() {
 #[test]
 fn a_new_provider_takes_defaults_for_the_fields_that_it_omits() {
     let providers = parse(
-        r#"{ "id": "local", "base_url": "http://127.0.0.1:8080/v1",
-             "endpoints": [{ "protocol": "openai_chat", "chat_dialect": "mistral" },
-                           { "protocol": "anthropic_messages", "cache_breakpoint": true }],
+        r#"{ "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
+             "endpoints": [{ "protocol": "openai_chat", "chatDialect": "mistral" },
+                           { "protocol": "anthropic_messages", "cacheBreakpoint": true }],
              "models": [
                { "id": "qwen/small", "protocol": "openai_chat", "flags": {
-                 "thinking_format": "qwen", "reasoning_replay": "reasoning_content",
-                 "max_tokens_field": "max_completion_tokens" } },
-               { "id": "big", "protocol": "anthropic_messages", "limits": { "max_output_tokens": 64000 },
-                 "flags": { "anthropic_thinking": "budget", "reasoning_budget_min": 1024, "reasoning_budget_max": 32000 } }
+                 "thinkingFormat": "qwen", "reasoningReplay": "reasoning_content",
+                 "maxTokensField": "max_completion_tokens" } },
+               { "id": "big", "protocol": "anthropic_messages", "limits": { "maxOutputTokens": 64000 },
+                 "flags": { "anthropicThinking": "budget", "reasoningBudgetMin": 1024, "reasoningBudgetMax": 32000 } }
              ] }"#,
     )
     .unwrap();
@@ -223,7 +223,7 @@ fn a_new_provider_takes_defaults_for_the_fields_that_it_omits() {
 
 #[test]
 fn an_api_key_variable_replaces_the_key_of_a_built_in_provider() {
-    let providers = parse(r#"{ "id": "openai", "api_key_env": "PROXY_KEY" }"#).unwrap();
+    let providers = parse(r#"{ "id": "openai", "apiKeyEnv": "PROXY_KEY" }"#).unwrap();
 
     assert_eq!(
         provider(&providers, "openai").auth,
@@ -235,9 +235,9 @@ fn an_api_key_variable_replaces_the_key_of_a_built_in_provider() {
 fn local(changes: &serde_json::Value) -> String {
     let mut entry = serde_json::json!({
         "id": "local",
-        "base_url": "http://h/v1",
+        "baseUrl": "http://h/v1",
         "endpoints": [{ "protocol": "anthropic_messages" }],
-        "models": [{ "id": "m", "limits": { "max_output_tokens": 10 } }],
+        "models": [{ "id": "m", "limits": { "maxOutputTokens": 10 } }],
     });
     for (field, value) in changes.as_object().unwrap() {
         entry[field] = value.clone();
@@ -260,19 +260,19 @@ fn a_bad_provider_field_stops_the_load_and_names_the_field() {
         (r#"{ "id": "" }"#.to_owned(), "provider : id:"),
         (
             r#"{ "id": "local", "endpoints": [{ "protocol": "openai_chat" }], "models": [] }"#.to_owned(),
-            "provider local: base_url:",
+            "provider local: baseUrl:",
         ),
         (
-            r#"{ "id": "openai", "base_url": "ftp://h" }"#.to_owned(),
-            "provider openai: base_url:",
+            r#"{ "id": "openai", "baseUrl": "ftp://h" }"#.to_owned(),
+            "provider openai: baseUrl:",
         ),
         (
-            r#"{ "id": "xai-grok", "api_key_env": "XAI_KEY" }"#.to_owned(),
-            "provider xai-grok: api_key_env:",
+            r#"{ "id": "xai-grok", "apiKeyEnv": "XAI_KEY" }"#.to_owned(),
+            "provider xai-grok: apiKeyEnv:",
         ),
         (
-            r#"{ "id": "openai", "api_key_env": "" }"#.to_owned(),
-            "provider openai: api_key_env:",
+            r#"{ "id": "openai", "apiKeyEnv": "" }"#.to_owned(),
+            "provider openai: apiKeyEnv:",
         ),
         (
             r#"{ "id": "openai", "endpoints": [] }"#.to_owned(),
@@ -286,34 +286,34 @@ fn a_bad_endpoint_or_header_stops_the_load_and_names_the_field() {
     assert_errors([
         (
             r#"{ "id": "openai", "endpoints": [
-                { "protocol": "openai_responses", "credential_header": "api_key" },
-                { "protocol": "openai_responses", "credential_header": "api_key" }] }"#
+                { "protocol": "openai_responses", "credentialHeader": "api_key" },
+                { "protocol": "openai_responses", "credentialHeader": "api_key" }] }"#
                 .to_owned(),
             "provider openai: endpoints[1].protocol:",
         ),
         (
-            r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "cache_breakpoint": true }] }"#.to_owned(),
-            "provider openai: endpoints[0].cache_breakpoint:",
+            r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "cacheBreakpoint": true }] }"#.to_owned(),
+            "provider openai: endpoints[0].cacheBreakpoint:",
         ),
         (
-            r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "responses_dialect": "codex" }] }"#
+            r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "responsesDialect": "codex" }] }"#
                 .to_owned(),
-            "provider openai: endpoints[0].responses_dialect:",
+            "provider openai: endpoints[0].responsesDialect:",
         ),
         (
-            r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_responses", "chat_dialect": "mistral" }] }"#
+            r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_responses", "chatDialect": "mistral" }] }"#
                 .to_owned(),
-            "provider openai: endpoints[0].chat_dialect:",
+            "provider openai: endpoints[0].chatDialect:",
         ),
         (
             r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_responses" }] }"#.to_owned(),
-            "provider openai: endpoints[0].credential_header:",
+            "provider openai: endpoints[0].credentialHeader:",
         ),
         (
             local(
-                &serde_json::json!({ "endpoints": [{ "protocol": "anthropic_messages", "credential_header": "x_api_key" }] }),
+                &serde_json::json!({ "endpoints": [{ "protocol": "anthropic_messages", "credentialHeader": "x_api_key" }] }),
             ),
-            "provider local: endpoints[0].credential_header:",
+            "provider local: endpoints[0].credentialHeader:",
         ),
         (
             local(&serde_json::json!({ "headers": [{ "name": "content-type", "value": "x" }] })),
@@ -330,21 +330,20 @@ fn a_bad_model_stops_the_load_and_names_the_model_and_the_field() {
             "provider openai: model : id:",
         ),
         (
-            r#"{ "id": "openai", "models": [{ "id": "a", "cost": [{ "min_prompt_tokens": 5 }] }] }"#.to_owned(),
+            r#"{ "id": "openai", "models": [{ "id": "a", "cost": [{ "minPromptTokens": 5 }] }] }"#.to_owned(),
             "provider openai: model a: cost:",
         ),
         (
-            r#"{ "id": "openai", "models": [{ "id": "a", "flags": { "max_tokens_field": "max_tokens" } }] }"#
-                .to_owned(),
+            r#"{ "id": "openai", "models": [{ "id": "a", "flags": { "maxTokensField": "max_tokens" } }] }"#.to_owned(),
             "provider openai: model a: flags:",
         ),
         (
-            r#"{ "id": "openai", "models": [{ "id": "a", "flags": { "anthropic_thinking": "toggle" } }] }"#.to_owned(),
-            "provider openai: model a: flags.anthropic_thinking:",
+            r#"{ "id": "openai", "models": [{ "id": "a", "flags": { "anthropicThinking": "toggle" } }] }"#.to_owned(),
+            "provider openai: model a: flags.anthropicThinking:",
         ),
         (
             local(&serde_json::json!({
-                "models": [{ "id": "m", "flags": { "anthropic_thinking": "adaptive", "reasoning_budget_max": 9 } }]
+                "models": [{ "id": "m", "flags": { "anthropicThinking": "adaptive", "reasoningBudgetMax": 9 } }]
             })),
             "provider local: model m: flags:",
         ),
@@ -353,7 +352,7 @@ fn a_bad_model_stops_the_load_and_names_the_model_and_the_field() {
             "provider local: model m:",
         ),
         (
-            r#"{ "id": "local", "base_url": "http://h/v1", "models": [{ "id": "m" }],
+            r#"{ "id": "local", "baseUrl": "http://h/v1", "models": [{ "id": "m" }],
                  "endpoints": [{ "protocol": "openai_chat" }, { "protocol": "openai_responses" }] }"#
                 .to_owned(),
             "provider local: model m: protocol:",
@@ -363,8 +362,8 @@ fn a_bad_model_stops_the_load_and_names_the_model_and_the_field() {
 
 #[test]
 fn an_unknown_field_is_an_error() {
-    let error = parse(r#"{ "id": "openai", "base_ur": "x" }"#).unwrap_err();
-    assert!(error.contains("unknown field `base_ur`"), "{error}");
+    let error = parse(r#"{ "id": "openai", "baseUr": "x" }"#).unwrap_err();
+    assert!(error.contains("unknown field `baseUr`"), "{error}");
     assert!(
         parse_text(r#"{ "provider": [] }"#)
             .unwrap_err()
@@ -383,12 +382,12 @@ fn an_entry_with_only_the_id_of_a_built_in_provider_keeps_that_provider() {
 #[test]
 fn a_repeated_provider_id_or_model_id_applies_in_file_order_so_the_last_value_wins() {
     let providers =
-        parse(r#"{ "id": "openai", "name": "First", "base_url": "http://a/v1" }, { "id": "openai", "name": "Last" }"#)
+        parse(r#"{ "id": "openai", "name": "First", "baseUrl": "http://a/v1" }, { "id": "openai", "name": "Last" }"#)
             .unwrap();
     let repeated = parse(&local(&serde_json::json!({
         "models": [
-            { "id": "m", "upstream_id": "one", "limits": { "max_output_tokens": 10 } },
-            { "id": "m", "upstream_id": "two", "limits": { "max_output_tokens": 10 } }
+            { "id": "m", "upstreamId": "one", "limits": { "maxOutputTokens": 10 } },
+            { "id": "m", "upstreamId": "two", "limits": { "maxOutputTokens": 10 } }
         ]
     })))
     .unwrap();
@@ -404,10 +403,10 @@ fn a_repeated_provider_id_or_model_id_applies_in_file_order_so_the_last_value_wi
 fn a_written_null_is_an_error_and_keeps_no_built_in_value() {
     for field in [
         "name",
-        "api_key_env",
-        "base_url",
+        "apiKeyEnv",
+        "baseUrl",
         "headers",
-        "session_header",
+        "sessionHeader",
         "endpoints",
         "models",
     ] {
@@ -420,8 +419,8 @@ fn a_written_null_is_an_error_and_keeps_no_built_in_value() {
 #[test]
 fn a_changed_login_provider_keeps_its_login_and_other_providers_have_none() {
     let providers = parse(
-        r#"{ "id": "xai-grok", "base_url": "http://[::1]:8080/v1" },
-           { "id": "local", "base_url": "http://h/v1", "endpoints": [{ "protocol": "openai_chat" }], "models": [] }"#,
+        r#"{ "id": "xai-grok", "baseUrl": "http://[::1]:8080/v1" },
+           { "id": "local", "baseUrl": "http://h/v1", "endpoints": [{ "protocol": "openai_chat" }], "models": [] }"#,
     )
     .unwrap();
 

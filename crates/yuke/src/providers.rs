@@ -118,6 +118,7 @@ struct File {
 /// One provider entry. A field that the entry omits keeps the built-in value, and a written `null` is an error.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ProviderPatch {
     id: String,
     #[serde(default, deserialize_with = "written")]
@@ -150,6 +151,7 @@ struct HeaderEntry {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct EndpointEntry {
     protocol: Protocol,
     credential_header: Option<CredentialHeader>,
@@ -162,6 +164,7 @@ struct EndpointEntry {
 /// One model entry. It replaces the built-in model with its id as a whole.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ModelEntry {
     id: String,
     upstream_id: Option<String>,
@@ -178,6 +181,7 @@ struct ModelEntry {
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct Flags {
     supports_tool_search: Option<bool>,
     can_disable_reasoning: Option<bool>,
@@ -218,7 +222,7 @@ impl ProviderPatch {
     /// An empty provider of a new id. The change gives it the fields that it needs.
     fn new_provider(&self) -> Result<Provider, String> {
         let missing = [
-            ("base_url", self.base_url.is_none()),
+            ("baseUrl", self.base_url.is_none()),
             ("endpoints", self.endpoints.is_none()),
             ("models", self.models.is_none()),
         ];
@@ -244,18 +248,18 @@ impl ProviderPatch {
         }
         if let Some(variable) = self.api_key_env {
             if matches!(provider.auth, Auth::OAuth(_)) {
-                return Err("api_key_env: the provider uses a login of `yuke login`".to_owned());
+                return Err("apiKeyEnv: the provider uses a login of `yuke login`".to_owned());
             }
             if variable.is_empty() || variable.contains(['=', '\0']) {
                 return Err(format!(
-                    "api_key_env: {variable:?} is not a variable name: write a name with no '=' and no NUL"
+                    "apiKeyEnv: {variable:?} is not a variable name: write a name with no '=' and no NUL"
                 ));
             }
             provider.auth = Auth::ApiKey(Some(variable.into()));
         }
         if let Some(base_url) = self.base_url {
             if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-                return Err("base_url: the URL must start with http:// or https://".to_owned());
+                return Err("baseUrl: the URL must start with http:// or https://".to_owned());
             }
             provider.base_url = base_url.into();
         }
@@ -305,19 +309,19 @@ fn endpoints(entries: Vec<EndpointEntry>) -> Result<Vec<Endpoint>, String> {
         if entry.cache_breakpoint && protocol == Protocol::OpenaiChat {
             return Err(format!(
                 "{}: Chat Completions has no breakpoint",
-                field("cache_breakpoint")
+                field("cacheBreakpoint")
             ));
         }
         if entry.responses_dialect.is_some() && protocol != Protocol::OpenaiResponses {
             return Err(format!(
                 "{}: only an openai_responses endpoint takes it",
-                field("responses_dialect")
+                field("responsesDialect")
             ));
         }
         if entry.chat_dialect.is_some() && protocol != Protocol::OpenaiChat {
             return Err(format!(
                 "{}: only an openai_chat endpoint takes it",
-                field("chat_dialect")
+                field("chatDialect")
             ));
         }
         endpoints.push(Endpoint {
@@ -360,12 +364,11 @@ impl ModelEntry {
         ];
         if chat_flags.contains(&true) && protocol != Protocol::OpenaiChat {
             return Err(
-                "flags: thinking_format, reasoning_replay, and max_tokens_field need the openai_chat protocol"
-                    .to_owned(),
+                "flags: thinkingFormat, reasoningReplay, and maxTokensField need the openai_chat protocol".to_owned(),
             );
         }
         if flags.anthropic_thinking.is_some() && protocol != Protocol::AnthropicMessages {
-            return Err("flags.anthropic_thinking: it needs the anthropic_messages protocol".to_owned());
+            return Err("flags.anthropicThinking: it needs the anthropic_messages protocol".to_owned());
         }
         let anthropic_thinking = match flags.anthropic_thinking {
             Some(ThinkingShape::Budget) => AnthropicThinking::Budget {
@@ -373,7 +376,7 @@ impl ModelEntry {
                 max: flags.reasoning_budget_max,
             },
             _ if flags.reasoning_budget_min.is_some() || flags.reasoning_budget_max.is_some() => {
-                return Err("flags: the reasoning budget needs \"anthropic_thinking\": \"budget\"".to_owned());
+                return Err("flags: the reasoning budget needs \"anthropicThinking\": \"budget\"".to_owned());
             }
             Some(ThinkingShape::Toggle) => AnthropicThinking::Toggle,
             Some(ThinkingShape::Adaptive) => AnthropicThinking::Adaptive,
@@ -414,12 +417,12 @@ fn check(provider: &Provider) -> Result<(), String> {
         match (sends_credential, endpoint.credential_header) {
             (true, None) => {
                 return Err(format!(
-                    "endpoints[{index}].credential_header: the provider sends a credential, so name its header"
+                    "endpoints[{index}].credentialHeader: the provider sends a credential, so name its header"
                 ));
             }
             (false, Some(_)) => {
                 return Err(format!(
-                    "endpoints[{index}].credential_header: the provider sends no credential: set api_key_env, or \
+                    "endpoints[{index}].credentialHeader: the provider sends no credential: set apiKeyEnv, or \
                      remove the header"
                 ));
             }

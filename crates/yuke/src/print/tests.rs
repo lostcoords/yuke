@@ -128,9 +128,9 @@ async fn a_round_before_plugin_gets_the_window_of_the_catalog_and_replaces_the_c
         ..task("Hi.", SessionChoice::New)
     };
     let providers = r#"{ "providers": [{
-        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
         "endpoints": [{ "protocol": "anthropic_messages" }],
-        "models": [{ "id": "small", "limits": { "context_window": 64000, "max_output_tokens": 4096 } }]
+        "models": [{ "id": "small", "limits": { "contextWindow": 64000, "maxOutputTokens": 4096 } }]
     }] }"#;
 
     let (finished, transport) = run_with_providers(&place, &task, providers, Box::new(no_variable)).await;
@@ -149,9 +149,9 @@ async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential()
         ..task("Hi.", SessionChoice::New)
     };
     let providers = r#"{ "providers": [{
-        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "id": "local", "baseUrl": "http://127.0.0.1:8080/v1",
         "endpoints": [{ "protocol": "anthropic_messages" }],
-        "models": [{ "id": "small", "upstream_id": "vendor/small", "limits": { "max_output_tokens": 4096 } }]
+        "models": [{ "id": "small", "upstreamId": "vendor/small", "limits": { "maxOutputTokens": 4096 } }]
     }] }"#;
 
     let (finished, transport) = run_with_providers(&place, &task, providers, Box::new(no_variable)).await;
@@ -178,7 +178,7 @@ async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential()
 async fn providers_json_changes_the_url_and_the_key_of_a_built_in_provider() {
     let place = Place::new("print", "changed_provider");
     let providers = r#"{ "providers": [
-        { "id": "minimax", "base_url": "http://127.0.0.1:9/anthropic", "api_key_env": "PROXY_KEY" }
+        { "id": "minimax", "baseUrl": "http://127.0.0.1:9/anthropic", "apiKeyEnv": "PROXY_KEY" }
     ] }"#;
     let variable: Box<Variable> = Box::new(|name| (name == "PROXY_KEY").then(|| OsString::from("proxy-key")));
 
@@ -196,7 +196,7 @@ async fn a_bad_providers_json_stops_the_run_before_a_request() {
     let (finished, transport) = run_with_providers(
         &place,
         &task("Hi.", SessionChoice::New),
-        r#"{ "providers": [{ "id": "minimax", "base_url": "ftp://h" }] }"#,
+        r#"{ "providers": [{ "id": "minimax", "baseUrl": "ftp://h" }] }"#,
         Box::new(with_key),
     )
     .await;
