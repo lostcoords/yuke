@@ -4,11 +4,11 @@ description: Install plugins, and write them with entry points, cleanup, service
 
 # Plugins
 
-A plugin adds shared services, session behavior, or terminal UI. See [Your first plugin](first-plugin.md) for a small example.
+A plugin adds shared services, session behavior, or TUI parts. See [Your first plugin](first-plugin.md) for a small example.
 
 ## Install plugins
 
-The `plugins` list in [`config.json`](config.md#configjson) loads your plugins, in order. Each entry is a local folder or a Git repository.
+The `plugins` list in [`config.json`](config.md) loads your plugins, in order. Each entry is a local folder or a Git repository.
 
 ```json
 {
@@ -30,9 +30,9 @@ An entry is a path, or an object with `path` or `git`:
 | `ref` | The default branch | The branch, tag, or commit to follow. |
 | `options` | — | The options of the plugin. |
 
-yuke never downloads a plugin at startup. For a Git plugin that you add to `config.json` by hand, run `yuke plugin sync` or use `/plugins` in the terminal UI.
+yuke never downloads a plugin at startup. For a Git plugin that you add to `config.json` by hand, run `yuke plugin sync` or use `/plugins` in the TUI.
 
-A plugin that does not load does not stop the others. This covers a plugin that is not installed, has a bad `plugin.json`, or fails in its code. yuke loads the other plugins and gives one notice that names the failed plugins. `/plugins` shows why each one failed. A bad `config.json` or `plugins.lock` stops the start.
+A plugin that does not load does not stop the others. This covers a plugin that is not installed, has a bad `plugin.json`, or fails in its code. yuke loads the other plugins, and it gives one error notice. For one failed plugin, the notice reads "Plugin NAME did not load: REASON". For more plugins, it names them: "2 plugins did not load: a, b · /plugins or `yuke plugin list` shows why". `/plugins` shows why each one failed. A bad `config.json` or `plugins.lock` stops the start.
 
 | Command | Description |
 |---|---|
@@ -40,9 +40,9 @@ A plugin that does not load does not stop the others. This covers a plugin that 
 | `yuke plugin remove NAME` | Remove a plugin from `config.json` and `plugins.lock`. Its files stay on disk. |
 | `yuke plugin list` | Show each plugin and its state: local, installed at a commit, not installed, or failed with the reason. |
 | `yuke plugin sync` | Install the locked commits, and lock each new Git plugin. If a plugin does not install, sync installs the others and then fails with the reason of each one. With `--locked`, fail instead when `plugins.lock` does not match `config.json`. |
-| `yuke plugin update NAME...` | Show the new commits of each plugin's ref that change its folder, and ask before it moves the lock. If update cannot check a plugin, it updates the others and then fails with the reason of each one. `--all` updates every Git plugin, and `--yes` skips the question. |
+| `yuke plugin update NAME...` | Show the new commits of each plugin's ref that change its folder, and ask before it moves the lock. If update cannot check a plugin, it updates the others and then fails with the reason of each one. `--all` updates every Git plugin, and `--yes` skips the question. Without `--yes`, it needs a terminal for the question. |
 
-In the terminal UI, `/plugins` shows your plugins in three sections. **Needs attention** shows each plugin that is not installed or does not load, with the reason. **Git** and **Local** show the others. The state of a plugin is `loaded`, `reload loads it`, `failed`, or `not installed`.
+In the TUI, `/plugins` shows your plugins in three sections. **Needs attention** shows each plugin that is not installed or does not load, with the reason. **Git** and **Local** show the others. The state of a plugin is `loaded`, `reload loads it`, `failed`, or `not installed`.
 
 | Key | Action |
 |---|---|
@@ -57,30 +57,73 @@ A plugin runs with your user rights. Read its source before you install it.
 
 ## Bundled plugins
 
-yuke loads these plugins before yours:
+yuke loads these plugins before yours. A bundled plugin adds the slash commands in the last column. See [Use the TUI](use.md) for the commands and the keys.
 
-| Plugin | What it does | Options |
-|---|---|---|
-| `compaction` | Summarizes old context, in every mode. | — |
-| `themes` | Loads and selects terminal themes. | — |
-| `chat` | Draws the chat panes and provides the `chat` service. | — |
-| `sessions` | Browses saved sessions. | — |
-| `files` | Completes `@` file paths in a chat draft. | — |
-| `bar` | Draws the status bar. | `hide` and `order`: lists of item keys, such as `"core:keys"`. |
-| `toasts` | Shows notices and their history. | — |
-| `login` | Connects providers from the terminal UI with `/login` and `/logout`. | — |
-| `plugins` | Manages your plugins with the `/plugins` dashboard. | — |
+| Plugin | What it does | Options | Slash commands |
+|---|---|---|---|
+| `compaction` | Summarizes old context, in every mode. | — | — |
+| `themes` | Loads and selects themes. | — | `/themes` |
+| `chat` | Draws the chat panes and provides the `chat` service. | `emptyView`: boolean, default `true`. Set `false` to hide the header of an empty chat pane. | `/model`, `/new`, `/rename` |
+| `sessions` | Browses saved sessions. | — | `/sessions` |
+| `files` | Completes `@` file paths in a chat draft. | — | — |
+| `bar` | Draws the status bar. | `hide` and `order`: lists of item keys, such as `"core:keys"`. | — |
+| `toasts` | Shows notices and their history. | — | `/messages` |
+| `login` | Connects providers from the TUI. | — | `/login`, `/logout` |
+| `plugins` | Manages your plugins with the `/plugins` dashboard. | — | `/plugins` |
+
+The TUI core adds `/quit` and `/reload`. These two do not belong to a plugin.
 
 Use `disable` to turn off a bundled plugin, and `bundled` to give it options:
 
 ```json
 {
   "disable": ["toasts"],
-  "bundled": { "bar": { "hide": ["core:keys"] } }
+  "bundled": { "bar": { "hide": ["core:keys"] }, "chat": { "emptyView": false } }
 }
 ```
 
-To replace a bundled plugin, disable its name and add your own. Your plugin must provide the services that consumers of the old plugin use.
+A name in `disable` or `bundled` must be the name of a bundled plugin. Another name stops the start.
+
+To replace a bundled plugin, disable its name and add your own plugin with the same name. Your plugin must provide the services that other plugins use from the old plugin. The bundled `sessions` and `files` plugins use the `chat` service. If you disable `chat`, provide a `chat` service, or disable `sessions` and `files` too.
+
+## Plugin manifest
+
+Each plugin folder has a `plugin.json`. yuke reads these fields:
+
+```json
+{
+  "name": "notes",
+  "extensions": {
+    "sh.yuke": {
+      "entry": "./index.ts",
+      "uses": ["chat"],
+      "provides": ["acme.notes.v1"]
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | Required. One folder name: not empty, not `.` or `..`, and with no `/` or `\`. It is the source of the notices, the prefix of the commands, and the name of the data folder `plugins/<name>/`. |
+| `extensions["sh.yuke"]` | Optional. The fields of yuke, below. |
+
+| Field of `sh.yuke` | Meaning |
+|---|---|
+| `entry` | The entry module, as a path in the plugin folder. It is a `.ts` or a `.js` file. Without `entry`, the plugin has no code. |
+| `uses` | The services that the plugin reads with `ctx.get`. See [Services](#services). |
+| `provides` | The services that the plugin publishes with `ctx.provide`. |
+
+A plugin can ship only a `skills` folder. Leave out `entry`, and the plugin adds the skills of its folder. See [AGENTS.md and skills](instructions.md#skills).
+
+yuke ignores the other fields of `plugin.json` and the other keys of `extensions`. A field of `sh.yuke` that yuke does not know is an error, and the plugin does not load.
+
+These rules make a plugin fail to load:
+
+- The `name` is not a folder name.
+- Another plugin has the same name. A bundled plugin has the same name, and it is not in `disable`.
+- `provides` names `tui`, `sessions`, or `catalog`. These services belong to yuke.
+- Another plugin provides a service of `provides` already.
 
 ## Entry points
 
@@ -112,13 +155,25 @@ Module state lasts for one runtime. Use `ctx.dataDir` for files that must surviv
 
 ## Services
 
-A service shares a typed value between plugins. The provider names the service in `provides` in the `sh.yuke` extension of `plugin.json`, and publishes it with `ctx.provide(name, value)` during `apply`. A consumer names it in `uses` and reads it with `ctx.get(name)`. The loader loads providers first. A plugin does not load when another plugin before it provides the same service, or when no plugin before it provides a service that it uses. A cycle of uses has the same result. A provider adds the type of its service to the `Services` interface of `yuke:plugins`.
+A service shares a typed value between plugins.
 
-Three services need no `uses` entry:
+- The provider names the service in `provides` in the `sh.yuke` extension of `plugin.json`.
+- The provider publishes the value with `ctx.provide(name, value)` during `apply`.
+- A consumer names the service in `uses`.
+- The consumer reads the value with `ctx.get(name)`.
+- The provider adds the type of its service to the `Services` interface of `yuke:plugins`.
+
+yuke orders the plugins itself: it loads each provider before the plugins that use it. The order of the `plugins` list does not matter for services. A plugin does not load in these cases:
+
+- No plugin provides a service that it uses.
+- The provider of a service that it uses did not load.
+- The `uses` of some plugins form a cycle.
+
+Three services belong to yuke. No plugin can provide them, and a plugin must not list them in `uses`:
 
 | Service | Value |
 |---|---|
-| `tui` | This plugin's terminal interface, or `undefined` outside the TUI. |
+| `tui` | The TUI of this plugin, or `undefined` outside the TUI. |
 | `sessions` | Session creation, queries, and handles in every mode. |
 | `catalog` | Provider and model queries in every mode. |
 
@@ -135,7 +190,7 @@ The bundled `chat` plugin provides the `chat` service. A consumer of `chat` need
 | `session.closed` | `sessionId` |
 | `notice` | `level`, `source`, `text`, and `sessionId` |
 | `catalog.changed` | No data. A login, a logout, or a credential changed the ready providers. |
-| `theme.changed` | Theme `name` and terminal `background`. Only the terminal interface sends it. |
+| `theme.changed` | Theme `name` and terminal `background`. Only the TUI sends it. |
 
 A `session.opened` listener first receives the sessions that are already open. A `session.update` has a `kind`, such as `state`.
 
@@ -158,10 +213,18 @@ The doc comments in these files describe each member. Do not import `yuke:intern
 
 ## Test and debug
 
-Check the types with `tsc -p ~/.config/yuke/tsconfig.json`. Use your actual profile path if it differs.
+Check the types with `tsc -p ~/.config/yuke/tsconfig.json`. Use your actual profile path if it differs. See [Your first plugin](first-plugin.md) for the TypeScript version.
 
-For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`. A test uses an isolated app and a fake model, and needs no provider credentials. `types/test.d.ts` has the test API. A type check or a test does not show how the terminal draws: start a terminal session to check that.
+For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`:
+
+```sh
+yuke test [PATHS]...
+```
+
+`PATHS` are test files or folders. A folder gives each `*.test.ts` file below it. Without `PATHS`, yuke searches the current folder. A path to a file that is not a `*.test.ts` file is an error. The command fails when it finds no `*.test.ts` file, and when a test fails.
+
+A test uses an isolated app and a fake model, and needs no provider credentials. `types/test.d.ts` has the test API. A type check or a test does not show how the terminal draws: start a TUI session to check that.
 
 `/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end first. A reload replaces the JavaScript runtime, so module state resets and plugin jobs stop. A bad `config.json`, `plugins.lock`, or `providers.json` fails the reload, and yuke keeps the previous plugins and providers.
 
-Console output becomes a `notice` from the source `console`. A terminal shows it as a notice, and an RPC client gets it as a `notice` notification. CLI startup errors go to stderr.
+Console output becomes a `notice` from the source `console`. The TUI shows it as a notice. An RPC client gets it in a `notice` JSON-RPC notification. CLI startup errors go to stderr.
