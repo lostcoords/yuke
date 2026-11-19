@@ -157,7 +157,10 @@ pub(crate) async fn files_named(cache: &Path, commit: &str, name: &str) -> Resul
     let text = run(tree, "ls-tree").await?;
     Ok(text
         .split('\0')
-        .filter(|path| *path == name || path.ends_with(&format!("/{name}")))
+        .filter(|path| {
+            path.strip_suffix(name)
+                .is_some_and(|rest| rest.is_empty() || rest.ends_with('/'))
+        })
         .map(str::to_owned)
         .collect())
 }

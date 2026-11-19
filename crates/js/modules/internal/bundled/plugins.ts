@@ -153,19 +153,18 @@ class PluginList implements View {
   readonly #list = new ScrollList<Row>({ id: idOf, render });
   /** The plugins of each section, in the order of `SECTIONS`. */
   #sections: readonly (readonly ManagedPlugin[])[] = [];
-  #plugins: readonly ManagedPlugin[] = [];
   #selected = 0;
   /** The selection moved, so the next layout shows it. */
   #reveal = true;
 
   /** The plugins in section order. */
   get plugins(): readonly ManagedPlugin[] {
-    return this.#plugins;
+    return this.#sections.flat();
   }
 
   /** The selected plugin. */
   get selected(): ManagedPlugin | undefined {
-    return this.#plugins[this.#selected];
+    return this.plugins[this.#selected];
   }
 
   /** The count of the rows of the list. */
@@ -177,19 +176,19 @@ class PluginList implements View {
   setPlugins(plugins: readonly ManagedPlugin[]): void {
     const kept = this.selected === undefined ? undefined : keyOf(this.selected);
     this.#sections = SECTIONS.map((_, index) => plugins.filter((plugin) => sectionOf(plugin) === index));
-    this.#plugins = this.#sections.flat();
-    const index = this.#plugins.findIndex((plugin) => keyOf(plugin) === kept);
+    const index = this.plugins.findIndex((plugin) => keyOf(plugin) === kept);
     this.#select(index >= 0 ? index : this.#selected);
   }
 
   #select(index: number): void {
-    this.#selected = Math.max(0, Math.min(this.#plugins.length - 1, index));
-    const nameWidth = Math.max(0, ...this.#plugins.map((plugin) => nameOf(plugin).length));
+    const plugins = this.plugins;
+    this.#selected = Math.max(0, Math.min(plugins.length - 1, index));
+    const nameWidth = Math.max(0, ...plugins.map((plugin) => nameOf(plugin).length));
     const selected = this.selected;
     const rows: Row[] = [];
-    for (const [index, plugins] of this.#sections.entries()) {
-      if (plugins.length > 0) rows.push({ kind: "title", text: `${SECTIONS[index]} (${plugins.length})` });
-      for (const plugin of plugins) {
+    for (const [index, section] of this.#sections.entries()) {
+      if (section.length > 0) rows.push({ kind: "title", text: `${SECTIONS[index]} (${section.length})` });
+      for (const plugin of section) {
         rows.push({ kind: "plugin", plugin, nameWidth, selected: plugin === selected });
         const reason = reasonOf(plugin);
         if (reason !== undefined) rows.push({ kind: "reason", plugin, ...reason });
@@ -212,7 +211,9 @@ class PluginList implements View {
   }
 
   draw(canvas: Canvas): void {
-    if (this.#plugins.length === 0) canvas.text(1, 0, "config.json has no plugins · a adds one", DETAIL);
+    if (this.#sections.every((section) => section.length === 0)) {
+      canvas.text(1, 0, "config.json has no plugins · a adds one", DETAIL);
+    }
   }
 
   onKey(event: KeyEvent): boolean {
@@ -226,11 +227,10 @@ class PluginList implements View {
 /** A spinner that draws a frame of `tui` at each step until `stop`. */
 function startSpinner(tui: Tui): { readonly frame: () => string; readonly stop: () => void } {
   const start = tui.now();
-  let cancel = (): void => {};
   const tick = (): void => {
     cancel = tui.addTimer(SPINNER_INTERVAL, tick);
   };
-  tick();
+  let cancel = tui.addTimer(SPINNER_INTERVAL, tick);
   return { frame: () => spinner(tui.now() - start), stop: () => cancel() };
 }
 
@@ -258,7 +258,8 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       status = await action();
     } catch (error) {
       status = "";
-      if (!dialog.signal.aborted) ctx.notify("error", `${doing} failed: ${messageOf(error)}`);
+      const action = `${doing.charAt(0).toUpperCase()}${doing.slice(1)}`;
+      if (!dialog.signal.aborted) ctx.notify("error", `${action} failed: ${messageOf(error)}`);
     }
     try {
       list.setPlugins((await plugins.list()).plugins);
@@ -295,10 +296,14 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     ],
   });
   const sync = (): void => {
-    const missing = list.plugins.filter((plugin) => plugin.state.kind === "notInstalled").length;
-    void run("Syncing", async () => {
+    const missing = list.plugins.filter((plugin) => plugin.state.kind === "notInstalled");
+    void run("syncing", async () => {
       await plugins.sync({ signal: dialog.signal });
-      return missing === 0 ? "each Git plugin is installed" : `installed ${missing} plugins · r loads them`;
+      const [first] = missing;
+      if (first === undefined) return "each Git plugin is installed";
+      return missing.length === 1
+        ? `installed ${nameOf(first)} · r loads it`
+        : `installed ${missing.length} plugins · r loads them`;
     });
   };
   /** Check the plugins of `target` in a review, and write the commits that the user chooses. */
@@ -306,7 +311,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     review(tui, plugins, target, dialog.signal).then(
       (chosen) => {
         if (chosen === undefined) return;
-        void run("Updating", async () => {
+        void run("updating", async () => {
           await plugins.apply(chosen.map((change) => ({ source: change.source, commit: change.new })));
           return `updated ${namesOf(chosen)} · r loads the new commits`;
         });
@@ -315,7 +320,6 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     );
   };
   const add = async (): Promise<void> => {
-    let git = "";
     let found: readonly FoundPlugin[] = [];
     // A URL that gives no new plugin keeps the prompt open with its text and the reason.
     const line = await tui.input({
@@ -323,7 +327,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       placeholder: "URL of a Git repository",
       signal: dialog.signal,
       onSubmit: async (text) => {
-        git = text.trim();
+        const git = text.trim();
         if (git === "") throw new Error("type the URL of a Git repository");
         const added = new Set(list.plugins.map(nameOf));
         const all = (await plugins.find({ git }, { signal: dialog.signal })).plugins;
@@ -333,6 +337,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       },
     });
     if (line === undefined) return;
+    const git = line.trim();
     const chosen =
       found.length === 1
         ? found[0]
@@ -344,7 +349,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
             signal: dialog.signal,
           });
     if (chosen === undefined) return;
-    void run(`Adding ${chosen.name}`, async () => {
+    void run(`adding ${chosen.name}`, async () => {
       await plugins.add({ git, names: [chosen.name] }, { signal: dialog.signal });
       return `added ${chosen.name} · r loads it`;
     });
@@ -359,7 +364,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       signal: dialog.signal,
     });
     if (!confirmed) return;
-    void run(`Removing ${name}`, async () => {
+    void run(`removing ${name}`, async () => {
       await plugins.remove(name);
       return `removed ${name} · r unloads it`;
     });
@@ -386,7 +391,7 @@ function reviewOf(changes: readonly PluginChange[] | undefined): TextDocument {
       id: String(index),
       sections: [
         { id: "label", kind: "label", text: item.label },
-        ...(item.log === undefined || item.log === "" ? [] : [{ id: "log", kind: "text" as const, text: item.log }]),
+        ...(item.log ? [{ id: "log", kind: "text" as const, text: item.log }] : []),
       ],
     })),
   };

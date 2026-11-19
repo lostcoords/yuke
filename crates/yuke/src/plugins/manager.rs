@@ -83,10 +83,9 @@ async fn found(paths: &Paths, url: &str, reference: Option<&str>) -> Result<(Str
         if let Ok(manifest) = serde_json::from_str::<Manifest>(&without_comments(&text))
             && valid_name(&manifest.name).is_ok()
         {
-            let folder = path.strip_suffix(MANIFEST).unwrap_or_default().trim_end_matches('/');
             plugins.push(FoundPlugin {
                 name: manifest.name,
-                folder: (!folder.is_empty()).then(|| folder.to_owned()),
+                folder: path.rsplit_once('/').map(|(folder, _)| folder.to_owned()),
             });
         }
     }
@@ -108,8 +107,7 @@ pub(crate) async fn add(
     reference: Option<&str>,
 ) -> Result<Vec<AddedPlugin>, String> {
     let _held = hold(&paths.data).await?;
-    let config = read_config(paths)?;
-    let known = resolve(paths, &config)?.outcomes;
+    let known = outcomes(paths)?;
     let path = paths.config.join("config.json");
     let mut text = match fs::read_to_string(&path) {
         Ok(text) => Some(text),
@@ -144,6 +142,10 @@ pub(crate) async fn add(
     };
     let mut added = Vec::with_capacity(chosen.len());
     for plugin in chosen {
+        // A name that the command repeats adds the plugin once.
+        if added.iter().any(|done: &AddedPlugin| done.name == plugin.name) {
+            continue;
+        }
         let source = git_source(url.to_owned(), plugin.folder.as_deref(), reference.map(str::to_owned));
         let fail = |message: String| format!("plugin {}: {message}", plugin.name);
         // The loader skips the second of two plugins of one name, so a clash would hide a plugin.
@@ -229,7 +231,6 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
     {
         return Err("plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`".to_owned());
     }
-    let mut fresh = Lock::default();
     let mut plugins = Vec::with_capacity(sources.len());
     for source in sources {
         let fail = |message: String| format!("plugin {source}: {message}");
@@ -240,12 +241,16 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
                 .map_err(fail)?,
         };
         install(paths, source, &commit).await.map_err(fail)?;
-        fresh.commits.insert(source.clone(), commit.clone());
         plugins.push(LockedPlugin {
             source: source.clone(),
             commit,
         });
     }
+    let fresh = Lock {
+        commits: (plugins.iter())
+            .map(|plugin| (plugin.source.clone(), plugin.commit.clone()))
+            .collect(),
+    };
     let written = !locked && fresh.write(&paths.config)?;
     Ok(SyncPluginsResult { plugins, written })
 }

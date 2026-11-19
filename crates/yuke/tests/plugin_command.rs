@@ -1,7 +1,7 @@
 //! The `yuke plugin` command: its output and its exit status, with a local Git repository and an empty profile.
 #![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
 /// Run `git` in `folder` with `args`, and give its output.
@@ -45,13 +45,12 @@ fn repository(root: &Path, names: &[&str]) -> (String, String) {
 
 /// Run `yuke plugin` with `args` and the profile of `root`.
 fn yuke(root: &Path, args: &[&str]) -> Output {
-    let folder = |name: &str| -> PathBuf { root.join(name) };
     Command::new(env!("CARGO_BIN_EXE_yuke"))
         .arg("plugin")
         .args(args)
-        .env("XDG_CONFIG_HOME", folder("config"))
-        .env("XDG_DATA_HOME", folder("data"))
-        .env("XDG_CACHE_HOME", folder("cache"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env_remove("YUKE_APPNAME")
         .output()
         .unwrap()
@@ -72,9 +71,11 @@ fn add_takes_the_plugins_of_a_repository_by_name_and_list_and_remove_show_them()
     let short = &commit[..7];
 
     let unnamed = yuke(&root, &["add", &url]);
-    let added = yuke(&root, &["add", &url, "weather", "clock"]);
+    // A name that the command repeats adds the plugin once.
+    let added = yuke(&root, &["add", &url, "weather", "clock", "weather"]);
     let listed = yuke(&root, &["list"]);
     let removed = yuke(&root, &["remove", "clock"]);
+    let left = yuke(&root, &["list"]);
 
     assert_eq!(unnamed.status.code(), Some(1));
     assert_eq!(
@@ -100,13 +101,21 @@ fn add_takes_the_plugins_of_a_repository_by_name_and_list_and_remove_show_them()
         texts(&removed).0,
         "Removed clock. Its files stay on disk. Run /reload in open sessions.\n"
     );
+    assert_eq!(
+        texts(&left).0,
+        format!("NAME     STATE              SOURCE\nweather  installed {short}  {url} (folder plugins/weather)\n")
+    );
 }
 
 #[test]
 fn list_shows_why_a_plugin_does_not_load_and_how_to_install_a_missing_one() {
     let root = yuke_testing::folder("command", "plugin_list_problems");
     std::fs::create_dir_all(root.join("config/yuke/broken")).unwrap();
-    std::fs::write(root.join("config/yuke/broken/plugin.json"), r#"{ "name": "Broken" }"#).unwrap();
+    std::fs::write(
+        root.join("config/yuke/broken/plugin.json"),
+        r#"{ "name": "broken", "extensions": { "sh.yuke": { "entry": "main.py" } } }"#,
+    )
+    .unwrap();
     std::fs::write(
         root.join("config/yuke/config.json"),
         r#"{ "plugins": ["./broken", { "git": "https://h/tools", "folder": "plugins/sun" }] }"#,
@@ -120,8 +129,7 @@ fn list_shows_why_a_plugin_does_not_load_and_how_to_install_a_missing_one() {
         texts(&listed).0,
         "NAME    STATE          SOURCE\n\
          broken  failed         ./broken\n\
-         \x20       plugin broken did not load: name: 'Broken' must be 1 to 64 lowercase letters, digits, '-', or '.', \
-         start and end with a letter or a digit, and have no '--' or '..'\n\
+         \x20       plugin broken did not load: entry: 'main.py' is not a .ts or a .js file\n\
          sun     not installed  https://h/tools (folder plugins/sun)\n\
          `yuke plugin sync` installs the plugins that are not installed.\n"
     );

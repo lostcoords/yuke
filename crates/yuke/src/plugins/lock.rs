@@ -1,7 +1,7 @@
 //! `plugins.lock` in the config folder: the commit of each Git plugin. `yuke plugin sync` writes it, and the user keeps it
 //! with the dotfiles.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ pub(crate) const LOCK: &str = "plugins.lock";
 /// The commits of `plugins.lock`, by source.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Lock {
-    pub(crate) commits: HashMap<PluginSource, String>,
+    pub(crate) commits: BTreeMap<PluginSource, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,13 +44,17 @@ impl Lock {
         let Some(file) = read_json::<FileText>(&path)? else {
             return Ok(Self::default());
         };
-        let fail = |message: String| format!("{}: {message}", path.display());
-        let mut commits = HashMap::with_capacity(file.plugins.len());
+        let mut commits = BTreeMap::new();
         for entry in file.plugins {
             // A commit id is a folder name of the install.
             if !is_commit(&entry.commit) {
-                return Err(fail(format!("'{}' is not a full commit id", entry.commit)));
+                return Err(format!(
+                    "{}: '{}' is not a full commit id",
+                    path.display(),
+                    entry.commit
+                ));
             }
+            // A lock that the user edits by hand can write a folder as `./a/`.
             let source = git_source(entry.source.git, entry.source.folder.as_deref(), entry.source.reference);
             commits.insert(source, entry.commit);
         }
@@ -64,11 +68,8 @@ impl Lock {
     ///
     /// Returns a text that names the file that does not read or write.
     pub(crate) fn write(&self, config_folder: &Path) -> Result<bool, String> {
-        let mut entries: Vec<(&PluginSource, &String)> = self.commits.iter().collect();
-        entries.sort();
         let file = FileText {
-            plugins: entries
-                .into_iter()
+            plugins: (self.commits.iter())
                 .map(|(source, commit)| Entry {
                     source: source.clone(),
                     commit: commit.clone(),

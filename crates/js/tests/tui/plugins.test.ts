@@ -106,12 +106,10 @@ function manager(fake: Fake = {}) {
 function load(frame: FrameTest, plugins: PluginManager): string[] {
   const tui = frame.surface("plugins").tui;
   const notices: string[] = [];
-  const services: Record<string, unknown> = { tui };
   apply(
     {
-      get: (name: string) => services[name],
+      get: (name: string) => (name === "tui" ? tui : undefined),
       notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-      signal: new AbortController().signal,
     } as never,
     plugins,
   );
@@ -119,12 +117,17 @@ function load(frame: FrameTest, plugins: PluginManager): string[] {
   return notices;
 }
 
-/** Open the dashboard, and give the drawn rows after it settles. */
-async function open(frame: FrameTest): Promise<string[]> {
-  frame.surface("plugins").tui.commands.run("plugins:open");
+/** The drawn rows after the work of `frame` settles. */
+async function drawn(frame: FrameTest): Promise<string[]> {
   await waitForSettled();
   frame.draw();
   return rows(frame.frame);
+}
+
+/** Open the dashboard, and give the drawn rows after it settles. */
+async function open(frame: FrameTest): Promise<string[]> {
+  frame.surface("plugins").tui.commands.run("plugins:open");
+  return drawn(frame);
 }
 
 /** Press `keys` in order, and give the drawn rows after they settle. */
@@ -133,8 +136,7 @@ async function press(frame: FrameTest, ...keys: [string, ...string[]]): Promise<
     frame.key(key);
     await waitForSettled();
   }
-  frame.draw();
-  return rows(frame.frame);
+  return drawn(frame);
 }
 
 /** Type `text` into the open field, press Enter, and give the drawn rows after they settle. */
@@ -216,11 +218,9 @@ test("s syncs with a spinner in the title, the keys wait while it runs, and the 
   await open(frame);
   const running = await press(frame, "s");
   fake.syncs.finish?.();
-  await waitForSettled();
-  frame.draw();
-  const synced = rows(frame.frame);
+  const synced = await drawn(frame);
 
-  assertEquals([rowOf(running, "Plugins"), rowOf(running, "esc: close")], [" Plugins · 6 · ⠋ Syncing…", " esc: close"]);
+  assertEquals([rowOf(running, "Plugins"), rowOf(running, "esc: close")], [" Plugins · 6 · ⠋ syncing…", " esc: close"]);
   assertEquals(fake.calls, ["list", "sync", "list"]);
   assertEquals(rowOf(synced, "Plugins"), " Plugins · 6 · installed 2 plugins · r loads them");
 });
@@ -236,7 +236,7 @@ test("a failed action gives a notice and leaves the title", async () => {
   assertEquals(notices, ["error Syncing failed: the remote is gone"]);
 });
 
-test("a adds the one new plugin of a repository, and an empty URL or a repository of known plugins says why", async () => {
+test("a adds the one new plugin of a repository, and an empty URL says why", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   const fake = manager();
   load(frame, fake.plugins);
@@ -249,13 +249,16 @@ test("a adds the one new plugin of a repository, and an empty URL or a repositor
   assertEquals(rowOf(empty, "type the URL"), " type the URL of a Git repository");
   assertEquals(fake.calls, ["list", "find https://h/news", 'add {"git":"https://h/news","names":["news"]}', "list"]);
   assertEquals(rowOf(added, "Plugins"), " Plugins · 6 · added news · r loads it");
+});
 
-  using known = createFrame({ width: 100, height: 20 });
-  load(known, manager({ found: [{ name: "clock" }] }).plugins);
-  await open(known);
-  known.key("a");
-  const refused = await submit(known, "https://h/r");
-  // The prompt stays open with its text after the error.
+test("a repository of known plugins keeps the prompt open with its text and the reason", async () => {
+  using frame = createFrame({ width: 100, height: 20 });
+  load(frame, manager({ found: [{ name: "clock" }] }).plugins);
+
+  await open(frame);
+  frame.key("a");
+  const refused = await submit(frame, "https://h/r");
+
   assertEquals(
     [rowOf(refused, "config.json has"), rowOf(refused, "https://h/r")],
     [" config.json has each plugin of the repository already", " https://h/r"],

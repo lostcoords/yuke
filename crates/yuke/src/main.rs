@@ -112,7 +112,7 @@ enum Command {
         /// Test files, or folders that hold them.
         paths: Vec<PathBuf>,
     },
-    /// Install, update, and list the Git plugins of config.json. Their commits are in plugins.lock.
+    /// Manage the plugins of config.json. The commits of the Git plugins are in plugins.lock.
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
@@ -328,7 +328,6 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
     let (paths, _) = environment_paths()?;
     let say =
         |text: &str| writeln!(io::stdout(), "{text}").map_err(|error| format!("the output did not write: {error}"));
-    let short = |commit: &str| commit[..7].to_owned();
     match command {
         PluginCommand::List => say(&plugin_list(&paths)?)?,
         PluginCommand::Sync { locked } => {
@@ -372,11 +371,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                 }
             }
             let names: Vec<&str> = changes.iter().map(|change| change.name.as_str()).collect();
-            let names = match names.as_slice() {
-                [one] => (*one).to_owned(),
-                [first, second] => format!("{first} and {second}"),
-                _ => format!("{} plugins", names.len()),
-            };
+            let names = names.join(", ");
             if !yes && !confirm(&format!("Write the new commits of {names} to plugins.lock? [y/N] "))? {
                 say("plugins.lock is unchanged.")?;
                 return Ok(ExitCode::SUCCESS);
@@ -414,25 +409,21 @@ fn plugin_list(paths: &Paths) -> Result<String, String> {
     if outcomes.is_empty() {
         return Ok("config.json has no plugins. `yuke plugin add URL` adds one.".to_owned());
     }
-    let rows: Vec<(&str, String)> = (outcomes.iter())
-        .map(|outcome| {
-            let state = match (&outcome.failure, &outcome.commit) {
-                (Some(Failure::NotInstalled), _) => "not installed".to_owned(),
-                (Some(Failure::Invalid(_)), _) => "failed".to_owned(),
-                (None, Some(commit)) => format!("installed {}", &commit[..7]),
-                (None, None) => "local".to_owned(),
-            };
-            (outcome.label(), state)
+    let states: Vec<String> = (outcomes.iter())
+        .map(|outcome| match (&outcome.failure, &outcome.commit) {
+            (Some(Failure::NotInstalled), _) => "not installed".to_owned(),
+            (Some(Failure::Invalid(_)), _) => "failed".to_owned(),
+            (None, Some(commit)) => format!("installed {}", short(commit)),
+            (None, None) => "local".to_owned(),
         })
         .collect();
-    let name = rows.iter().map(|(name, _)| name.len()).fold("NAME".len(), usize::max);
-    let state = rows
-        .iter()
-        .map(|(_, state)| state.len())
-        .fold("STATE".len(), usize::max);
+    let name = (outcomes.iter())
+        .map(|outcome| outcome.label().len())
+        .fold("NAME".len(), usize::max);
+    let state = states.iter().map(String::len).fold("STATE".len(), usize::max);
     let mut lines = vec![format!("{:name$}  {:state$}  SOURCE", "NAME", "STATE")];
-    for (outcome, (label, words)) in outcomes.iter().zip(&rows) {
-        lines.push(format!("{label:name$}  {words:state$}  {}", outcome.source));
+    for (outcome, words) in outcomes.iter().zip(&states) {
+        lines.push(format!("{:name$}  {words:state$}  {}", outcome.label(), outcome.source));
         if let Some(Failure::Invalid(reason)) = &outcome.failure {
             lines.push(format!("{:name$}  {reason}", ""));
         }
@@ -444,6 +435,11 @@ fn plugin_list(paths: &Paths) -> Result<String, String> {
         lines.push("`yuke plugin sync` installs the plugins that are not installed.".to_owned());
     }
     Ok(lines.join("\n"))
+}
+
+/// The first seven digits of `commit`.
+fn short(commit: &str) -> &str {
+    &commit[..7]
 }
 
 /// Ask `question` on the terminal. Gives whether the answer is yes.
