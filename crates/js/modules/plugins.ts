@@ -25,6 +25,7 @@ import type {
   InteractionId,
   InteractionResponse,
   Job,
+  JobId,
   ListCatalogResult,
   ListSessionsParams,
   ListSessionsResult,
@@ -186,7 +187,7 @@ export interface SessionHandle extends Disposable {
   /** The running background jobs, oldest first. */
   readonly jobs: () => readonly Job[];
   /** Stop the job `jobId`, and wait for its end. */
-  readonly stopJob: (jobId: string) => Promise<void>;
+  readonly stopJob: (jobId: JobId) => Promise<void>;
   /** The MCP servers of the session and their states. */
   readonly mcpServers: () => readonly McpServer[];
 }

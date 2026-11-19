@@ -18,6 +18,7 @@ declare module "yuke:internal/native" {
     InteractionId,
     InteractionResponse,
     Job,
+    JobId,
     ListCatalogResult,
     ListPluginsResult,
     ListSessionsParams,
@@ -539,7 +540,7 @@ declare module "yuke:internal/native" {
   export function sessionRemoveInput(request: readonly [id: SessionId, inputId: InputId]): Promise<boolean>;
   /** Save `bytes` in the store of session `id`. */
   export function sessionPutBlob(id: SessionId, bytes: Uint8Array): Promise<Blob>;
-  export function sessionStopJob(request: readonly [id: SessionId, jobId: string]): Promise<null>;
+  export function sessionStopJob(request: readonly [id: SessionId, jobId: JobId]): Promise<null>;
   export function sessionClose(id: SessionId): Promise<null>;
   export function sessionCancel(id: SessionId): void;
   export function sessionBackground(id: SessionId): void;

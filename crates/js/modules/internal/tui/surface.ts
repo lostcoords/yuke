@@ -138,7 +138,6 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         mounted(core.panes.split(owner, create, options?.direction ?? "row")),
     ),
     moveFocus: live((direction: FocusDirection): boolean => core.panes.moveFocus(direction)),
-    focusNext: live((): void => core.panes.focusNext()),
     setDefault: live((create: DefaultPaneFactory): (() => void) => {
       return scope.own(core.setDefaultPane({ owner, create, adopt: (mount) => scope.ownMount(mount), signal }));
     }),

@@ -421,8 +421,6 @@ declare module "yuke:tui" {
      * `undefined`.
      */
     hitTest: (point: Point) => P | undefined;
-    /** The cell of `position` in the widget, or `undefined` when it does not show. */
-    screenAt: (position: P) => Point | undefined;
     /** Scroll the least to show `position`. `false` when it cannot show. */
     ensureVisible: (position: P) => boolean;
   }
@@ -513,7 +511,6 @@ declare module "yuke:tui" {
     submit(): void;
     extend(signal: AbortSignal): TextExtension<number, EditorChange>;
     hitTest(point: Point): number | undefined;
-    screenAt(position: number): Point | undefined;
     ensureVisible(position: number): boolean;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
@@ -588,8 +585,6 @@ declare module "yuke:tui" {
     readonly group?: object | undefined;
     /** The cursor shape of the caret. A text view draws no prompt. */
     readonly appearance?: TextAppearance | undefined;
-    /** Copy a mouse selection when the button goes up. The default is true. */
-    readonly copyOnRelease?: boolean | undefined;
     /** Act on a click without a drag, and on `activate()`. `link` is the target of the segment at the position. */
     readonly onActivate?: ((position: TextPosition, link: string | undefined) => void) | undefined;
     readonly followTail?: boolean | undefined;
@@ -598,8 +593,7 @@ declare module "yuke:tui" {
 
   /**
    * A read-only view of a document of items and sections, on a scroll list. A position stays on its section when other
-   * items change. A drag selects. When `copyOnRelease` is true (the default), the release copies the selection. The
-   * view has no default keys.
+   * items change. A drag selects, and the release copies the selection. The view has no default keys.
    */
   export class TextView implements TextWidget<TextPosition, TextViewChange> {
     constructor(options: TextViewOptions);
@@ -626,7 +620,6 @@ declare module "yuke:tui" {
     activate(position: TextPosition): boolean;
     extend(signal: AbortSignal): TextExtension<TextPosition, TextViewChange>;
     hitTest(point: Point): TextPosition | undefined;
-    screenAt(position: TextPosition): Point | undefined;
     ensureVisible(position: TextPosition): boolean;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
@@ -897,7 +890,6 @@ declare module "yuke:tui" {
      */
     readonly setDefault: (create: DefaultPaneFactory) => () => void;
     readonly moveFocus: (direction: FocusDirection) => boolean;
-    readonly focusNext: () => void;
   }
 
   /** A key of a dialog, with its label in the footer. Two keys in a row with one label share one entry. */

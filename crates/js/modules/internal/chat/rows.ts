@@ -5,7 +5,16 @@
 
 import type { ComposerView } from "yuke:chat";
 import { wrap } from "yuke:internal/tui/text";
-import { type CanvasStyle, fit, measure, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
+import {
+  type CanvasStyle,
+  fit,
+  measure,
+  type OffsetRange,
+  type Segment,
+  type TextItem,
+  type TextRow,
+  type TextSection,
+} from "yuke:tui";
 
 /** The style groups of the chat. The default theme gives their look. */
 export const STYLE = {
@@ -42,9 +51,7 @@ const GAP: TextSection = Object.freeze({
 });
 
 /** A range of a source text with its style and its link. */
-export interface Range {
-  readonly from: number;
-  readonly to: number;
+export interface StyledRange extends OffsetRange {
   readonly style?: string | undefined;
   readonly link?: string | undefined;
 }
@@ -78,7 +85,7 @@ export function styledRows(text: string, width: number, style: string | undefine
  * The rows of `text` at `width`, indented. `ranges` are in source order and do not overlap. A segment ends at each
  * bound of a range, and it takes the style and the link of its range. Text outside each range has neither.
  */
-export function rangedRows(text: string, width: number, ranges: readonly Range[]): TextRow[] {
+export function rangedRows(text: string, width: number, ranges: readonly StyledRange[]): TextRow[] {
   const triples = wrap(text, Math.max(1, width - 2));
   const rows: TextRow[] = [];
   for (let at = 0; at < triples.length; at += 3) {
