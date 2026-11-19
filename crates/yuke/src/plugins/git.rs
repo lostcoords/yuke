@@ -7,9 +7,9 @@ use std::process::Stdio;
 
 use tokio::process::Command;
 
-/// Whether `text` is a full commit id: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits.
+/// Whether `text` is a full commit id: 40 lowercase hex digits.
 pub(crate) fn is_commit(text: &str) -> bool {
-    matches!(text.len(), 40 | 64) && text.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    text.len() == 40 && text.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// A `git` command on the cache repository `cache`, or on no repository.
@@ -91,17 +91,11 @@ pub(crate) async fn resolve(url: &str, reference: Option<&str>) -> Result<String
 pub(crate) async fn fetch(cache: &Path, url: &str, commit: &str) -> Result<(), String> {
     if !cache.exists() {
         let mut init = git(None);
-        init.args(["init", "--bare", "--quiet", "--template="]);
-        // A cache of SHA-1 objects cannot fetch from a SHA-256 repository.
-        if commit.len() == 64 {
-            init.arg("--object-format=sha256");
-        }
-        init.arg(cache);
+        init.args(["init", "--bare", "--quiet"]).arg(cache);
         run(init, "init").await?;
     }
     let mut has = git(Some(cache));
-    has.args(["cat-file", "-e", "--end-of-options"])
-        .arg(format!("{commit}^{{commit}}"));
+    has.args(["cat-file", "-e"]).arg(format!("{commit}^{{commit}}"));
     if run(has, "cat-file").await.is_ok() {
         return Ok(());
     }
@@ -119,7 +113,7 @@ pub(crate) async fn fetch(cache: &Path, url: &str, commit: &str) -> Result<(), S
 pub(crate) async fn export(cache: &Path, commit: &str, folder: &Path) -> Result<(), String> {
     let mut archive = git(Some(cache));
     archive
-        .args(["archive", "--format=tar", "--end-of-options", commit])
+        .args(["archive", "--format=tar", commit])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut archive = archive.spawn().map_err(|error| start_error("git", &error))?;
@@ -153,7 +147,7 @@ pub(crate) async fn export(cache: &Path, commit: &str, folder: &Path) -> Result<
 /// The path of each file named `name` at the commit `commit` of the cache repository `cache`, in path order.
 pub(crate) async fn files_named(cache: &Path, commit: &str, name: &str) -> Result<Vec<String>, String> {
     let mut tree = git(Some(cache));
-    tree.args(["ls-tree", "-r", "-z", "--name-only", "--end-of-options", commit]);
+    tree.args(["ls-tree", "-r", "-z", "--name-only", commit]);
     let text = run(tree, "ls-tree").await?;
     Ok(text
         .split('\0')
@@ -168,7 +162,7 @@ pub(crate) async fn files_named(cache: &Path, commit: &str, name: &str) -> Resul
 /// The text of the file `path` at the commit `commit` of the cache repository `cache`.
 pub(crate) async fn show(cache: &Path, commit: &str, path: &str) -> Result<String, String> {
     let mut show = git(Some(cache));
-    show.args(["show", "--end-of-options"]).arg(format!("{commit}:{path}"));
+    show.args(["show"]).arg(format!("{commit}:{path}"));
     run(show, "show").await
 }
 
@@ -176,14 +170,8 @@ pub(crate) async fn show(cache: &Path, commit: &str, path: &str) -> Result<Strin
 /// without it. Newest first, as a short id and a subject.
 pub(crate) async fn log(cache: &Path, old: &str, new: &str, folder: Option<&str>) -> Result<Vec<String>, String> {
     let mut log = git(Some(cache));
-    log.args([
-        "--no-pager",
-        "log",
-        "--no-show-signature",
-        "--format=%h %s",
-        "--end-of-options",
-    ])
-    .arg(format!("{old}..{new}"));
+    log.args(["--no-pager", "log", "--no-show-signature", "--format=%h %s"])
+        .arg(format!("{old}..{new}"));
     if let Some(folder) = folder {
         log.args(["--", folder]);
     }
