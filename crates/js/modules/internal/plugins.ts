@@ -149,7 +149,7 @@ export async function load(spec: PluginSpec): Promise<void> {
     if (session !== undefined) sessionExports.push({ plugin: spec.name, session, options });
     loaded.push(cleanup === undefined ? { plugin: spec.name, abort } : { plugin: spec.name, abort, cleanup });
   } catch (error) {
-    abort(`plugin ${spec.name} did not load`);
+    abort(`Plugin ${spec.name} did not load`);
     if (cleanup !== undefined) await clean(spec.name, cleanup);
     throw error;
   }

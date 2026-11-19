@@ -270,7 +270,7 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
     assert_eq!(notice["params"]["source"], "host:yuke");
     let message = notice["params"]["text"].as_str().unwrap();
     assert!(
-        message.starts_with("plugin broken did not load: Error: no luck"),
+        message.starts_with("Plugin broken did not load: Error: no luck"),
         "{message}"
     );
     client.end().await;

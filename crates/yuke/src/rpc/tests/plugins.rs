@@ -67,7 +67,7 @@ async fn a_plugin_that_does_not_load_at_the_start_lists_as_failed_with_its_reaso
     assert_eq!(listed["plugins"][1]["load"], json!({ "kind": "loaded" }));
     assert_eq!(listed["plugins"][0]["load"]["kind"], "failed");
     let error = listed["plugins"][0]["load"]["error"].as_str().unwrap();
-    assert!(error.starts_with("plugin broken did not load: Error: no"), "{error}");
+    assert!(error.starts_with("Plugin broken did not load: Error: no"), "{error}");
     client.end().await;
 }
 

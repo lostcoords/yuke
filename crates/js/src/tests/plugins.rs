@@ -78,7 +78,7 @@ async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
 
     assert_eq!(
         texts(&failures),
-        [("bad".to_owned(), "plugin bad did not load: Error: broken".to_owned())]
+        [("bad".to_owned(), "Plugin bad did not load: Error: broken".to_owned())]
     );
     assert_eq!(tool_names(&runtime, &folder).await, ["kept"]);
     assert!(

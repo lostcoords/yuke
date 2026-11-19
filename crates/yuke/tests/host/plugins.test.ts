@@ -277,9 +277,9 @@ test("a service passes to a later plugin, and a failed provider stops its users 
   });
 
   assertEquals(await failures(host), [
-    "plugin broken did not load: Error: no store",
-    "plugin middle did not load: it uses 'test.store.v1', and plugin broken that provides it did not load",
-    "plugin last did not load: it uses 'test.index.v1', and plugin middle that provides it did not load",
+    "Plugin broken did not load: Error: no store",
+    "Plugin middle did not load: it uses 'test.store.v1', and plugin broken that provides it did not load",
+    "Plugin last did not load: it uses 'test.index.v1', and plugin middle that provides it did not load",
   ]);
   assertEquals([count, ran], [3, false]);
 });
@@ -301,8 +301,8 @@ test("a plugin whose provider comes after it does not run, nor do its users, and
   });
 
   assertEquals(await failures(host), [
-    "plugin first did not load: it uses 'test.b.v1', and no plugin before it provides it",
-    "plugin second did not load: it uses 'test.a.v1', and plugin first that provides it did not load",
+    "Plugin first did not load: it uses 'test.b.v1', and no plugin before it provides it",
+    "Plugin second did not load: it uses 'test.a.v1', and plugin first that provides it did not load",
   ]);
   assertEquals(ran, ["plain"]);
 });
@@ -330,7 +330,7 @@ test("a provide of a service that the manifest does not name fails the load of t
   });
 
   assertEquals(await failures(host), [
-    "plugin words did not load: TypeError: plugin words provides 'test.words.v1', and its manifest does not name it in provides",
+    "Plugin words did not load: TypeError: plugin words provides 'test.words.v1', and its manifest does not name it in provides",
   ]);
 });
 
@@ -426,7 +426,7 @@ test("options that fail the check fail the load of that plugin before its apply"
     ],
   });
 
-  const failure = (name: string, text: string) => `plugin ${name} did not load: TypeError: ${text}`;
+  const failure = (name: string, text: string) => `Plugin ${name} did not load: TypeError: ${text}`;
   assertEquals(await failures(host), [
     failure("missing", "the options of the plugin: Set folder to a string."),
     failure("wrong", "the options of the plugin: Set depth to an integer of at least 1."),

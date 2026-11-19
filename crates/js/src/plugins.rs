@@ -93,7 +93,7 @@ impl PluginFailure {
 
 impl fmt::Display for PluginFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "plugin {} did not load: ", self.name)?;
+        write!(f, "Plugin {} did not load: ", self.name)?;
         match &self.reason {
             PluginError::Load(error) => write!(f, "{error}"),
             PluginError::Provider { service, provider } => write!(

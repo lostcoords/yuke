@@ -57,7 +57,7 @@ test("a plugin that does not load rejects the host with its reason", async () =>
 
   const error = await assertRejects(() => createHost({ plugins: [{ name: "failing", apply: failing }] }));
 
-  assertEquals(error instanceof Error && error.message.includes("plugin failing did not load"), true);
+  assertEquals(error instanceof Error && error.message.includes("Plugin failing did not load"), true);
 });
 
 test("a given plugin name follows the rule of a manifest name", async () => {

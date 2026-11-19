@@ -241,7 +241,7 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
     config(r#""no""#);
     let (display, output) = display();
     let mut app = started(&place, &display).await;
-    output.contains("plugin bar did not load").await;
+    output.contains("Plugin bar did not load").await;
     assert!(
         output.rows().iter().all(|row| !row.contains("marked")),
         "{:?}",
@@ -254,7 +254,7 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
 
     config(r#""no""#);
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    output.contains("plugin bar did not load").await;
+    output.contains("Plugin bar did not load").await;
     assert!(
         output.rows().iter().all(|row| !row.contains("marked")),
         "{:?}",
