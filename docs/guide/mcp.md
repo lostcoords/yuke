@@ -4,7 +4,7 @@ description: Connect local MCP servers over stdio, and approve the servers of a 
 
 # MCP servers
 
-yuke supports local MCP servers over stdio. It does not support remote HTTP, SSE, or OAuth servers.
+yuke supports local MCP servers over stdio. It does not support remote HTTP, SSE, or OAuth servers. A server with a `url` fails alone, and the other servers still start. This lets one `mcp.json` serve other tools too.
 
 ## Sources and trust
 

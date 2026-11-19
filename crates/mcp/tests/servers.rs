@@ -604,7 +604,7 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
             server(
                 "http",
                 McpServerState::Failed {
-                    error: "yuke cannot reach an HTTP server yet".to_owned()
+                    error: "yuke supports only stdio servers, and this entry names a url".to_owned()
                 }
             ),
             server(

@@ -55,7 +55,7 @@ impl ServerConfig {
         let expand = |text: &str| expand(text, variable);
         let program = match (&self.command, &self.url) {
             (Some(program), None) => program,
-            (None, Some(_)) => return Err("yuke cannot reach an HTTP server yet".to_owned()),
+            (None, Some(_)) => return Err("yuke supports only stdio servers, and this entry names a url".to_owned()),
             _ => return Err("the server needs exactly one of command and url".to_owned()),
         };
         let mut command = Command::new(expand(program)?);
