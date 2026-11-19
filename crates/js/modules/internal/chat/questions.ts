@@ -248,12 +248,15 @@ export interface ChatQuestionsOptions {
 /**
  * The first open request of a plugin in a chat session, as a view with one page per question. Up and Down move,
  * Space ticks, Enter answers and goes to the next page, and the last Enter sends. Left or Shift+Tab goes back. A
- * question without options and with `other` is a field, and `secret` masks that field. The owner binds the cancel key to `cancel()`. A caller places
- * the view, as the chat does in the place of the composer. A view answers once, and a refused answer can come again. The others wait in order. A request of an
- * ended handle shows after the next open.
+ * question without options and with `other` is a field, and `secret` masks that field. The owner binds the cancel key
+ * to `cancel()`. A caller places the view, as the chat does in the place of the composer. A view answers once, and a
+ * refused answer can come again. The others wait in order. A request of an ended handle shows after the next open.
  *
  * ```ts
- * const questions = new ChatQuestions(chat, { signal: mount.signal, onError: (error) => ctx.notify("error", String(error)) });
+ * const questions = new ChatQuestions(chat, {
+ *   signal: mount.signal,
+ *   onError: (error) => ctx.notify("error", String(error)),
+ * });
  * place(questions.current); // a request that is open already
  * questions.addChangeListener(() => place(questions.current));
  * ```

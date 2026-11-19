@@ -2,8 +2,9 @@
 
 /**
  * Model requests for plugins, with the catalog and the credentials of the sessions.
- * - `generateText` takes a subset of the option names of the Vercel AI SDK. The values keep the yuke shapes: `prompt`
- *   takes blocks, not messages, and `reasoning`, `finishReason`, and `usage` have the types of `yuke:protocol`.
+ * - `generateText` takes a subset of the option names of the Vercel AI SDK, but the option that aborts the request is
+ *   `signal`, as in `fetch`, and not `abortSignal`. The values keep the yuke shapes: `prompt` takes blocks, not
+ *   messages, and `reasoning`, `finishReason`, and `usage` have the types of `yuke:protocol`.
  * - A request offers no tools and runs no plugin hooks. The session keeps nothing of it.
  * - After an overload or a lost connection, the request sends its attempt again, as a turn does.
  * - A media block of the prompt fails the request, because the request cannot read the store of a session. Pass new
