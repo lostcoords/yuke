@@ -28,11 +28,9 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     let loaded = client.call("plugin/list", json!({})).await;
 
     let notice = started.iter().find(|message| message["method"] == "notice").unwrap();
-    let text = notice["params"]["text"].as_str().unwrap();
-    assert!(
-        text.starts_with("Only the bundled plugins run, because the plugin list did not load: ")
-            && text.ends_with("plugins.lock has no commit for this plugin: run `yuke plugin sync`"),
-        "{text}"
+    assert_eq!(
+        notice["params"]["text"],
+        "plugin clock did not load: it is not installed: /plugins or `yuke plugin sync` installs it"
     );
     let source = json!({ "git": url, "folder": "plugins/clock" });
     assert_eq!(

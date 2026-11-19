@@ -32,6 +32,8 @@ An entry is a path, or an object with `path` or `git`:
 
 yuke never downloads a plugin at startup. For a Git plugin that you add to `config.json` by hand, run `yuke plugin sync` or use `/plugins` in the terminal UI.
 
+A plugin that does not load does not stop the others. This covers a plugin that is not installed, has a bad `plugin.json`, or fails in its code. yuke loads the other plugins and gives one notice that names the failed plugins. `/plugins` shows why each one failed. A bad `config.json` or `plugins.lock` stops the start.
+
 | Command | Description |
 |---|---|
 | `yuke plugin add URL` | Add a Git plugin to `config.json`, install it, and lock its commit in `plugins.lock`. `--folder` and `--ref` select the folder and the ref. |
@@ -99,7 +101,7 @@ Module state lasts for one runtime. Use `ctx.dataDir` for files that must surviv
 
 ## Services
 
-A service shares a typed value between plugins. The provider names the service in `provides` in the `sh.yuke` extension of `plugin.json`, and publishes it with `ctx.provide(name, value)` during `apply`. A consumer names it in `uses` and reads it with `ctx.get(name)`. The loader loads providers first, and rejects a missing provider, a duplicate provider, and a cycle. A provider adds the type of its service to the `Services` interface of `yuke:plugins`.
+A service shares a typed value between plugins. The provider names the service in `provides` in the `sh.yuke` extension of `plugin.json`, and publishes it with `ctx.provide(name, value)` during `apply`. A consumer names it in `uses` and reads it with `ctx.get(name)`. The loader loads providers first. A plugin does not load when another plugin before it provides the same service, or when no plugin before it provides a service that it uses. A cycle of uses has the same result. A provider adds the type of its service to the `Services` interface of `yuke:plugins`.
 
 Three services need no `uses` entry:
 
@@ -149,6 +151,6 @@ Check the types with `tsc -p ~/.config/yuke/tsconfig.json`. Use your actual prof
 
 For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`. A test uses an isolated app and a fake model, and needs no provider credentials. `types/test.d.ts` has the test API. A type check or a test does not show how the terminal draws: start a terminal session to check that.
 
-`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end first. A reload replaces the JavaScript runtime, so module state resets and plugin jobs stop. A failed reload keeps the previous plugins and providers.
+`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end first. A reload replaces the JavaScript runtime, so module state resets and plugin jobs stop. A plugin that does not load does not fail the reload: the other plugins load. A bad `config.json`, `plugins.lock`, or `providers.json` fails the reload, and yuke keeps the previous plugins and providers.
 
 Console output becomes a `notice` from the source `console`. A terminal shows it as a notice, and an RPC client gets it as a `notice` notification. CLI startup errors go to stderr.

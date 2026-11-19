@@ -1,6 +1,7 @@
-//! The plugins of a runtime. Each plugin loads in the order of the list. A plugin whose provider failed does not run.
+//! The plugins of a runtime. Each plugin loads in the order of the list. A plugin without a loaded provider for each
+//! service that it uses does not run.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 
@@ -75,6 +76,11 @@ pub(crate) enum PluginError {
         /// The plugin that provides the service.
         provider: String,
     },
+    /// The plugin uses `service`, and no plugin before it provides it. The plugin did not run.
+    Missing {
+        /// The service that the plugin uses.
+        service: String,
+    },
 }
 
 impl PluginFailure {
@@ -94,6 +100,11 @@ impl fmt::Display for PluginFailure {
                 "plugin {} did not load: it uses '{service}', and plugin {provider} that provides it did not load",
                 self.name
             ),
+            PluginError::Missing { service } => write!(
+                f,
+                "plugin {} did not load: it uses '{service}', and no plugin before it provides it",
+                self.name
+            ),
         }
     }
 }
@@ -103,7 +114,7 @@ impl std::error::Error for PluginFailure {
         match &self.reason {
             // The text holds the text of the error, so the source is the source of the error.
             PluginError::Load(error) => std::error::Error::source(error),
-            PluginError::Provider { .. } => None,
+            PluginError::Provider { .. } | PluginError::Missing { .. } => None,
         }
     }
 }
@@ -143,23 +154,34 @@ impl Handle {
     }
 
     /// Load `plugins` in their order. Run each `apply`, and keep each `session` for the sessions that open later.
-    /// Return each plugin that did not load. A failed plugin runs no `session`. A plugin whose provider did not load does
-    /// not run, and its own services fail with it.
+    /// Return each plugin that did not load. A failed plugin runs no `session`. A plugin runs only when each service
+    /// that it uses has a provider that loaded before it in `plugins`. The services of a plugin that does not run fail
+    /// with it.
     pub async fn load_plugins(&self, plugins: &[Plugin]) -> Vec<PluginFailure> {
+        let mut provided: HashSet<&str> = HashSet::new();
         let mut failed: HashMap<&str, &str> = HashMap::new();
         let mut failures = Vec::new();
         for plugin in plugins {
             let lost = plugin
                 .uses
                 .iter()
-                .find_map(|service| failed.get(service.as_str()).map(|provider| (service, *provider)));
+                .find_map(|service| match failed.get(service.as_str()) {
+                    Some(provider) => Some(PluginError::Provider {
+                        service: service.clone(),
+                        provider: (*provider).to_owned(),
+                    }),
+                    None if !provided.contains(service.as_str()) => Some(PluginError::Missing {
+                        service: service.clone(),
+                    }),
+                    None => None,
+                });
             let reason = match lost {
-                Some((service, provider)) => PluginError::Provider {
-                    service: service.clone(),
-                    provider: provider.to_owned(),
-                },
+                Some(reason) => reason,
                 None => match self.load_plugin(plugin).await {
-                    Ok(()) => continue,
+                    Ok(()) => {
+                        provided.extend(plugin.provides.iter().map(String::as_str));
+                        continue;
+                    }
                     Err(error) => PluginError::Load(error),
                 },
             };

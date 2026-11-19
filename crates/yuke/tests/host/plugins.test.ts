@@ -284,6 +284,31 @@ test("a service passes to a later plugin, and a failed provider stops its users 
   assertEquals([count, ran], [3, false]);
 });
 
+test("a plugin without a provider before it does not run, also in a cycle of uses, and the others load", async () => {
+  const ran: string[] = [];
+  const run =
+    (name: string): PluginApply =>
+    () => {
+      ran.push(name);
+      return undefined;
+    };
+  const host = createHost({
+    plugins: [
+      { name: "first", uses: ["test.b.v1"], provides: ["test.a.v1"], apply: run("first") },
+      { name: "lonely", uses: ["test.absent.v1"], apply: run("lonely") },
+      { name: "plain", apply: run("plain") },
+      { name: "second", uses: ["test.a.v1"], provides: ["test.b.v1"], apply: run("second") },
+    ],
+  });
+
+  assertEquals(await failures(host), [
+    "plugin first did not load: it uses 'test.b.v1', and no plugin before it provides it",
+    "plugin lonely did not load: it uses 'test.absent.v1', and no plugin before it provides it",
+    "plugin second did not load: it uses 'test.a.v1', and plugin first that provides it did not load",
+  ]);
+  assertEquals(ran, ["plain"]);
+});
+
 test("a plugin that provides a service of yuke rejects the host", async () => {
   const error = await assertRejects(() => createHost({ plugins: [{ name: "catalogs", provides: ["catalog"] }] }));
 

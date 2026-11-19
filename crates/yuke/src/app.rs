@@ -49,7 +49,7 @@ pub(crate) use self::test_host::{TestPlace, TestSetup};
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
-use crate::plugins;
+use crate::plugins::{self, Outcome};
 use crate::prompt::{self, Environment, Prompt};
 use crate::providers::Providers;
 
@@ -149,36 +149,29 @@ struct Profile {
     providers: Rc<Providers>,
     /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
     plugin_folders: Rc<[PathBuf]>,
-    /// The name of each plugin that the runtime loaded.
-    loaded: Rc<[String]>,
+    /// The outcome of each plugin of `config.json` at the last load, with the failures of the runtime.
+    outcomes: Rc<[Outcome]>,
     /// The wait of a session with running jobs and no holder before it closes, from `sessionIdleMinutes`.
     session_idle: Duration,
 }
 
 impl Profile {
     /// The profile of the config folder of `paths`, and its plugins in load order. It makes the data folder of each
-    /// plugin. With `fallback`, a plugin list that does not load gives the bundled plugins alone and the error of the
-    /// list.
-    fn load(paths: &Paths, fallback: bool) -> Result<(Self, Vec<yuke_js::Plugin>, Option<String>), String> {
+    /// plugin.
+    fn load(paths: &Paths) -> Result<(Self, Vec<yuke_js::Plugin>), String> {
         let providers = Providers::load(&paths.config)?;
         let config: Config = read_json(&paths.config.join("config.json"))?.unwrap_or_default();
-        let (plugins, failed) = match plugins::plugins(&paths.config, &config, &paths.data) {
-            Ok(plugins) => (plugins, None),
-            // The bundled plugins can fix the list, for example with a sync of the Git plugins and a reload.
-            Err(error) if fallback => (plugins::bundled(&paths.config, &config, &paths.data)?, Some(error)),
-            Err(error) => return Err(error),
-        };
-        plugins::create_data_folders(&plugins)?;
+        let list = plugins::plugins(&paths.config, &config, &paths.data)?;
+        plugins::create_data_folders(&list.load)?;
         let profile = Self {
             providers: Rc::new(providers),
-            plugin_folders: Self::plugin_folders(&plugins),
-            // A failure at the start leaves the list, and a failure of a reload keeps the old profile.
-            loaded: plugins.iter().map(|plugin| plugin.name.clone()).collect(),
+            plugin_folders: Self::plugin_folders(&list.load),
+            outcomes: list.outcomes.into(),
             session_idle: Duration::from_secs(
                 60 * u64::from(config.session_idle_minutes.unwrap_or(SESSION_IDLE_MINUTES)),
             ),
         };
-        Ok((profile, plugins, failed))
+        Ok((profile, list.load))
     }
 
     /// The root folder of each folder plugin of `plugins`, in their order.
@@ -197,6 +190,51 @@ impl Profile {
 const SESSION_IDLE_MINUTES: u32 = 30;
 
 impl Shared {
+    /// Add the runtime `failures` to the outcomes of the profile, and send one notice for the plugins that did not load.
+    /// One failure gives its own text, and more give their names.
+    fn report_failures(&self, failures: Vec<yuke_js::PluginFailure>) {
+        let mut failed: Vec<(String, String)> = Vec::new();
+        {
+            let mut profile = self.profile.borrow_mut();
+            let mut outcomes = profile.outcomes.to_vec();
+            for failure in failures {
+                let text = chain_text(&failure);
+                match outcomes
+                    .iter_mut()
+                    .find(|outcome| outcome.failure.is_none() && outcome.name.as_deref() == Some(failure.name()))
+                {
+                    Some(outcome) => outcome.failure = Some(plugins::Failure::Invalid(text)),
+                    // A bundled plugin has no outcome.
+                    None => failed.push((failure.name().to_owned(), text)),
+                }
+            }
+            for outcome in &outcomes {
+                if let Some(text) = outcome.failure_text() {
+                    failed.push((outcome.label().to_owned(), text));
+                }
+            }
+            profile.outcomes = outcomes.into();
+        }
+        let text = match failed.as_slice() {
+            [] => return,
+            [(_, text)] => text.clone(),
+            _ => {
+                let names: Vec<&str> = failed.iter().map(|(name, _)| name.as_str()).collect();
+                format!(
+                    "{} plugins did not load: {} · /plugins or `yuke plugin list` shows why",
+                    names.len(),
+                    names.join(", ")
+                )
+            }
+        };
+        self.observer.notify(ServerNotification::Notice(NoticeParams {
+            session_id: None,
+            level: NoticeLevel::Error,
+            source: SOURCE.to_owned(),
+            text,
+        }));
+    }
+
     /// Send `text` to the observer as a warning of yuke.
     fn warn(&self, text: &str) {
         self.observer.notify(ServerNotification::Notice(NoticeParams {
@@ -431,7 +469,10 @@ impl Shared {
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
     pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
-        let loaded = Rc::clone(&self.profile.borrow().loaded);
+        let loaded: Vec<String> = (self.profile.borrow().outcomes.iter())
+            .filter(|outcome| outcome.failure.is_none())
+            .filter_map(|outcome| outcome.name.clone())
+            .collect();
         let plugins = plugins::manager::list(&self.machine.paths, &loaded).map_err(AppError::Invalid)?;
         Ok(ListPluginsResult { plugins })
     }
@@ -535,8 +576,7 @@ impl App {
             observer,
             facts: Rc::clone(&facts),
         });
-        // A one-task run without the plugins of the user is a wrong run, so it fails instead.
-        let (profile, plugins, failed) = Profile::load(&machine.paths, mode == RunMode::Server)?;
+        let (profile, plugins) = Profile::load(&machine.paths)?;
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
         // removes. A test keeps the folder in its own place.
         let processes_folder = match &machine.test {
@@ -566,14 +606,6 @@ impl App {
             pending_logins: RefCell::default(),
             last_login: Cell::new(0),
         });
-        if let Some(error) = failed {
-            shared.observer.notify(ServerNotification::Notice(NoticeParams {
-                session_id: None,
-                level: NoticeLevel::Error,
-                source: SOURCE.to_owned(),
-                text: format!("Only the bundled plugins run, because the plugin list did not load: {error}"),
-            }));
-        }
         let sessions = SessionService::new(Rc::clone(&shared));
         let (runtime, reporter) = match start_runtime(&shared, &sessions).await {
             Ok(started) => started,
@@ -601,29 +633,9 @@ impl App {
         self.runtime.show(snapshot);
     }
 
-    /// Load `plugins`. Each plugin that does not load gives a notice, and the other plugins load.
+    /// Load `plugins`. The plugins that do not load give one notice, and the other plugins load.
     pub(crate) async fn load_plugins(&self, plugins: &[yuke_js::Plugin]) {
-        self.report_failures(self.runtime.load_plugins(plugins).await);
-    }
-
-    /// Send a notice for each plugin that did not load. The other plugins load.
-    fn report_failures(&self, failures: Vec<yuke_js::PluginFailure>) {
-        if !failures.is_empty() {
-            let mut profile = self.shared.profile.borrow_mut();
-            let loaded = profile
-                .loaded
-                .iter()
-                .filter(|name| !failures.iter().any(|failure| failure.name() == *name));
-            profile.loaded = loaded.cloned().collect();
-        }
-        for failure in failures {
-            self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
-                session_id: None,
-                level: NoticeLevel::Error,
-                source: SOURCE.to_owned(),
-                text: chain_text(&failure),
-            }));
-        }
+        self.shared.report_failures(self.runtime.load_plugins(plugins).await);
     }
 
     /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open. Its
@@ -634,11 +646,12 @@ impl App {
     ///
     /// - Returns [`AppError::TurnRuns`] while a turn runs in an open session.
     /// - Returns [`AppError::Changing`] while a call opens or closes a session.
-    /// - Returns [`AppError::Invalid`] when yuke cannot read or check `config.json`, `providers.json`, or a plugin folder.
-    /// - Returns [`AppError::Invalid`] when a plugin does not load.
+    /// - Returns [`AppError::Invalid`] when yuke cannot read or check `config.json`, `plugins.lock`, or
+    ///   `providers.json`.
     /// - Returns [`AppError::Internal`] when the new runtime does not start.
     ///
-    /// Each error keeps the old plugins and providers.
+    /// Each error keeps the old plugins and providers. A plugin that does not load is no error: the other plugins load,
+    /// and a notice tells which one failed.
     pub(crate) async fn reload(&mut self) -> Result<(), AppError> {
         let reload = self.sessions.start_reload()?;
         // A turn starts only under the session lock, so no turn starts while the reload holds each one.
@@ -647,7 +660,7 @@ impl App {
             held.push(live.try_hold().ok_or(AppError::TurnRuns)?);
         }
         // The new plugins use the new providers, for example in a model request of their `apply`.
-        let (profile, plugins, _) = Profile::load(&self.shared.machine.paths, false).map_err(AppError::Invalid)?;
+        let (profile, plugins) = Profile::load(&self.shared.machine.paths).map_err(AppError::Invalid)?;
         let old_profile = std::mem::replace(&mut *self.shared.profile.borrow_mut(), profile);
         // The new plugins load before the old plugins close. A runtime cannot load plugins after it closes its plugins.
         let (runtime, reporter) = match start_runtime(&self.shared, &self.sessions).await {
@@ -658,16 +671,6 @@ impl App {
             }
         };
         let failures = runtime.load_plugins(&plugins).await;
-        if !failures.is_empty() {
-            // A plugin load failure rejects the reload. An edit with a fault keeps the old runtime.
-            stop_runtime(&self.shared, runtime, reporter).await;
-            *self.shared.profile.borrow_mut() = old_profile;
-            let texts: Vec<String> = failures.iter().map(|failure| chain_text(failure)).collect();
-            return Err(AppError::Invalid(format!(
-                "the reload keeps the old plugins, because a plugin did not load: {}",
-                texts.join("; ")
-            )));
-        }
         let handle = runtime.handle();
         let mut opened = Vec::with_capacity(reload.sessions.len());
         for live in &reload.sessions {
@@ -693,6 +696,7 @@ impl App {
         stop_runtime(&self.shared, old_runtime, old_reporter).await;
         drop(held);
         drop(reload);
+        self.shared.report_failures(failures);
         Ok(())
     }
 

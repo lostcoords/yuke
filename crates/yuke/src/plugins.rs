@@ -1,12 +1,12 @@
 //! The plugins of yuke and of the profile: the bundled plugins, then the `plugins` list of `config.json` and the Agent
-//! Plugins `plugin.json` of each folder. The checks run before any plugin code. A bad list stops `yuke -p` and a reload.
-//! With a bad list, the terminal interface and the server start with the bundled plugins alone.
+//! Plugins `plugin.json` of each folder. The checks run before any plugin code. A plugin that fails a check does not
+//! load, and the other plugins load. A bad `config.json` or `plugins.lock` stops the whole list.
 
 mod git;
 mod lock;
 pub(crate) mod manager;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -110,42 +110,81 @@ const BUNDLED: &[Bundled] = &[
     },
 ];
 
-/// The plugins to load, in load order. The list has the bundled plugins first, without the ones that `config.disable`
-/// names. Each one gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order.
-/// [`load_order`] moves each provider before the plugins that use it. A relative folder starts in `config_folder`. A Git
-/// plugin loads from [`git_folder`] at its commit in `plugins.lock`, with no network. The data folder of each plugin is
+/// The plugins of a profile: the plugins to load, and the outcome of each plugin of `config.json`.
+#[derive(Debug, PartialEq)]
+pub(crate) struct PluginList {
+    /// The plugins to load, in load order.
+    pub(crate) load: Vec<Plugin>,
+    /// One outcome for each plugin of `config.json`, in its order.
+    pub(crate) outcomes: Vec<Outcome>,
+}
+
+/// A plugin of `config.json` at a load.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Outcome {
+    /// The plugin as `config.json` names it.
+    pub(crate) source: Source,
+    /// The name of its manifest, when the manifest reads.
+    pub(crate) name: Option<String>,
+    /// Why the plugin does not load. `None` for a plugin that loads.
+    pub(crate) failure: Option<Failure>,
+}
+
+/// Why a plugin of `config.json` does not load.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Failure {
+    /// A Git plugin without its commit in `plugins.lock` or on disk. A sync installs it.
+    NotInstalled,
+    /// The text of the problem, which names the plugin.
+    Invalid(String),
+}
+
+impl Outcome {
+    /// The name of the plugin, else the last part of its folder or of its URL.
+    pub(crate) fn label(&self) -> &str {
+        if let Some(name) = &self.name {
+            return name;
+        }
+        match &self.source {
+            Source::Folder(folder) => last_part(folder),
+            Source::Git(source) => last_part(source.folder.as_deref().unwrap_or(&source.git)),
+        }
+    }
+
+    /// The text of the failure, which names the plugin. `None` for a plugin that loads.
+    pub(crate) fn failure_text(&self) -> Option<String> {
+        Some(match self.failure.as_ref()? {
+            Failure::NotInstalled => format!(
+                "plugin {} did not load: it is not installed: /plugins or `yuke plugin sync` installs it",
+                self.label()
+            ),
+            Failure::Invalid(text) => text.clone(),
+        })
+    }
+}
+
+/// The last part of the folder or the URL `text`, without a `.git` end.
+fn last_part(text: &str) -> &str {
+    let last = text.trim_end_matches('/').rsplit(['/', ':']).next().unwrap_or_default();
+    last.strip_suffix(".git").unwrap_or(last)
+}
+
+/// The plugins of the profile. The bundled plugins come first, without the ones that `config.disable` names. Each one
+/// gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order. [`load_order`]
+/// moves each provider before the plugins that use it. A relative folder starts in `config_folder`. A Git plugin loads
+/// from [`git_folder`] at its commit in `plugins.lock`, with no network. A plugin that is not installed, that has a bad
+/// folder or manifest, or that fails [`check_conflicts`] does not load. The data folder of each plugin is
 /// `<data>/plugins/<name>`. [`create_data_folders`] makes these folders.
 ///
 /// # Errors
 ///
-/// Returns a text that names the plugin or the file, and the problem. The problem is an unreadable folder or manifest, a
-/// bad name or field, or a duplicate name. It can also be two providers of one service, a missing provider, or a cycle
-/// of uses. A `disable` or `bundled` name that no bundled plugin has is an error too. So is a bad `plugins.lock`, or a
-/// Git plugin without its commit in the lock or on disk.
-pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Result<Vec<Plugin>, String> {
+/// Returns a text for a `disable` or `bundled` name that no bundled plugin has, or for a bad `plugins.lock`.
+pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Result<PluginList, String> {
     with_bundled(BUNDLED, config_folder, config, data)
 }
 
-/// The bundled plugins alone, as [`plugins`] gives them, without the `plugins` list of `config`.
-///
-/// # Errors
-///
-/// Returns a text for a `disable` or `bundled` name that no bundled plugin has.
-pub(crate) fn bundled(config_folder: &Path, config: &Config, data: &Path) -> Result<Vec<Plugin>, String> {
-    let config = Config {
-        plugins: Vec::new(),
-        ..config.clone()
-    };
-    plugins(config_folder, &config, data)
-}
-
 /// [`plugins`] with the bundled plugins `bundled`.
-fn with_bundled(
-    bundled: &[Bundled],
-    config_folder: &Path,
-    config: &Config,
-    data: &Path,
-) -> Result<Vec<Plugin>, String> {
+fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data: &Path) -> Result<PluginList, String> {
     let known = |name: &str| bundled.iter().any(|plugin| plugin.name == name);
     if let Some(name) = config.disable.iter().find(|name| !known(name)) {
         return Err(format!(
@@ -172,37 +211,54 @@ fn with_bundled(
         })
         .collect();
     let lock = Lock::read_for(config_folder, config)?;
+    let mut outcomes = Vec::with_capacity(config.plugins.len());
     for ConfigPlugin { source, options } in &config.plugins {
-        let (label, root) = match source {
-            Source::Folder(folder) => (format!("plugin folder {folder}"), config_folder.join(folder)),
-            Source::Git(source) => {
-                let label = format!("plugin {source}");
-                let commit = lock.commits.get(source).ok_or_else(|| {
-                    format!("{label}: plugins.lock has no commit for this plugin: run `yuke plugin sync`")
-                })?;
-                let installed = git_folder(data, &source.git, commit);
-                if !installed.is_dir() {
-                    return Err(format!(
-                        "{label}: commit {commit} is not installed: run `yuke plugin sync`"
-                    ));
-                }
-                (label, installed.join(source.folder.as_deref().unwrap_or_default()))
-            }
+        let root = match source {
+            Source::Folder(folder) => Some(config_folder.join(folder)),
+            Source::Git(source) => lock
+                .commits
+                .get(source)
+                .map(|commit| git_folder(data, &source.git, commit))
+                .filter(|installed| installed.is_dir())
+                .map(|installed| installed.join(source.folder.as_deref().unwrap_or_default())),
         };
-        let fail = |message: String| format!("{label}: {message}");
-        let root = root.canonicalize().map_err(|error| fail(error.to_string()))?;
-        plugins.push(manifest_plugin(&root, data, options.clone()).map_err(fail)?);
+        let mut outcome = Outcome {
+            source: source.clone(),
+            name: None,
+            failure: Some(Failure::NotInstalled),
+        };
+        if let Some(root) = root {
+            let checked = root
+                .canonicalize()
+                .map_err(|error| error.to_string())
+                .and_then(|root| manifest_plugin(&root, data, options.clone()))
+                .and_then(|plugin| check_conflicts(&plugins, &plugin).map(|()| plugin));
+            // A plugin with bad fields still has a name, so the list and a remove can find it.
+            outcome.name = read_manifest(&root).ok().map(|manifest| manifest.name);
+            outcome.failure = match checked {
+                Ok(plugin) => {
+                    plugins.push(plugin);
+                    None
+                }
+                Err(error) => Some(Failure::Invalid(format!(
+                    "plugin {} did not load: {error}",
+                    outcome.label()
+                ))),
+            };
+        }
+        outcomes.push(outcome);
     }
-    load_order(plugins)
+    Ok(PluginList {
+        load: load_order(plugins),
+        outcomes,
+    })
 }
 
 /// The folder name of the repository `url` in `<data>/git` and `<cache>/git`. The name is the last part of the URL, and
 /// the hash of the whole URL keeps two repositories of one name apart.
 pub(crate) fn repository_key(url: &str) -> String {
-    let last = url.trim_end_matches('/').rsplit(['/', ':']).next().unwrap_or_default();
-    let last = last.strip_suffix(".git").unwrap_or(last);
     // The URL is not a safe folder name, so each other character becomes `-`.
-    let name = last.replace(|c: char| !c.is_ascii_alphanumeric() && !"-_.".contains(c), "-");
+    let name = last_part(url).replace(|c: char| !c.is_ascii_alphanumeric() && !"-_.".contains(c), "-");
     let hash = yuke_agent::blob_of(url.as_bytes()).digest.to_string();
     format!("{name}-{}", &hash[..16])
 }
@@ -227,72 +283,54 @@ pub(crate) fn create_data_folders(plugins: &[Plugin]) -> Result<(), String> {
 /// The services of yuke itself, as `HostService` of `yuke:plugins` names them.
 const HOST_SERVICES: [&str; 3] = ["tui", "sessions", "catalog"];
 
-/// Check `plugins` and give their load order: each provider before each plugin that uses it, else the order of the
-/// list. Each name comes once, and each service has one provider.
+/// Check `plugin` against `plugins`, the plugins before it. Its name and each service that it provides must be new,
+/// and no plugin provides a service of yuke.
 ///
 /// # Errors
 ///
-/// Returns a text for the user that names the first plugin that breaks a rule, or the plugins of a cycle of uses.
-pub(crate) fn load_order(plugins: Vec<Plugin>) -> Result<Vec<Plugin>, String> {
-    let mut providers: HashMap<&str, &str> = HashMap::new();
-    for (index, plugin) in plugins.iter().enumerate() {
-        let fail = |message: String| format!("plugin {}: {message}", plugin.name);
-        match plugins[..index].iter().find(|other| other.name == plugin.name) {
-            Some(Plugin {
-                origin: PluginCode::Bundled { .. },
-                ..
-            }) => {
-                return Err(fail(format!(
-                    "a bundled plugin has this name: add \"{}\" to \"disable\" in config.json to replace it",
-                    plugin.name
-                )));
-            }
-            Some(_) => return Err(fail("another plugin of the list has this name".to_owned())),
-            None => {}
-        }
-        for service in &plugin.provides {
-            if HOST_SERVICES.contains(&service.as_str()) {
-                return Err(fail(format!(
-                    "'{service}' is a service of yuke, and no plugin provides it"
-                )));
-            }
-            if let Some(provider) = providers.insert(service, &plugin.name) {
-                return Err(fail(format!("plugin {provider} provides '{service}' already")));
-            }
-        }
-    }
-    for plugin in &plugins {
-        if let Some(service) = plugin
-            .uses
-            .iter()
-            .find(|service| !providers.contains_key(service.as_str()))
-        {
+/// Returns the text of the first rule that `plugin` breaks.
+pub(crate) fn check_conflicts(plugins: &[Plugin], plugin: &Plugin) -> Result<(), String> {
+    match plugins.iter().find(|other| other.name == plugin.name) {
+        Some(Plugin {
+            origin: PluginCode::Bundled { .. },
+            ..
+        }) => {
             return Err(format!(
-                "plugin {}: it uses '{service}', and no plugin of the list provides it",
+                "a bundled plugin has this name: add \"{}\" to \"disable\" in config.json to replace it",
                 plugin.name
             ));
         }
+        Some(_) => return Err("another plugin of the list has this name".to_owned()),
+        None => {}
     }
+    for service in &plugin.provides {
+        if HOST_SERVICES.contains(&service.as_str()) {
+            return Err(format!("'{service}' is a service of yuke, and no plugin provides it"));
+        }
+        if let Some(provider) = plugins.iter().find(|other| other.provides.contains(service)) {
+            return Err(format!("plugin {} provides '{service}' already", provider.name));
+        }
+    }
+    Ok(())
+}
+
+/// The load order of `plugins`: each provider before each plugin that uses it, else the order of the list. The plugins
+/// whose services no plugin can give first go last, and the runtime does not run them.
+pub(crate) fn load_order(plugins: Vec<Plugin>) -> Vec<Plugin> {
     // Each step takes the first plugin of the list whose services loaded. A plugin moves only for its providers.
     let mut waiting = plugins;
     let mut loaded: HashSet<String> = HashSet::new();
     let mut order = Vec::with_capacity(waiting.len());
-    while !waiting.is_empty() {
-        let Some(index) = waiting
-            .iter()
-            .position(|plugin| plugin.uses.iter().all(|service| loaded.contains(service)))
-        else {
-            let names: Vec<&str> = waiting.iter().map(|plugin| plugin.name.as_str()).collect();
-            return Err(format!(
-                "plugins {}: a cycle of uses keeps them from loading",
-                names.join(", ")
-            ));
-        };
+    while let Some(index) = waiting
+        .iter()
+        .position(|plugin| plugin.uses.iter().all(|service| loaded.contains(service)))
+    {
         let plugin = waiting.remove(index);
         loaded.extend(plugin.provides.iter().cloned());
         order.push(plugin);
     }
-    Ok(order)
+    order.extend(waiting);
+    order
 }
 
 /// Read the manifest of `root` and check its name.

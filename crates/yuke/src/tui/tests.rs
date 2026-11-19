@@ -207,20 +207,23 @@ async fn a_plugin_pane_comes_back_after_a_reload() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_failed_reload_keeps_the_old_runtime_and_shows_a_notice() {
+async fn a_reload_with_a_broken_plugin_loads_the_others_and_shows_why() {
     let place = Place::new("tui", "reload_failure");
     let (display, output) = display();
-    place.plugin("board", BOARD);
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["board"] }"#).unwrap();
     let mut app = started(&place, &display).await;
+    place.plugin("board", BOARD);
     place.plugin("broken", "throw new Error('broken on purpose');");
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["broken"] }"#).unwrap();
+    std::fs::write(
+        place.paths.config.join("config.json"),
+        r#"{ "plugins": ["board", "broken"] }"#,
+    )
+    .unwrap();
 
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
 
-    // The new plugins have no board, so the notice on the screen comes from the old runtime.
+    // Only the new runtime has the board, so the notice on the screen shows that the reload loaded it.
     output
-        .shows("error host:yuke: The reload failed: the reload keeps the old plugins")
+        .shows("error host:yuke: plugin broken did not load: Error: broken on purpose")
         .await;
     app.shutdown().await;
 }
@@ -273,9 +276,13 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
 
     config(r#""no""#);
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    output.contains("The reload failed").await;
-    // The old runtime keeps its bar.
-    output.contains("marked").await;
+    // The reload loads the other plugins, without the bar.
+    output.contains("plugin bar did not load").await;
+    assert!(
+        output.rows().iter().all(|row| !row.contains("marked")),
+        "{:?}",
+        output.rows()
+    );
     app.shutdown().await;
 }
 

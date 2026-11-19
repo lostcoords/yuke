@@ -22,7 +22,7 @@ use yuke_protocol::{ExtensionEventParams, NoticeParams, ServerNotification, Sess
 use super::sessions::SessionService;
 use super::{App, Machine, Observer, Profile, RunMode, Shared};
 use crate::paths::Paths;
-use crate::plugins::{create_data_folders, load_order, manifest_plugin, valid_name};
+use crate::plugins::{check_conflicts, create_data_folders, load_order, manifest_plugin, valid_name};
 
 /// What the app of a test needs beyond production. It holds the TypeScript cache of the run and the internal imports
 /// of the tests of yuke. It also holds the test host of the runtime and the sender of the raw reports to the runner.
@@ -292,7 +292,7 @@ impl TestHost for AppTestHost {
         let data = &shared.machine.paths.data;
         let mut plugins = Vec::with_capacity(request.plugins.len());
         for requested in request.plugins {
-            plugins.push(match requested {
+            let plugin = match requested {
                 PluginRequest::Folder { folder, options } => {
                     let root = folder
                         .canonicalize()
@@ -317,17 +317,14 @@ impl TestHost for AppTestHost {
                         provides,
                     }
                 }
-            });
+            };
+            check_conflicts(&plugins, &plugin).map_err(|error| format!("plugin {}: {error}", plugin.name))?;
+            plugins.push(plugin);
         }
-        let plugins = load_order(plugins)?;
+        let plugins = load_order(plugins);
         create_data_folders(&plugins)?;
-        // A session reads the skills of the folder plugins in load order, so the profile names their folders. A failed
-        // load fails the test, so each plugin counts as loaded.
-        {
-            let mut profile = shared.profile.borrow_mut();
-            profile.plugin_folders = Profile::plugin_folders(&plugins);
-            profile.loaded = plugins.iter().map(|plugin| plugin.name.clone()).collect();
-        }
+        // A session reads the skills of the folder plugins in load order, so the profile names their folders.
+        shared.profile.borrow_mut().plugin_folders = Profile::plugin_folders(&plugins);
         let handle = sessions.plugins().ok_or("the app of the test has no runtime")?;
         let failures = handle.load_plugins(&plugins).await;
         if !failures.is_empty() {

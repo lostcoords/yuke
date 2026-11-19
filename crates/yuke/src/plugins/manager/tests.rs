@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use super::*;
+use crate::plugins::Outcome;
 use crate::testing::commit_plugin;
 
 /// The sync result of `source` at `commit`.
@@ -77,7 +78,7 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
     assert!(written);
     assert_eq!(again, synced);
     assert!(!written_again);
-    let clock_plugin = loaded.iter().find(|plugin| plugin.name == "clock").unwrap();
+    let clock_plugin = loaded.load.iter().find(|plugin| plugin.name == "clock").unwrap();
     assert_eq!(
         clock_plugin.origin,
         yuke_js::PluginCode::Folder {
@@ -335,14 +336,15 @@ async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
     .unwrap();
     write_config(&paths, &json!(["./clock"]));
     let config = read_config(&paths).unwrap();
-    let error = super::super::plugins(&paths.config, &config, &paths.data).unwrap_err();
+    let loaded = super::super::plugins(&paths.config, &config, &paths.data).unwrap();
 
     let listed = list(&paths, &[]).unwrap();
     remove(&paths, "clock").await.unwrap();
 
+    let failures: Vec<String> = loaded.outcomes.iter().filter_map(Outcome::failure_text).collect();
     assert_eq!(
-        error,
-        "plugin folder ./clock: entry: 'main.txt' is not a .ts or a .js file"
+        failures,
+        ["plugin clock did not load: entry: 'main.txt' is not a .ts or a .js file"]
     );
     assert_eq!(
         listed,

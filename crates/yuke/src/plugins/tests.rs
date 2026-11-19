@@ -30,12 +30,22 @@ fn manifest(name: &str, fields: &Value) -> String {
 }
 
 /// The plugins of the folders `list`, in the config folder of `root`, with no bundled plugin.
-fn load(root: &Path, list: &[&str]) -> Result<Vec<Plugin>, String> {
+fn load(root: &Path, list: &[&str]) -> Result<PluginList, String> {
     load_with(&[], root, list, &[])
 }
 
+/// The names of the plugins to load of `list`, in load order.
+fn names(list: &PluginList) -> Vec<&str> {
+    list.load.iter().map(|plugin| plugin.name.as_str()).collect()
+}
+
+/// The failure texts of the outcomes of `list`, in the order of `config.json`.
+fn failures(list: &PluginList) -> Vec<String> {
+    list.outcomes.iter().filter_map(Outcome::failure_text).collect()
+}
+
 /// The bundled plugins `bundled` that `disable` does not name, then the plugins of the folders `list`.
-fn load_with(bundled: &[Bundled], root: &Path, list: &[&str], disable: &[&str]) -> Result<Vec<Plugin>, String> {
+fn load_with(bundled: &[Bundled], root: &Path, list: &[&str], disable: &[&str]) -> Result<PluginList, String> {
     let config = Config {
         plugins: list
             .iter()
@@ -73,7 +83,7 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
         &manifest("reader", &json!({ "uses": ["notes"] })),
     );
 
-    let plugins = load(&root, &["notes", reader.to_str().unwrap()]).unwrap();
+    let plugins = load(&root, &["notes", reader.to_str().unwrap()]).unwrap().load;
     create_data_folders(&plugins).unwrap();
 
     assert_eq!(
@@ -108,8 +118,9 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
 }
 
 #[test]
-fn a_bad_folder_or_manifest_stops_the_start_and_names_the_problem() {
+fn a_bad_folder_or_manifest_skips_its_plugin_names_the_problem_and_the_others_load() {
     let root = place("bad");
+    write_plugin(&root, "config/fine", &manifest("fine", &json!({})));
     let fields = |fields: Value| manifest("p", &fields);
     let cases = [
         ("{", "plugin.json"),
@@ -138,15 +149,29 @@ fn a_bad_folder_or_manifest_stops_the_start_and_names_the_problem() {
     for (index, (text, expected)) in cases.into_iter().enumerate() {
         let folder = format!("case{index}");
         write_plugin(&root, &format!("config/{folder}"), text);
-        let error = load(&root, &[&folder]).unwrap_err();
-        assert!(error.starts_with(&format!("plugin folder {folder}: ")), "{error}");
-        assert!(error.contains(expected), "{text}: {error}");
+        let list = load(&root, &[&folder, "fine"]).unwrap();
+        let failures = failures(&list);
+        // A manifest with a good name names the plugin, and the others name the folder.
+        let label = if text.contains(r#""name":"p""#) { "p" } else { &folder };
+        assert_eq!(names(&list), ["fine"]);
+        assert_eq!(failures.len(), 1);
+        assert!(
+            failures[0].starts_with(&format!("plugin {label} did not load: ")),
+            "{}",
+            failures[0]
+        );
+        assert!(failures[0].contains(expected), "{text}: {}", failures[0]);
     }
-    let missing = load(&root, &["absent"]).unwrap_err();
-    assert!(missing.starts_with("plugin folder absent: "), "{missing}");
     std::fs::create_dir_all(root.join("config/empty")).unwrap();
-    let no_manifest = load(&root, &["empty"]).unwrap_err();
-    assert!(no_manifest.contains("plugin.json"), "{no_manifest}");
+    let list = load(&root, &["absent", "empty", "fine"]).unwrap();
+    let failures = failures(&list);
+    assert_eq!(names(&list), ["fine"]);
+    assert!(
+        failures[0].starts_with("plugin absent did not load: "),
+        "{}",
+        failures[0]
+    );
+    assert!(failures[1].contains("plugin.json"), "{}", failures[1]);
 }
 
 #[test]
@@ -170,27 +195,24 @@ fn a_provider_loads_before_its_users_and_the_rest_keeps_the_list_order() {
     write_plugin(&root, "config/again", &manifest("reader", &json!({})));
 
     write_plugin(&root, "config/plain", &manifest("plain", &json!({})));
-    let names = |list: &[&str]| -> Vec<String> {
-        load(&root, list)
-            .unwrap()
-            .into_iter()
-            .map(|plugin| plugin.name)
-            .collect()
-    };
+    let load = |list: &[&str]| load(&root, list).unwrap();
 
-    assert_eq!(names(&["reader", "plain", "notes"]), ["plain", "notes", "reader"]);
-    assert_eq!(names(&["notes", "reader", "plain"]), ["notes", "reader", "plain"]);
     assert_eq!(
-        load(&root, &["reader"]),
-        Err("plugin reader: it uses 'notes', and no plugin of the list provides it".to_owned())
+        names(&load(&["reader", "plain", "notes"])),
+        ["plain", "notes", "reader"]
     );
     assert_eq!(
-        load(&root, &["notes", "notes2"]),
-        Err("plugin notes2: plugin notes provides 'notes' already".to_owned())
+        names(&load(&["notes", "reader", "plain"])),
+        ["notes", "reader", "plain"]
     );
+    let twice = load(&["notes", "notes2", "reader", "again"]);
+    assert_eq!(names(&twice), ["notes", "reader"]);
     assert_eq!(
-        load(&root, &["notes", "reader", "again"]),
-        Err("plugin reader: another plugin of the list has this name".to_owned())
+        failures(&twice),
+        [
+            "plugin notes2 did not load: plugin notes provides 'notes' already",
+            "plugin reader did not load: another plugin of the list has this name",
+        ]
     );
 }
 
@@ -233,7 +255,7 @@ fn a_bundled_plugin_uses_the_service_of_a_profile_plugin_that_replaces_its_provi
         },
     ];
 
-    let plugins = load_with(&bundled, &root, &["mine"], &["second"]).unwrap();
+    let plugins = load_with(&bundled, &root, &["mine"], &["second"]).unwrap().load;
 
     let names: Vec<&str> = plugins.iter().map(|plugin| plugin.name.as_str()).collect();
     assert_eq!(names, ["mine", "user"]);
@@ -241,7 +263,7 @@ fn a_bundled_plugin_uses_the_service_of_a_profile_plugin_that_replaces_its_provi
 }
 
 #[test]
-fn plugins_that_use_the_services_of_each_other_stop_the_start() {
+fn plugins_without_a_provider_or_in_a_cycle_of_uses_go_last_for_the_runtime_to_skip() {
     let root = place("cycle");
     write_plugin(
         &root,
@@ -254,11 +276,16 @@ fn plugins_that_use_the_services_of_each_other_stop_the_start() {
         &manifest("second", &json!({ "entry": "i.ts", "uses": ["a"], "provides": ["b"] })),
     );
     write_plugin(&root, "config/plain", &manifest("plain", &json!({})));
-
-    assert_eq!(
-        load(&root, &["first", "plain", "second"]),
-        Err("plugins first, second: a cycle of uses keeps them from loading".to_owned())
+    write_plugin(
+        &root,
+        "config/alone",
+        &manifest("alone", &json!({ "uses": ["absent"] })),
     );
+
+    let list = load(&root, &["first", "alone", "plain", "second"]).unwrap();
+
+    assert_eq!(names(&list), ["plain", "first", "alone", "second"]);
+    assert_eq!(failures(&list), Vec::<String>::new());
 }
 
 #[test]
@@ -266,7 +293,7 @@ fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
     let root = place("bundled_first");
     write_plugin(&root, "config/mine", &manifest("mine", &json!({})));
 
-    let plugins = load_with(BUNDLED_PAIR, &root, &["mine"], &["first"]).unwrap();
+    let plugins = load_with(BUNDLED_PAIR, &root, &["mine"], &["first"]).unwrap().load;
 
     let names: Vec<&str> = plugins.iter().map(|plugin| plugin.name.as_str()).collect();
     assert_eq!(names, ["second", "mine"]);
@@ -286,25 +313,10 @@ fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
 }
 
 #[test]
-fn a_profile_plugin_uses_the_service_of_a_bundled_plugin_until_its_disable() {
-    let root = place("bundled_service");
-    write_plugin(&root, "config/mine", &manifest("mine", &json!({ "uses": ["pairs"] })));
-
-    let loaded = load_with(BUNDLED_PAIR, &root, &["mine"], &[]).map(|plugins| plugins.len());
-    let refused = load_with(BUNDLED_PAIR, &root, &["mine"], &["second"]);
-
-    assert_eq!(loaded, Ok(3));
-    assert_eq!(
-        refused,
-        Err("plugin mine: it uses 'pairs', and no plugin of the list provides it".to_owned())
-    );
-}
-
-#[test]
 fn a_disable_name_that_no_bundled_plugin_has_stops_the_start() {
     let root = place("bundled_unknown");
 
-    let refused = load_with(BUNDLED_PAIR, &root, &[], &["frist"]);
+    let refused = load_with(BUNDLED_PAIR, &root, &[], &["frist"]).map(|list| list.load);
 
     assert_eq!(
         refused,
@@ -321,12 +333,14 @@ fn a_bundled_plugin_gets_its_options_and_an_unknown_name_stops_the_start() {
         ..Config::default()
     };
 
-    let plugins = with_bundled(BUNDLED_PAIR, &root.join("config"), &config, &root.join("data")).unwrap();
+    let plugins = with_bundled(BUNDLED_PAIR, &root.join("config"), &config, &root.join("data"))
+        .unwrap()
+        .load;
     let unknown = Config {
         bundled: serde_json::from_value(json!({ "frist": {} })).unwrap(),
         ..Config::default()
     };
-    let refused = with_bundled(BUNDLED_PAIR, &root.join("config"), &unknown, &root.join("data"));
+    let refused = with_bundled(BUNDLED_PAIR, &root.join("config"), &unknown, &root.join("data")).map(|list| list.load);
 
     let options: Vec<&Map<String, Value>> = plugins.iter().map(|plugin| &plugin.options).collect();
     assert_eq!(options, [json!({ "level": 2 }).as_object().unwrap(), &Map::new()]);
@@ -341,15 +355,16 @@ fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() 
     let root = place("bundled_replace");
     write_plugin(&root, "config/mine", &manifest("first", &json!({})));
 
-    let refused = load_with(BUNDLED_PAIR, &root, &["mine"], &[]);
-    let replaced = load_with(BUNDLED_PAIR, &root, &["mine"], &["first"]).unwrap();
+    let refused = load_with(BUNDLED_PAIR, &root, &["mine"], &[]).unwrap();
+    let replaced = load_with(BUNDLED_PAIR, &root, &["mine"], &["first"]).unwrap().load;
 
+    assert_eq!(names(&refused), ["first", "second"]);
     assert_eq!(
-        refused,
-        Err(
-            "plugin first: a bundled plugin has this name: add \"first\" to \"disable\" in config.json to replace it"
-                .to_owned()
-        )
+        failures(&refused),
+        [
+            "plugin first did not load: a bundled plugin has this name: add \"first\" to \"disable\" in config.json to \
+             replace it"
+        ]
     );
     let origins: Vec<bool> = replaced
         .iter()
@@ -368,7 +383,7 @@ fn git(url: &str, folder: &str, reference: Option<&str>) -> ConfigPlugin {
 }
 
 /// The plugins of `items` in the config folder of `root`, with no bundled plugin.
-fn load_items(root: &Path, items: Vec<ConfigPlugin>) -> Result<Vec<Plugin>, String> {
+fn load_items(root: &Path, items: Vec<ConfigPlugin>) -> Result<PluginList, String> {
     let config = Config {
         plugins: items,
         ..Config::default()
@@ -409,8 +424,9 @@ fn a_git_plugin_loads_from_the_install_of_the_commit_that_the_lock_gives_its_fol
         &json!([{ "git": URL, "folder": "./plugins/clock/", "ref": "main", "commit": commit }]),
     );
 
-    let plugins = load_items(&root, vec![git(URL, "plugins/clock", Some("main"))]).unwrap();
-    let default_branch = load_items(&root, vec![git(URL, "plugins/clock", None)]).unwrap_err();
+    let plugins = load_items(&root, vec![git(URL, "plugins/clock", Some("main"))])
+        .unwrap()
+        .load;
 
     assert_eq!(
         plugins[0].origin,
@@ -419,25 +435,29 @@ fn a_git_plugin_loads_from_the_install_of_the_commit_that_the_lock_gives_its_fol
             entry: None,
         }
     );
-    assert_eq!(
-        default_branch,
-        format!(
-            "plugin {URL} (folder plugins/clock): plugins.lock has no commit for this plugin: run `yuke plugin sync`"
-        )
-    );
 }
 
 #[test]
-fn a_git_plugin_whose_commit_is_not_installed_stops_the_start() {
+fn a_git_plugin_without_its_commit_in_the_lock_or_on_disk_is_not_installed_and_the_others_load() {
     let root = place("git_missing");
     let commit = "3f9c1a2b".repeat(5);
+    write_plugin(&root, "config/local", &manifest("local", &json!({})));
     write_lock(&root, &json!([{ "git": URL, "folder": "clock", "commit": commit }]));
+    let local = ConfigPlugin {
+        source: Source::Folder("local".to_owned()),
+        options: Map::new(),
+    };
 
-    let error = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
+    // The lock has no commit for the root of the repository, and the commit of `clock` is not on disk.
+    let list = load_items(&root, vec![git(URL, ".", None), git(URL, "clock", None), local]).unwrap();
 
+    assert_eq!(names(&list), ["local"]);
     assert_eq!(
-        error,
-        format!("plugin {URL} (folder clock): commit {commit} is not installed: run `yuke plugin sync`")
+        failures(&list),
+        [
+            "plugin yuke-plugin did not load: it is not installed: /plugins or `yuke plugin sync` installs it",
+            "plugin clock did not load: it is not installed: /plugins or `yuke plugin sync` installs it",
+        ]
     );
 }
 
@@ -452,6 +472,6 @@ fn a_lock_with_a_short_commit_fails_a_list_with_a_git_plugin() {
     let short = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
 
     // A list of local plugins does not read the lock.
-    assert_eq!(local.map(|plugins| plugins.len()), Ok(1));
+    assert_eq!(local.map(|list| list.load.len()), Ok(1));
     assert_eq!(short, format!("{}: '3f9c1a2' is not a full commit id", lock.display()));
 }
