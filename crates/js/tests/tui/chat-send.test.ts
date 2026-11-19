@@ -182,7 +182,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
 });
 
 test("a refused input comes back above the newer text with the spans of both, and Enter waits for the first send", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const refuse = Promise.withResolvers<void>();
   sessions.state.accept = refuse.promise;
@@ -203,7 +203,7 @@ test("a refused input comes back above the newer text with the spans of both, an
 });
 
 test("an accepted input followed by a failed turn does not come back", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -218,7 +218,7 @@ test("an accepted input followed by a failed turn does not come back", async () 
 });
 
 test("a pane whose open failed opens its session again at the next send", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   sessions.state.openFails = 1;
   const chat = await loadChat(frame, sessions);
@@ -280,7 +280,7 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
 });
 
 test("the edges of a draft trim, and a paste over 300 characters shows a label and sends the whole text", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -326,7 +326,7 @@ test("up in an empty composer shows the older messages of the user, down past th
     message(3, "two"),
     message(4, "build done", "plugin"),
   ];
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   const text = () => composerOf(chat).state.text;
@@ -354,7 +354,7 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "assistantText", text: "hello" }]),
   ];
-  using frame = createFrame({ width: 20, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(saved);
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -377,7 +377,7 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
   const saved: StoredEvent[] = [{ seq: 1, kind: "settings", ...SETTINGS }];
   for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]));
-  using frame = createFrame({ width: 20, height: 9 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 9 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   const bottom = chat.transcript().scroll.state.top;
@@ -401,7 +401,7 @@ test("a refusal while the user browses the messages ends the browse, so down kee
       consumed: [{ id: 1, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },
   ];
-  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(saved);
   const refuse = Promise.withResolvers<void>();
   sessions.state.accept = refuse.promise;
@@ -462,7 +462,7 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
 });
 
 test("ctrl+k m in a pane with a session changes its model and level and keeps its other settings", async () => {
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -585,7 +585,7 @@ test("a command that gives false keeps its slash draft, and a command that runs 
 });
 
 test("a question in the place of the composer hides the commands", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   chat.tui.commands.add({ name: "alpha", slash: "alpha", run: () => {} });
@@ -610,7 +610,7 @@ test("a question in the place of the composer hides the commands", async () => {
 });
 
 test("esc hides the commands until the draft changes, and a draft with no command sends as a message", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -652,7 +652,7 @@ test("the commands of the chat are disabled in a pane of another plugin", async 
 });
 
 test("the strip shows the waiting messages of the user oldest first, cut to one row, and no input of a plugin", async () => {
-  using frame = createFrame({ width: 24, height: 9 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 24, height: 9 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -674,7 +674,7 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
 });
 
 test("up recalls the newest waiting message with its images, the next up puts the older one above, and an edit or a caret move ends it", async () => {
-  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -721,7 +721,7 @@ test("up recalls the newest waiting message with its images, the next up puts th
 });
 
 test("a message that a turn took stays sent and the next up recalls an older one, up during a recall does nothing, and text typed meanwhile stays", async () => {
-  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -745,7 +745,7 @@ test("a message that a turn took stays sent and the next up recalls an older one
 });
 
 test("a pane close during a recall leaves the composer and gives no notice", async () => {
-  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -771,7 +771,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
       consumed: [{ id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },
   ];
-  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(saved);
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -787,7 +787,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
 });
 
 test("the strip keeps the newest messages when rows run out, and a failed recall keeps the composer", async () => {
-  using frame = createFrame({ width: 20, height: 5 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 5 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -810,7 +810,7 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
 });
 
 test("a send after a close of the session by another client opens the session again", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -828,7 +828,7 @@ test("a send after a close of the session by another client opens the session ag
 const PNG = Object.freeze({ bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" as const });
 
 test("ctrl+v puts the image of the clipboard at the caret with the next number, and a send keeps the order", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -915,7 +915,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
   frame.key("esc");
   await waitForSettled();
   const cancelled = [sessions.created.length, composer.state.text];
-  using other = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using other = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const later = fakeSessions();
   const closing = await loadChat(other, later);
   other.start();
@@ -958,7 +958,7 @@ test("text typed while the first send sets up the session goes with the message"
 });
 
 test("ctrl+k m after a failed open gives the notice of the open only", async () => {
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   sessions.state.openFails = 2;
   const chat = await loadChat(frame, sessions);
@@ -977,7 +977,7 @@ test("ctrl+k m after a failed open gives the notice of the open only", async () 
 });
 
 test("an image whose store finishes after an edit goes where the caret is then", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();

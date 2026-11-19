@@ -161,7 +161,7 @@ export interface SessionHandle extends Disposable {
    */
   readonly close: () => void;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
-  readonly cancel: () => void;
+  readonly cancelTurn: () => void;
   /** Move each tool call that waits for a job, such as a running command, to the background. The turn goes on. */
   readonly moveJobsToBackground: () => void;
   /** Whether `moveJobsToBackground` moves a job now. */

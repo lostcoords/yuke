@@ -8,14 +8,14 @@ import { commit, composerOf, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
 test("show puts another session in the pane, ends the old handle, and the draft waits for the return", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
   const view = chat.tui.panes.active?.view as View;
   const moves: (string | undefined)[] = [];
-  chat.chat.addChangeListener((moved) => moves.push(chat.chat.session(moved)));
+  chat.chat.addChangeListener((moved) => moves.push(chat.chat.sessionIdOf(moved)));
   frame.paste("draft of s1");
   await chat.chat.show("s2");
   sessions.push(commit(3, [{ kind: "assistantText", text: "only in s2" }]), "s2");
@@ -38,11 +38,11 @@ test("show puts another session in the pane, ends the old handle, and the draft 
       "draft of s1",
     ],
   );
-  assertEquals(chat.chat.session(view), "s1");
+  assertEquals(chat.chat.sessionIdOf(view), "s1");
 });
 
 test("a failed show keeps the session, the handle, and the draft of the pane", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   await waitForSettled();
@@ -51,7 +51,7 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
   assertEquals(
     [
       error,
-      chat.chat.session(chat.tui.panes.active?.view as View),
+      chat.chat.sessionIdOf(chat.tui.panes.active?.view as View),
       chat.opened.map((open) => [open.id, open.signal.aborted]),
     ],
     [
@@ -67,7 +67,7 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
 });
 
 test("show rejects during a send and succeeds after the send ends", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -95,13 +95,13 @@ test("show in a pane of another plugin opens a new chat pane, and a pane without
   await chat.chat.show("s2");
   const active = chat.tui.panes.active?.view as View;
   assertEquals(
-    [kept, chat.opened.map((open) => open.id), chat.chat.session(active)],
+    [kept, chat.opened.map((open) => open.id), chat.chat.sessionIdOf(active)],
     ["first words", ["s1", "s2"], "s2"],
   );
 });
 
 test("a failed show from a pane of another plugin closes the new chat pane again", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   const other = frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
@@ -111,7 +111,7 @@ test("a failed show from a pane of another plugin closes the new chat pane again
 });
 
 test("a show of the shown session opens it again after a close by another client", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -132,7 +132,7 @@ test("a show of the shown session opens it again after a close by another client
 });
 
 test("each pane keeps its own draft of a session that it leaves", async () => {
-  using frame = createFrame({ width: 60, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 60, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   await waitForSettled();
@@ -163,7 +163,7 @@ test("without the terminal interface the service shows no pane", async () => {
   const service = provided.get("chat") as ChatService;
   const error = String(await assertRejects(() => service.show("s1")));
   assertEquals(
-    [error, service.session({ draw() {} })],
+    [error, service.sessionIdOf({ draw() {} })],
     ["Error: no chat pane: yuke runs without the terminal interface", undefined],
   );
 });

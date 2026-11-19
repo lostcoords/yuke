@@ -320,7 +320,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
   const add = async (): Promise<void> => {
     let found: readonly FoundPlugin[] = [];
     // A URL that gives no new plugin keeps the prompt open with its text and the reason.
-    const line = await tui.input({
+    const line = await tui.prompt({
       title: "Add a plugin",
       placeholder: "URL of a Git repository",
       signal: dialog.signal,

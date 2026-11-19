@@ -20,13 +20,13 @@ import type {
   FocusChange,
   FocusDirection,
   InputEvent,
-  InputOptions,
   Mount,
   Notice,
   OverlayOptions,
   Pane,
   Panes,
   PlacedWidget,
+  PromptOptions,
   RestoreView,
   RootFactory,
   SelectOptions,
@@ -201,8 +201,8 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       }),
   ) as Tui["select"];
 
-  const input = live(
-    (options: InputOptions): Promise<string | undefined> =>
+  const prompt = live(
+    (options: PromptOptions): Promise<string | undefined> =>
       new Promise((resolve) => {
         let answer: string | undefined;
         let failure: string | undefined;
@@ -343,7 +343,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     setTitle,
     addQuitGuard,
     select,
-    input,
+    prompt,
     confirm,
     commands: Object.freeze({
       add: live((command: Command): (() => void) => {

@@ -30,7 +30,7 @@ const greeter: PluginSession = (s) => {
 
 /** A frame with a chat pane on the session `id` of `sessions`. */
 async function chatFrame(sessions: Sessions, id: string): Promise<FrameTest> {
-  const frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: id });
+  const frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", sessionId: id });
   const surface = frame.surface("chat");
   const services: Record<string, unknown> = {
     tui: surface.tui,
@@ -157,7 +157,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   await held.sendMessage({ content: [{ kind: "userText", text: "Read the store." }] });
   await held.waitForIdle();
 
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: parent.id });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", sessionId: parent.id });
   const surface = frame.surface("chat");
   const services: Record<string, unknown> = {
     tui: surface.tui,

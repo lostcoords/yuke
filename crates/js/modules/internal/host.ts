@@ -169,7 +169,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       transcript,
       async sendMessage(text: string, operation?: OperationOptions): Promise<void> {
         operation?.signal?.throwIfAborted();
-        const cancel = (): void => handle.cancel();
+        const cancel = (): void => handle.cancelTurn();
         operation?.signal?.addEventListener("abort", cancel, { once: true });
         try {
           await handle.sendMessage({ content: [{ kind: "userText", text }] });

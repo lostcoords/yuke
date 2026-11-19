@@ -940,8 +940,8 @@ declare module "yuke:tui" {
     readonly signal?: AbortSignal | undefined;
   }
 
-  /** What `tui.input` shows: a text field in a dialog. */
-  export interface InputOptions {
+  /** What `tui.prompt` shows: a text field in a dialog. */
+  export interface PromptOptions {
     /** The text of the head row, as in `DialogOptions`. */
     readonly title?: string | (() => string) | undefined;
     /** The dim text of an empty field. */
@@ -1014,7 +1014,7 @@ declare module "yuke:tui" {
     /** The folder that yuke started in. */
     readonly cwd: string;
     /** The session of `--continue` or `--resume`. The start pane shows it. A restored pane keeps its saved session. */
-    readonly session?: SessionId | undefined;
+    readonly sessionId?: SessionId | undefined;
     /** The version of yuke, such as `0.1.0`. */
     readonly version: string;
   }
@@ -1090,7 +1090,7 @@ declare module "yuke:tui" {
      * Ask the user for a line of text in a dialog. Gives the text that Enter accepts, or `undefined` for Esc, an abort of
      * `signal`, and a stop of the plugin during the wait.
      */
-    readonly input: (options: InputOptions) => Promise<string | undefined>;
+    readonly prompt: (options: PromptOptions) => Promise<string | undefined>;
     /** Ask the user a question in a dialog. Gives `true` for Enter, and `false` for Esc, an abort, and a stop. */
     readonly confirm: (options: ConfirmOptions) => Promise<boolean>;
     readonly commands: {

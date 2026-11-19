@@ -48,7 +48,7 @@ async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadCh
 }
 
 test("the list shows the sessions of the folder of the pane, and tab shows every folder", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", sessionId: "s1" });
   const loaded = await load(frame);
   await waitForSettled();
   const here = await openList(frame, loaded.chat);
@@ -83,7 +83,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
 });
 
 test("a query matches the first prompt, and else the model, the folder, or the id", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", sessionId: "s1" });
   const loaded = await load(frame);
   await waitForSettled();
   await openList(frame, loaded.chat);
@@ -110,7 +110,7 @@ test("a query matches the first prompt, and else the model, the folder, or the i
 });
 
 test("enter shows the chosen session in the focused chat pane and closes the list", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", sessionId: "s1" });
   const loaded = await load(frame);
   await waitForSettled();
   await openList(frame, loaded.chat);
@@ -125,7 +125,7 @@ test("enter shows the chosen session in the focused chat pane and closes the lis
 });
 
 test("a pick that does not open gives a notice", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("missing", "/w", "gone", "closed", 1));
   const loaded = await load(frame, sessions);
@@ -138,7 +138,7 @@ test("a pick that does not open gives a notice", async () => {
 });
 
 test("a match of the first prompt comes before a match of the folder of a newer session", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("s4", "/srv/bar", "deploy notes", "closed", 1));
   const loaded = await load(frame, sessions);
@@ -154,7 +154,7 @@ test("a match of the first prompt comes before a match of the folder of a newer 
 });
 
 test("the list of a pane whose session is gone starts with the start folder", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s9" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", sessionId: "s9" });
   const loaded = await load(frame);
   await waitForSettled();
   const drawn = await openList(frame, loaded.chat);

@@ -73,7 +73,7 @@ function agents() {
                 );
             },
           });
-          signal.addEventListener("abort", () => handle.cancel());
+          signal.addEventListener("abort", () => handle.cancelTurn());
           await handle.sendMessage({ content: [{ kind: "userText", text: args.message }] });
           await handle.waitForIdle();
           const events = await list.events(child, { limit: 2 });

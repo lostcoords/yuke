@@ -94,7 +94,7 @@ declare module "yuke:chat" {
     readonly view: View;
     /** The editor of the drafts of the pane. A key handler or a decoration of a plugin goes here. */
     readonly composer: TextEditor;
-    readonly session: SessionId | undefined;
+    readonly sessionId: SessionId | undefined;
     readonly transcript: Transcript;
     /** A turn of the session runs. */
     readonly running: boolean;
@@ -172,8 +172,8 @@ declare module "yuke:chat" {
      * open fails or the pane is busy, as with a send.
      */
     readonly show: (id: SessionId) => Promise<void>;
-    /** The session of the chat pane `view`, or `undefined` for a pane without a session or no chat pane. */
-    readonly session: (view: View) => SessionId | undefined;
+    /** The id of the session of the chat pane `view`, or `undefined` for a pane without a session or no chat pane. */
+    readonly sessionIdOf: (view: View) => SessionId | undefined;
     /**
      * Call `listener` after a chat pane moves to another session or to no session. It gets no call for a pane that starts on a session,
      * or for a close.
@@ -219,7 +219,7 @@ declare module "yuke:chat" {
      * ```ts
      * chat.addComposerView("below", (mount, pane) => ({
      *   heightFor: () => 1,
-     *   draw: (canvas) => canvas.text(0, 0, `${count(pane.session)} questions`, { fg: "accent" }),
+     *   draw: (canvas) => canvas.text(0, 0, `${count(pane.sessionId)} questions`, { fg: "accent" }),
      * }));
      * ```
      */

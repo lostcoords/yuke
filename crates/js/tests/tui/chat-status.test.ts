@@ -52,7 +52,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
     JOB,
     { id: "reader", label: "Read the store", state: "running", kind: "plugin", plugin: "agents" },
   ];
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, sessions, {
     list: async () => ({
       providers: CATALOG.providers.map((provider) => ({
@@ -95,7 +95,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
 });
 
 test("without a context window the context use is a token count", async () => {
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
@@ -114,7 +114,7 @@ test("an answer without an input count shows no context item", async () => {
       finishReason: "stop",
     },
   });
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions([settings as StoredEvent, unknown]));
   frame.start();
   await waitForSettled();
@@ -179,7 +179,7 @@ test("a pane whose session does not open shows no saved pick", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
     cwd: folder(),
   });
-  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "missing" });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", sessionId: "missing" });
   const chat = await loadChat(frame);
   frame.start();
   // Activation loaded the pick, so the new pane shows it at once.
@@ -191,7 +191,7 @@ test("a pane whose session does not open shows no saved pick", async () => {
 });
 
 test("the bar of a session of a provider that was not ready at the start shows its level after a catalog change", async () => {
-  using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: "/launch", session: "s1" });
+  using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: "/launch", sessionId: "s1" });
   // The provider is not ready at the start, and a login makes it ready.
   let ready = false;
   const catalog = { list: async () => (ready ? CATALOG : { providers: [] }) };

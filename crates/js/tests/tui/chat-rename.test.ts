@@ -24,7 +24,7 @@ function renameEditor(frame: Awaited<ReturnType<typeof loadChat>>["tui"]): TextE
 }
 
 test("Enter renames the fetched title, keeps the draft, and does not cancel", async () => {
-  using frame = createFrame({ width: 50, height: 10 }, undefined, { session: "s1", cwd: "/w" });
+  using frame = createFrame({ width: 50, height: 10 }, undefined, { sessionId: "s1", cwd: "/w" });
   const sessions = fakeSessions();
   sessions.rows.push(session("old title"));
   const chat = await loadChat(frame, sessions);
@@ -66,7 +66,7 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
 });
 
 test("a rename failure shows an error and retains the editor", async () => {
-  using frame = createFrame({ width: 50, height: 10 }, undefined, { session: "s1", cwd: "/w" });
+  using frame = createFrame({ width: 50, height: 10 }, undefined, { sessionId: "s1", cwd: "/w" });
   const sessions = fakeSessions();
   sessions.rows.push(session("old title"));
   sessions.state.renameFails = true;
@@ -102,7 +102,7 @@ test("Esc cancels rename, and an unbound pane does not expose the command", asyn
 
   const sessions = fakeSessions();
   sessions.rows.push(session("old title"));
-  using bound = createFrame({ width: 50, height: 10 }, undefined, { session: "s1", cwd: "/w" });
+  using bound = createFrame({ width: 50, height: 10 }, undefined, { sessionId: "s1", cwd: "/w" });
   const loaded = await loadChat(bound, sessions);
   bound.start();
   loaded.tui.commands.run("chat:rename");

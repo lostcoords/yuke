@@ -33,7 +33,7 @@ test("a reload keeps the draft of each pane and the focus", async () => {
 });
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
-  using frame = createFrame({ width: 10, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 10, height: 6 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions([commit(2, [{ kind: "assistantText", text: "hello" }])]));
   frame.start();
   // Row 0 is the gap before the reply, and column 0 is its indent.
@@ -49,7 +49,7 @@ test("a drag over the transcript copies at the release, and the composer keeps t
 });
 
 test("the start pane holds the session of the startup, and a split opens a new chat without one", async () => {
-  using frame = createFrame({ width: 21, height: 4 }, undefined, { cwd: "/work", session: "s1" });
+  using frame = createFrame({ width: 21, height: 4 }, undefined, { cwd: "/work", sessionId: "s1" });
   const chat = await loadChat(frame);
   frame.start();
   chat.tui.commands.run("core:split-right");
@@ -126,7 +126,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
       consumed: [],
     },
   ];
-  using frame = createFrame({ width: 30, height: 24 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 24 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
@@ -163,7 +163,7 @@ test("a refusal and a failed round have a label before their text", async () => 
     { seq: 1, kind: "settings", ...SETTINGS } as const,
     commit(2, [{ kind: "assistantText", text: "no" }], { answer }),
   ];
-  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
@@ -210,7 +210,7 @@ test("a hidden note draws no row, and an interrupted turn tells the user what to
       ],
     },
   ];
-  using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
 
@@ -221,7 +221,7 @@ test("a hidden note draws no row, and an interrupted turn tells the user what to
 });
 
 test("the top loads older pages, keeps the shown rows, and stops at the first event", async () => {
-  using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(250));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -248,7 +248,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
 });
 
 test("a failed page shows its error below the transcript and loads no more pages", async () => {
-  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(250));
   sessions.state.failing = true;
   const chat = await loadChat(frame, sessions);
@@ -268,7 +268,7 @@ test("a failed page shows its error below the transcript and loads no more pages
 });
 
 test("output below a scrolled transcript shows the hint, and the bottom follows the tail again", async () => {
-  using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(30));
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -287,7 +287,7 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
 test("a reload keeps the folds and the scrolled place of a pane", async () => {
   const saved = replies(40);
   saved[1] = commit(2, [{ kind: "reasoning", text: "deep" } as never, { kind: "assistantText", text: "ok" }]);
-  using before = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using before = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(before, fakeSessions(saved));
   before.start();
   chat.transcript().scroll.scrollTo(0);
@@ -297,7 +297,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   before.draw();
   const shown = transcriptRows(before);
   assertEquals(shown.slice(0, 2), [" Thought", " deep"]);
-  using after = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using after = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", sessionId: "s1" });
   await loadChat(after, fakeSessions(saved));
   after.start(before.snapshot());
   after.draw();
@@ -307,7 +307,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
 });
 
 test("a live event after a gap loads the missing events, and an unchanged entry keeps its item", async () => {
-  using frame = createFrame({ width: 20, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 10 }, undefined, { cwd: "/w", sessionId: "s1" });
   const saved = replies(10);
   const sessions = fakeSessions(saved);
   const chat = await loadChat(frame, sessions);
@@ -342,7 +342,7 @@ test("a notification from yuke shows its source without host:, and a plugin keep
     notification(2, 1, "host:jobs", "make · exited 0"),
     notification(3, 2, "myhost:ci", "build done"),
   ];
-  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   frame.draw();

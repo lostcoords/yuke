@@ -478,7 +478,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
                delivering = true;
                if (event.kind === 'update') {{
                  updates.push(event.update.kind === 'state' ? event.update.state : 'follow-up');
-                 if (!called) {{ called = true; handle.cancel(); }}
+                 if (!called) {{ called = true; handle.cancelTurn(); }}
                }}
                delivering = false;
              }} }});",
@@ -628,7 +628,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              const removed = await handle.removeInput(input);
              await handle.sendMessage({{ content: [{{ kind: 'userText', text: 'Review @main.rs' }}], modelContent: [{{ kind: 'userText', text: 'Review main.rs.' }}] }});
              await handle.notifyModel({{ display: 'shown', text: 'told' }});
-             handle.cancel();
+             handle.cancelTurn();
              handle.moveJobsToBackground();
              await sessions.rename(id, '  renamed   session ');
              await sessions.fork(id);

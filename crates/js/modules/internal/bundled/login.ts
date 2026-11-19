@@ -61,7 +61,7 @@ async function chosen(
 
 /** Take an API key for `provider` in a masked field. A refused key stays in the field with its error. */
 async function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider: ProviderInfo): Promise<void> {
-  const saved = await tui.input({
+  const saved = await tui.prompt({
     title: `API key · ${provider.name}`,
     placeholder: "API key",
     mask: true,

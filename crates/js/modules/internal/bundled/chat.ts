@@ -237,7 +237,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         throw error;
       }
     },
-    session: (view) => panes.get(view)?.session(),
+    sessionIdOf: (view) => panes.get(view)?.session(),
     addChangeListener: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -503,7 +503,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   });
   tui.views.add("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
   tui.panes.setDefault((mount, reason) =>
-    chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
+    chatPane(chat, mount, { session: reason === "start" ? tui.startup.sessionId : undefined }),
   );
   for (const command of COMMANDS) {
     tui.commands.add({

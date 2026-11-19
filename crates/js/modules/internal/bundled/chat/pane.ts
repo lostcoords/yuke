@@ -485,7 +485,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const row = await ctx.get("sessions").get(id);
       if (mount.signal.aborted || chatSession.id !== id) return;
       // A refused title stays in the field with its error.
-      await tui.input({
+      await tui.prompt({
         title: "Rename session",
         text: row.title ?? "",
         signal: mount.signal,
@@ -526,7 +526,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     get composer() {
       return composer;
     },
-    get session() {
+    get sessionId() {
       return chatSession.id;
     },
     get transcript() {
@@ -825,14 +825,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     olderMessage,
     newerMessage: () => chatComposer.newerMessage(),
     clear: () => {
-      if (composer.state.text === "") chatSession.handle?.cancel();
+      if (composer.state.text === "") chatSession.handle?.cancelTurn();
       else chatComposer.setDraft(EMPTY);
     },
     moveJobsToBackground: () => chatSession.handle?.moveJobsToBackground(),
     interrupt: () => {
       const back = locked()?.back;
       if (view.selection !== undefined) view.selection = undefined;
-      else if (back === undefined) chatSession.handle?.cancel();
+      else if (back === undefined) chatSession.handle?.cancelTurn();
       else {
         show(back).catch((error: unknown) => {
           if (!mount.signal.aborted) ctx.notify("error", `The session ${back} did not open: ${String(error)}`);

@@ -5,7 +5,7 @@ import { click, commit, fakeSessions, loadChat, SETTINGS, transcriptRows } from 
 import { rows } from "./rows.ts";
 
 test("one thought opens and copies every adjacent reasoning block of a saved response", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions([
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [
@@ -44,7 +44,7 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
 });
 
 test("adjacent empty reasoning blocks keep one working phase without drawing thought rows", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", sessionId: "s1" });
   const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   await loadChat(frame, sessions);
   frame.start();

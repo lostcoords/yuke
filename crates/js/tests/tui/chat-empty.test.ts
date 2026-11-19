@@ -66,7 +66,7 @@ test("the first send hides the header at once, and the waiting message keeps it 
 });
 
 test("a session with history shows no header", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w", sessionId: "s1" });
   await loadChat(frame, fakeSessions(replies(3)));
   frame.start();
   await waitForSettled();

@@ -189,7 +189,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
           state.backgrounds += 1;
         },
         canMoveJobsToBackground: () => state.movable,
-        cancel() {
+        cancelTurn() {
           state.cancels += 1;
         },
         jobs: () => state.jobs,

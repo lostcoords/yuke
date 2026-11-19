@@ -134,7 +134,7 @@ test("a select shows its items in the order of its rank, with the rows of its re
 test("an input keeps a refused text with its message, and gives the text that its check accepts", async () => {
   using frame = createFrame({ width: 60, height: 10 });
   const checked: string[] = [];
-  const answer = frame.surface("test").tui.input({
+  const answer = frame.surface("test").tui.prompt({
     title: "Name",
     text: "a",
     onSubmit: async (text) => {
@@ -157,7 +157,7 @@ test("an input keeps a refused text with its message, and gives the text that it
 
 test("an input gives undefined for esc", async () => {
   using frame = createFrame({ width: 60, height: 10 });
-  const answer = frame.surface("test").tui.input({ placeholder: "URL" });
+  const answer = frame.surface("test").tui.prompt({ placeholder: "URL" });
   frame.draw();
   frame.paste("draft");
   frame.key("esc");

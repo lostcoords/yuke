@@ -76,7 +76,7 @@ function shown(frame: Parameters<typeof transcriptRows>[0]): string[] {
 }
 
 test("a plugin shows three tools as one row, and a click opens and folds that row", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a", "b", "c")));
   chat.chat.setPresentation((options) => new Grouped(options));
   frame.start();
@@ -93,7 +93,7 @@ test("a plugin shows three tools as one row, and a click opens and folds that ro
 });
 
 test("a plugin that loads after the pane mounts changes the open pane and keeps its folds, and its disposer gives the default look back", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a", "b")));
   frame.start();
   await waitForSettled();
@@ -112,7 +112,7 @@ test("a plugin that loads after the pane mounts changes the open pane and keeps 
 });
 
 test("a turn calls the presentation again each second only while a tool runs", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const saved = reads("a");
   const called = saved[1];
   assert(called?.kind === "commit");
@@ -162,7 +162,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
 });
 
 test("a disposer of an old factory leaves the look of a later factory", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a")));
   const removeOld = chat.chat.setPresentation(() => new ChatDocument("old"));
   chat.chat.setPresentation((options) => new Grouped(options));
@@ -174,7 +174,7 @@ test("a disposer of an old factory leaves the look of a later factory", async ()
 });
 
 test("a disposer of a later factory brings back the look of the factory before it", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a")));
   chat.chat.setPresentation((options) => new Grouped(options));
   const removeNew = chat.chat.setPresentation(() => new ChatDocument("new"));
@@ -186,7 +186,7 @@ test("a disposer of a later factory brings back the look of the factory before i
 });
 
 test("requestUpdate shows new state of a presentation with no session event, and a frame alone does not", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a")));
   let grouped: Grouped | undefined;
   let changed = (): void => {};
@@ -208,7 +208,7 @@ test("requestUpdate shows new state of a presentation with no session event, and
 });
 
 test("a session change, a new factory, and a pane close abort the signal, and each presentation gets the key of its session", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a")));
   const options: ChatPresentationOptions[] = [];
   const factory = (given: ChatPresentationOptions): ChatPresentation => {
@@ -235,14 +235,14 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
       afterFactory,
       options[3]?.signal.aborted,
       options[2]?.signal.aborted,
-      chat.chat.session(pane),
+      chat.chat.sessionIdOf(pane),
     ],
     [["session:s1", "session:s2", "session:s2", "session:new"], [true, false], [true, false], true, false, "s2"],
   );
 });
 
 test("a group key in the folds survives a snapshot and a restore", async () => {
-  using before = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using before = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", sessionId: "s1" });
   const first = await loadChat(before, fakeSessions(reads("a")));
   first.chat.setPresentation((options) => new Grouped(options));
   before.start();

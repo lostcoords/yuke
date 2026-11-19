@@ -135,7 +135,7 @@ async function open(
     },
     close,
     [Symbol.dispose]: close,
-    cancel() {
+    cancelTurn() {
       live();
       sessionCancel(id);
     },
