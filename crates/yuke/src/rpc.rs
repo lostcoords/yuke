@@ -71,7 +71,8 @@ pub(crate) enum Clients {
 pub(crate) struct Socket {
     listener: UnixListener,
     path: PathBuf,
-    lock: File,
+    /// The open file holds the lock. The close of the file releases it.
+    _lock: File,
 }
 
 impl Socket {
@@ -107,7 +108,7 @@ impl Socket {
         let socket = Socket {
             listener: UnixListener::bind(path).map_err(failure)?,
             path: path.to_path_buf(),
-            lock,
+            _lock: lock,
         };
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(failure)?;
         Ok(socket)
@@ -134,10 +135,6 @@ impl Drop for Socket {
     fn drop(&mut self) {
         if let Err(error) = std::fs::remove_file(&self.path) {
             warn(&format!("{}: {error}", self.path.display()));
-        }
-        // A job process holds a copy of the file until its exec, and the copy keeps the lock. So the unlock is explicit.
-        if self.lock.unlock().is_err() {
-            // The close of the file releases the lock when no copy lives, so nothing is left to do.
         }
     }
 }
