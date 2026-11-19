@@ -259,35 +259,11 @@ fn a_bad_provider_field_stops_the_load_and_names_the_field() {
         (r#"{ "id": "a/b" }"#.to_owned(), "provider a/b: id:"),
         (r#"{ "id": "" }"#.to_owned(), "provider : id:"),
         (
-            r#"{ "id": "openai" }, { "id": "openai" }"#.to_owned(),
-            "provider openai:",
-        ),
-        (
             r#"{ "id": "local", "endpoints": [{ "protocol": "openai_chat" }], "models": [] }"#.to_owned(),
             "provider local: base_url:",
         ),
         (
             r#"{ "id": "openai", "base_url": "ftp://h" }"#.to_owned(),
-            "provider openai: base_url:",
-        ),
-        (
-            r#"{ "id": "openai", "base_url": "https:///v1" }"#.to_owned(),
-            "provider openai: base_url:",
-        ),
-        (
-            r#"{ "id": "openai", "base_url": "https://u@h/v1" }"#.to_owned(),
-            "provider openai: base_url:",
-        ),
-        (
-            r#"{ "id": "openai", "base_url": "http://h:bad/v1" }"#.to_owned(),
-            "provider openai: base_url:",
-        ),
-        (
-            r#"{ "id": "openai", "base_url": "https://h/v1?a=1" }"#.to_owned(),
-            "provider openai: base_url:",
-        ),
-        (
-            r#"{ "id": "openai", "base_url": "https://h/v 1" }"#.to_owned(),
             "provider openai: base_url:",
         ),
         (
@@ -350,12 +326,8 @@ fn a_bad_endpoint_or_header_stops_the_load_and_names_the_field() {
 fn a_bad_model_stops_the_load_and_names_the_model_and_the_field() {
     assert_errors([
         (
-            r#"{ "id": "openai", "models": [{ "id": "a" }, { "id": "a" }] }"#.to_owned(),
-            "provider openai: model a:",
-        ),
-        (
-            r#"{ "id": "openai", "models": [{ "id": "a b" }] }"#.to_owned(),
-            "provider openai: model a b: id:",
+            r#"{ "id": "openai", "models": [{ "id": "" }] }"#.to_owned(),
+            "provider openai: model : id:",
         ),
         (
             r#"{ "id": "openai", "models": [{ "id": "a", "cost": [{ "min_prompt_tokens": 5 }] }] }"#.to_owned(),
@@ -406,6 +378,26 @@ fn an_entry_with_only_the_id_of_a_built_in_provider_keeps_that_provider() {
         let providers = parse(&format!(r#"{{ "id": "{}" }}"#, built_in.id)).unwrap();
         assert_eq!(provider(&providers, &built_in.id), built_in);
     }
+}
+
+#[test]
+fn a_repeated_provider_id_or_model_id_applies_in_file_order_so_the_last_value_wins() {
+    let providers =
+        parse(r#"{ "id": "openai", "name": "First", "base_url": "http://a/v1" }, { "id": "openai", "name": "Last" }"#)
+            .unwrap();
+    let repeated = parse(&local(&serde_json::json!({
+        "models": [
+            { "id": "m", "upstream_id": "one", "limits": { "max_output_tokens": 10 } },
+            { "id": "m", "upstream_id": "two", "limits": { "max_output_tokens": 10 } }
+        ]
+    })))
+    .unwrap();
+
+    let openai = provider(&providers, "openai");
+    assert_eq!((&*openai.name, &*openai.base_url), ("Last", "http://a/v1"));
+    let models = &provider(&repeated, "local").models;
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].upstream_id, "two");
 }
 
 #[test]

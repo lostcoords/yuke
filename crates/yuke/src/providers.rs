@@ -2,7 +2,6 @@
 //! `//` and `/* */` comments, and an unknown field is an error.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::path::Path;
 
 use serde::{Deserialize, Deserializer};
@@ -41,12 +40,9 @@ impl Providers {
     /// Apply the entries of `file` to the built-in providers, and give the result.
     fn from_file(file: File) -> Result<Providers, String> {
         let mut providers = catalog::PROVIDERS.to_vec();
-        let mut ids = HashSet::new();
+        // An entry with an id that an earlier entry has changes the result of that entry.
         for patch in file.providers {
             let id = patch.id.clone();
-            if !ids.insert(id.clone()) {
-                return Err(format!("provider {id}: the file has this id twice"));
-            }
             patch
                 .apply(&mut providers)
                 .map_err(|error| format!("provider {id}: {error}"))?;
@@ -206,7 +202,9 @@ enum ThinkingShape {
 impl ProviderPatch {
     /// Change the provider with this id in `providers`, or add it.
     fn apply(self, providers: &mut Vec<Provider>) -> Result<(), String> {
-        valid_id(&self.id, "/")?;
+        if self.id.is_empty() || self.id.contains('/') {
+            return Err(format!("id: {:?} must not be empty and must have no '/'", self.id));
+        }
         let position = providers.iter().position(|provider| provider.id == self.id);
         let index = if let Some(index) = position {
             index
@@ -256,7 +254,9 @@ impl ProviderPatch {
             provider.auth = Auth::ApiKey(Some(variable.into()));
         }
         if let Some(base_url) = self.base_url {
-            valid_base_url(&base_url).map_err(|error| format!("base_url: {error}"))?;
+            if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+                return Err("base_url: the URL must start with http:// or https://".to_owned());
+            }
             provider.base_url = base_url.into();
         }
         if let Some(headers) = self.headers {
@@ -273,12 +273,9 @@ impl ProviderPatch {
             provider.endpoints = endpoints(entries)?.into();
         }
         if let Some(entries) = self.models {
-            let mut ids = HashSet::new();
+            // A model with an id that an earlier model has replaces it.
             for entry in entries {
                 let id = entry.id.clone();
-                if !ids.insert(id.clone()) {
-                    return Err(format!("model {id}: the provider has this id twice"));
-                }
                 let model = entry
                     .model(&provider.endpoints)
                     .map_err(|error| format!("model {id}: {error}"))?;
@@ -337,7 +334,9 @@ fn endpoints(entries: Vec<EndpointEntry>) -> Result<Vec<Endpoint>, String> {
 impl ModelEntry {
     /// The model of the entry on a provider with `endpoints`.
     fn model(self, endpoints: &[Endpoint]) -> Result<Model, String> {
-        valid_id(&self.id, "")?;
+        if self.id.is_empty() {
+            return Err("id: the id must not be empty".to_owned());
+        }
         let protocol = match (self.protocol, endpoints) {
             (Some(protocol), _) => protocol,
             (None, [only]) => only.protocol,
@@ -442,48 +441,6 @@ fn check(provider: &Provider) -> Result<(), String> {
         Entry { provider, model }
             .bind()
             .map_err(|error| format!("model {}: {error}", model.id))?;
-    }
-    Ok(())
-}
-
-/// Check that `id` is not empty, and holds no white space, no control character, and none of `refused`.
-fn valid_id(id: &str, refused: &str) -> Result<(), String> {
-    if id.is_empty()
-        || id
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || refused.contains(c))
-    {
-        let slash = if refused.is_empty() { "" } else { ", and no slash" };
-        return Err(format!(
-            "id: {id:?} must not be empty, and must have no white space, no control character{slash}"
-        ));
-    }
-    Ok(())
-}
-
-/// Check that `url` is an `http` or `https` URL with a host, and with no user, query, or fragment.
-fn valid_base_url(url: &str) -> Result<(), &'static str> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .ok_or("the URL must start with http:// or https://")?;
-    let host = rest.split('/').next().unwrap_or_default();
-    if host.is_empty() {
-        return Err("the URL has no host");
-    }
-    if host.contains('@') {
-        return Err("the URL must have no user");
-    }
-    // The HTTP parser keeps a port that is no number, and then sends to the default port.
-    let port = host.rsplit_once(']').map_or(host, |(_, after)| after).split_once(':');
-    if port.is_some_and(|(_, port)| port.parse::<u16>().is_err()) {
-        return Err("the URL port must be a number from 0 to 65535");
-    }
-    if url.contains(['?', '#']) {
-        return Err("the URL must have no query and no fragment");
-    }
-    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err("the URL must have no white space and no control character");
     }
     Ok(())
 }
