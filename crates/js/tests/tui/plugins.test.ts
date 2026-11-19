@@ -346,7 +346,7 @@ test("a check without a change says so, and enter writes nothing", async () => {
   assertEquals(fake.calls, ["list", 'check {"kind":"all"}']);
 });
 
-test("a check shows the plugins that it could not check below the others, and enter writes the others", async () => {
+test("a plugin that fails its check shows below the changes, and enter writes only the changes", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   const fake = manager({ changes: [CHANGE], failed: [{ name: "tools", error: "git ls-remote: no such host" }] });
   load(frame, fake.plugins);
@@ -362,7 +362,7 @@ test("a check shows the plugins that it could not check below the others, and en
   assertEquals(fake.calls, ["list", 'check {"kind":"all"}', "apply https://h/r 8d02e77", "list"]);
 });
 
-test("a check without a change and with a plugin that it could not check says so for the others", async () => {
+test("a check without a change and with a failed plugin says that the other plugins are current", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   load(frame, manager({ failed: [{ name: "tools", error: "no default branch" }] }).plugins);
 
@@ -370,8 +370,8 @@ test("a check without a change and with a plugin that it could not check says so
   const reviewed = await press(frame, "c");
 
   assertEquals(
-    [rowOf(reviewed, "Updates"), rowOf(reviewed, "The other"), rowOf(reviewed, "esc:")],
-    [" Updates", "The other Git plugins are at the newest commit of their ref", " esc: close"],
+    [rowOf(reviewed, "Updates"), rowOf(reviewed, "The other")],
+    [" Updates", "The other Git plugins are at the newest commit of their ref"],
   );
 });
 

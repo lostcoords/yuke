@@ -204,14 +204,14 @@ pub struct CheckPluginsResult {
     pub failed: Vec<FailedPlugin>,
 }
 
-/// A plugin that a request could not handle.
+/// A plugin that `plugin/check` could not check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FailedPlugin {
     /// The name of its `plugin.json`.
     pub name: String,
-    /// Why.
+    /// The reason of the failure.
     pub error: String,
 }
 

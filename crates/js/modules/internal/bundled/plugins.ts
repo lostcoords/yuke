@@ -374,10 +374,6 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
  * not check with the reason. Without a move, one line says that the others are at their newest commit.
  */
 function reviewOf(checked: CheckPluginsResult | undefined): TextDocument {
-  const others =
-    checked?.failed.length === 0
-      ? "Each Git plugin is at the newest commit of its ref"
-      : "The other Git plugins are at the newest commit of their ref";
   const items: readonly { readonly label: string; readonly log?: string }[] =
     checked === undefined
       ? [{ label: "Checking each Git plugin for a new commit" }]
@@ -389,7 +385,11 @@ function reviewOf(checked: CheckPluginsResult | undefined): TextDocument {
                 ? change.log.commits.map((line) => `  ${line}`).join("\n")
                 : `  no log: ${change.log.error}`,
           })),
-          ...(checked.changes.length === 0 ? [{ label: others }] : []),
+          ...(checked.changes.length > 0
+            ? []
+            : checked.failed.length === 0
+              ? [{ label: "Each Git plugin is at the newest commit of its ref" }]
+              : [{ label: "The other Git plugins are at the newest commit of their ref" }]),
           ...checked.failed.map((plugin) => ({ label: `${plugin.name}  not checked`, log: `  ${plugin.error}` })),
         ];
   return {

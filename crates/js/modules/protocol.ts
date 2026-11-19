@@ -400,7 +400,7 @@ request: string,
 data: unknown, };
 
 /**
- * A plugin that a request could not handle.
+ * A plugin that `plugin/check` could not check.
  */
 export type FailedPlugin = { 
 /**
@@ -408,7 +408,7 @@ export type FailedPlugin = {
  */
 name: string, 
 /**
- * Why.
+ * The reason of the failure.
  */
 error: string, };
 

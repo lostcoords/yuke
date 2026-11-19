@@ -358,16 +358,17 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             };
             let CheckPluginsResult { changes, failed } = manager::check(&paths, &target, &progress).await?;
             for plugin in &failed {
-                warn(&format!("plugin {} was not checked: {}", plugin.name, plugin.error));
+                warn(&format!("plugin {}: {}", plugin.name, plugin.error));
             }
+            let all_checked = failed.is_empty();
             // A plugin that was not checked fails the command, also when the update of the others goes on.
-            let code = if failed.is_empty() {
+            let code = if all_checked {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
             };
             if changes.is_empty() {
-                say(if failed.is_empty() {
+                say(if all_checked {
                     "Each plugin is at the newest commit of its ref."
                 } else {
                     "The other plugins are at the newest commit of their ref."

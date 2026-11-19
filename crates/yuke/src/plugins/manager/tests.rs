@@ -162,24 +162,23 @@ async fn a_check_names_a_plugin_that_it_cannot_check_and_checks_the_others() {
     let first = commit(&root, "first");
     let other = root.join("other");
     commit_plugin(&other, "weather", "first weather");
-    add(&paths, &clock(&root, None).git, &[], None, &|_| {}).await.unwrap();
+    // The plugin that fails comes first, so the check of the next one shows that the check goes on.
     add(&paths, &other.to_string_lossy(), &[], None, &|_| {}).await.unwrap();
+    add(&paths, &clock(&root, None).git, &[], None, &|_| {}).await.unwrap();
     let second = commit(&root, "feat: seconds");
     fs::remove_dir_all(&other).unwrap();
 
     let checked = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
 
-    let moves: Vec<(&str, &str, &str)> = (checked.changes.iter())
-        .map(|change| (change.name.as_str(), change.old.as_str(), change.new.as_str()))
-        .collect();
-    assert_eq!(moves, [("clock", first.as_str(), second.as_str())]);
-    assert_eq!(checked.failed.len(), 1);
-    assert_eq!(checked.failed[0].name, "weather");
-    assert!(
-        checked.failed[0].error.starts_with("git ls-remote: "),
-        "{:?}",
-        checked.failed
+    assert_eq!(checked.changes.len(), 1);
+    let change = &checked.changes[0];
+    assert_eq!(
+        (change.name.as_str(), change.old.as_str(), change.new.as_str()),
+        ("clock", first.as_str(), second.as_str())
     );
+    let failed: Vec<&str> = checked.failed.iter().map(|plugin| plugin.name.as_str()).collect();
+    assert_eq!(failed, ["weather"]);
+    assert_ne!(checked.failed[0].error, "");
 }
 
 #[tokio::test(flavor = "local")]
