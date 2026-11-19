@@ -6,6 +6,8 @@ description: Define session tools with checked arguments, model results, cancell
 
 A model tool is an operation that the model can call. Register it with `s.tools.add` in the `session` export of a plugin. Each session gets its own registrations, in the TUI and in headless modes.
 
+yuke has built-in tools too. See [Built-in tools](#built-in-tools).
+
 ## Definition
 
 This entry module defines `count_words` in each session:
@@ -14,7 +16,7 @@ This entry module defines `count_words` in each session:
 
 `Tool<S>` from `yuke:tools` defines the contract. `concurrency` is required. A `serial` call runs alone among the calls of one model answer, and `parallel` calls can run together. `deferLoading: true` keeps the tool out of requests until tool search finds it.
 
-A name must match `^[a-zA-Z0-9_-]{1,64}$`, or `add` throws a `TypeError`. A plugin cannot use `tool_search` or `tool_call`.
+A name must match `^[a-zA-Z0-9_-]{1,64}$`, or `add` throws a `TypeError`. A plugin cannot use the names `tool_search` and `tool_call`.
 
 A tool with the name of an existing tool replaces it in this session, and the last definition wins. A replacement of another plugin's tool sends an info notice. The built-in tools `read`, `write`, `edit`, `exec`, and `stop` work the same way. `s.tools.remove(name)` removes a name from the tool list of this session.
 
@@ -41,7 +43,7 @@ Return a string, or a `ToolExecuteResult` object:
 | `media` | Optional media items for the model, each with `mimeType` and a `path` or `bytes` |
 | `display` | Optional display blocks for the user, in place of the text |
 
-Display blocks can show results such as diffs without adding that display to the model's context. See `DisplayBlock` in `yuke:tools`.
+Display blocks can show results such as diffs without adding that display to the model's context. See `DisplayBlock` in `yuke:protocol`.
 
 ## Errors
 
@@ -63,6 +65,29 @@ Use `context.jobs.run({ id, label, background? }, work)` for work inside a tool.
 
 Use the signal passed to `work`, not `context.signal`, because the job must continue when the call ends. Work can return `{ status, text }` to report its end, or `undefined` for no report.
 
-Use `s.jobs.start({ id, label }, work)` to start a session job without a tool call. A job ID must be unique among the running jobs of the session. Background starts reject in `yuke -p`.
+Use `s.jobs.start({ id, label }, work)` to start a session job without a tool call. A job ID must be unique among the running jobs of the session.
+
+In `yuke -p`, each job start that runs without a call rejects. This covers `s.jobs.start`, `context.jobs.run` with `background: true`, and `exec` with `background: true`. A job that its call waits for still works.
 
 The built-in `stop` tool and the `stopJob(id)` method of a session handle stop a job and await its work. A stopped job sends no report. Session close and reload also stop plugin jobs.
+
+## Built-in tools
+
+yuke gives each session these tools. A plugin can replace a built-in tool of the first group with `s.tools.add`, or remove it with `s.tools.remove`.
+
+| Tool | What it does |
+|---|---|
+| `read` | Read a file with line numbers. `offset` and `limit` select the lines. One read returns at most 50 KiB. It returns an image file (PNG, JPEG, GIF, or WebP) as an image. |
+| `write` | Create a file or replace its content. It makes the missing parent folders. |
+| `edit` | Replace an exact string in a file. `old_string` must match once, unless `replace_all` is `true`. The result shows a diff. |
+| `exec` | Run a shell command in the workspace folder. It returns the output and the exit status. The default deadline is 120 seconds, and `timeout_ms` raises it up to 600 seconds. `background: true` runs a server or a watcher as a job. |
+| `stop` | Stop a background job by its ID. |
+
+The engine adds two more tools. A plugin cannot define them.
+
+| Tool | What it does |
+|---|---|
+| `tool_search` | Find a deferred tool by keywords. A deferred tool stays out of the requests until the model finds it. MCP tools are deferred. The tool exists only when the session has a deferred tool. |
+| `tool_call` | Call a deferred tool that `tool_search` found, by name and arguments. Only a model that has no native tool search gets it. |
+
+Relative paths of `read`, `write`, and `edit` start in the workspace folder. A [hook](engine.md#engine-hooks) can approve or deny each call.
