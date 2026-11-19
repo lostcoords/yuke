@@ -1,10 +1,10 @@
 ---
-description: Add a terminal command with the public plugin API and check its types.
+description: Add a TUI command with the public plugin API and check its types.
 ---
 
 # Your first plugin
 
-This tutorial adds one terminal command. It needs an installed yuke and TypeScript (`tsc`). It needs no model or provider credentials.
+This tutorial adds one command to the TUI. It needs an installed yuke and TypeScript 7.0.2 or later (`tsc`). See [Get `tsc`](#get-tsc). It needs no model or provider credentials.
 
 ## 1. Find the profile
 
@@ -38,7 +38,7 @@ Copy this code into `plugins/hello/index.js`:
 
 <<< @/guide/examples/hello.js
 
-The entry exports a function named `apply`. It runs once per runtime. `ctx.get("tui")` returns `undefined` in `yuke -p` and `yuke --rpc`, so the early return skips terminal work in those modes. `ctx.notify` sends a notice with the plugin name as its source.
+The entry exports a function named `apply`. It runs once per runtime. `ctx.get("tui")` returns `undefined` in `yuke -p` and `yuke --rpc`, so the early return skips TUI work in those modes. `ctx.notify` sends a notice with the plugin name as its source.
 
 ## 3. List the plugin
 
@@ -77,6 +77,15 @@ tsc -p "$profile/tsconfig.json"
 
 A successful check exits without diagnostics. It checks types only. It does not load the plugin.
 
+### Get `tsc`
+
+The installed `tsconfig.json` uses recent options, such as `target: "es2025"` and `erasableSyntaxOnly`. Use TypeScript 7.0.2 or later. This is the version that yuke uses for its own checks. An older compiler can reject an option. Check the version with `tsc --version`.
+
+TypeScript 7 has a native `tsc` binary. There are two ways to get it:
+
+- Install it with npm in the profile folder: `npm install -D typescript`. Then run `npx tsc -p tsconfig.json`. The installed `tsconfig.json` excludes `node_modules`.
+- Download the archive of your platform from the [TypeScript 7.0.2 release](https://github.com/microsoft/TypeScript/releases/tag/v7.0.2). The `tsc` binary is in the `lib` folder of the archive. Put it on your `PATH`.
+
 ## 5. Run the command
 
 Start yuke:
@@ -93,4 +102,4 @@ To change the notice, edit `index.js` and run `/reload` when work is idle. To re
 
 ## Next step
 
-Read [Plugins](plugins.md) for session tools, hooks, services, and cleanup. Read [Terminal UI](ui.md) for commands and views. Read [Find the API](plugins.md#find-the-api) for the installed API reference.
+Read [Plugins](plugins.md) for session tools, hooks, services, and cleanup. Read [TUI plugin API](ui.md) for commands and views. Run `yuke test` to test the behavior of a plugin: see [Test and debug](plugins.md#test-and-debug). Read [Find the API](plugins.md#find-the-api) for the installed API reference.
