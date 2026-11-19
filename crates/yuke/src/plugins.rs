@@ -109,7 +109,7 @@ const BUNDLED: &[Bundled] = &[
 ];
 
 /// The plugins of a profile: the plugins to load, and the outcome of each plugin of `config.json`.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct PluginList {
     /// The plugins to load, in load order.
     pub(crate) load: Vec<Plugin>,
@@ -118,7 +118,7 @@ pub(crate) struct PluginList {
 }
 
 /// A plugin of `config.json` at a load.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct Outcome {
     /// The plugin as `config.json` names it.
     pub(crate) source: Source,
@@ -131,7 +131,7 @@ pub(crate) struct Outcome {
 }
 
 /// Why a plugin of `config.json` does not load.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum Failure {
     /// A Git plugin without its commit in `plugins.lock` or on disk. A sync installs it.
     NotInstalled,

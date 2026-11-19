@@ -5,10 +5,6 @@
  */
 export type FindPluginsParams = { 
 /**
- * The URL of the repository, as `git` takes it.
+ * The URL of the repository, as `git` takes it. yuke looks at its default branch.
  */
-git: string, 
-/**
- * The branch, tag, or commit to look at. Without it, the default branch.
- */
-ref?: string, };
+git: string, };

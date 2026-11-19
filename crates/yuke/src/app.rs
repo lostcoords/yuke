@@ -495,7 +495,7 @@ impl Shared {
 
     /// The plugins of a Git repository, for `plugin/find`.
     pub(crate) async fn find_plugins(&self, params: FindPluginsParams) -> Result<FindPluginsResult, AppError> {
-        let plugins = plugins::manager::find(&self.machine.paths, &params.git, params.reference.as_deref())
+        let plugins = plugins::manager::find(&self.machine.paths, &params.git)
             .await
             .map_err(AppError::Invalid)?;
         Ok(FindPluginsResult { plugins })

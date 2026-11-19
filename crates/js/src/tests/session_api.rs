@@ -319,10 +319,7 @@ impl Sessions for Scripted {
     }
     async fn sync_plugins(&self) -> Result<SyncPluginsResult, SessionsError> {
         self.record("plugins sync".to_owned());
-        Ok(SyncPluginsResult {
-            plugins: Vec::new(),
-            written: true,
-        })
+        Ok(SyncPluginsResult { written: true })
     }
     /// A check that never ends. Its drop ends a hold, so a test sees the cancel of its task.
     async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError> {
@@ -338,7 +335,7 @@ impl Sessions for Scripted {
         &self,
         params: yuke_protocol::FindPluginsParams,
     ) -> Result<yuke_protocol::FindPluginsResult, SessionsError> {
-        self.record(format!("plugins find {} {:?}", params.git, params.reference));
+        self.record(format!("plugins find {}", params.git));
         Ok(yuke_protocol::FindPluginsResult {
             plugins: vec![yuke_protocol::FoundPlugin {
                 name: "clock".to_owned(),
@@ -354,11 +351,6 @@ impl Sessions for Scripted {
         Ok(yuke_protocol::AddPluginsResult {
             plugins: vec![yuke_protocol::AddedPlugin {
                 name: "clock".to_owned(),
-                source: yuke_protocol::PluginSource {
-                    git: params.git,
-                    folder: Some("plugins/clock".to_owned()),
-                    reference: None,
-                },
                 commit: "c".repeat(40),
             }],
         })
@@ -768,7 +760,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
          await plugins.apply([{ source: { git: 'https://host/repo' }, commit: 'b'.repeat(40) }]);
          globalThis.controller = new AbortController();
          globalThis.checked = plugins.check({ kind: 'names', names: ['clock'] }, { signal: controller.signal });
-         const found = await plugins.find({ git: 'https://host/tools', ref: 'v1' });
+         const found = await plugins.find({ git: 'https://host/tools' });
          const added = await plugins.add({ git: 'https://host/tools', names: ['clock'] });
          await plugins.remove('clock');
          return JSON.stringify([listed, synced.written, found.plugins, added.plugins[0].name]);",
@@ -800,7 +792,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
             "plugins sync".to_owned(),
             format!("plugins apply {}", "b".repeat(40)),
             r#"plugins check Names { names: ["clock"] }"#.to_owned(),
-            r#"plugins find https://host/tools Some("v1")"#.to_owned(),
+            "plugins find https://host/tools".to_owned(),
             r#"plugins add https://host/tools ["clock"]"#.to_owned(),
             "plugins remove clock".to_owned(),
         ]

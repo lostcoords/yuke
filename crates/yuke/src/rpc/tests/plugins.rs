@@ -39,8 +39,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
             json!({ "plugins": [{ "source": source, "state": { "kind": "notInstalled" }, "load": { "kind": "pending" } }] })
         )
     );
-    assert_eq!(synced["plugins"][0]["commit"], json!(commit));
-    assert_eq!(synced["written"], json!(true));
+    assert_eq!(synced, json!({ "written": true }));
     assert_eq!(reloaded, Ok(json!({})));
     assert_eq!(
         loaded,
@@ -95,12 +94,7 @@ async fn plugin_add_writes_config_json_and_the_lock_and_plugin_remove_takes_both
         found,
         Ok(json!({ "plugins": [{ "name": "clock", "folder": "plugins/clock" }] }))
     );
-    assert_eq!(
-        added,
-        Ok(
-            json!({ "plugins": [{ "name": "clock", "source": { "git": url, "folder": "plugins/clock" }, "commit": commit }] })
-        )
-    );
+    assert_eq!(added, Ok(json!({ "plugins": [{ "name": "clock", "commit": commit }] })));
     assert_eq!(listed["plugins"][0]["state"]["kind"], json!("installed"));
     assert_eq!(removed, Ok(json!({})));
     assert!(config.contains("// mine"), "{config}");

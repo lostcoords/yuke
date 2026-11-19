@@ -44,15 +44,6 @@ pub enum PluginOrigin {
     Git(PluginSource),
 }
 
-impl fmt::Display for PluginOrigin {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Folder(folder) => f.write_str(folder),
-            Self::Git(source) => fmt::Display::fmt(source, f),
-        }
-    }
-}
-
 /// One plugin of `config.json` in `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
@@ -71,17 +62,13 @@ pub struct ManagedPlugin {
 
 /// The state on disk of one plugin of `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PluginState {
     /// A folder of the user.
     Local,
     /// A Git plugin that is not on disk. `plugin/sync` installs it.
-    NotInstalled {
-        /// The full commit id of the lock. Without it, `plugin/sync` locks the plugin at the commit of its ref.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        commit: Option<String>,
-    },
+    NotInstalled,
     /// A Git plugin at its locked commit.
     Installed {
         /// The full commit id of the lock.
@@ -130,8 +117,6 @@ pub struct LockedPlugin {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SyncPluginsResult {
-    /// Each Git plugin of `config.json` with its commit, in list order.
-    pub plugins: Vec<LockedPlugin>,
     /// Whether `plugins.lock` changed.
     pub written: bool,
 }
@@ -226,14 +211,11 @@ pub struct ApplyPluginsParams {
 
 /// The params of `plugin/find`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct FindPluginsParams {
-    /// The URL of the repository, as `git` takes it.
+    /// The URL of the repository, as `git` takes it. yuke looks at its default branch.
     pub git: String,
-    /// The branch, tag, or commit to look at. Without it, the default branch.
-    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
-    pub reference: Option<String>,
 }
 
 /// One plugin of a repository: a folder with a `plugin.json`.
@@ -280,8 +262,6 @@ pub struct AddPluginsParams {
 pub struct AddedPlugin {
     /// The name of its `plugin.json`.
     pub name: String,
-    /// The plugin, as `config.json` and `plugins.lock` hold it now.
-    pub source: PluginSource,
     /// The full commit id in the lock.
     pub commit: String,
 }

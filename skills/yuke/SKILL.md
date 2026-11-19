@@ -24,7 +24,7 @@ The profile is `$XDG_CONFIG_HOME/$YUKE_APPNAME`, by default `~/.config/yuke`. `d
 1. Edit `config.json`, or a plugin folder that `config.json` lists.
 2. Run `tsc -p ~/.config/yuke/tsconfig.json`. For a JavaScript plugin, do the step "Check the types" of `docs/guide/first-plugin.md` first.
 3. To test behavior, write a `*.test.ts` file with `yuke:test` and run `yuke test PATH`. It uses a fake model and needs no credentials.
-4. Tell the user to type `/reload` in yuke when no turn runs. A failed reload keeps the previous plugins and providers. After an edit of a Git plugin entry, run `yuke plugin sync`, because yuke downloads no plugin at startup.
+4. Tell the user to type `/reload` in yuke when no turn runs. A plugin that does not load does not stop the others, and a notice names it. A bad `config.json`, `plugins.lock`, or `providers.json` fails the reload and keeps the previous plugins and providers. After an edit of a Git plugin entry, run `yuke plugin sync`, because yuke downloads no plugin at startup.
 
 ## Rules
 

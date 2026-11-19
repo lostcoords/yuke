@@ -38,7 +38,7 @@ pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlug
                         Some(commit) if !matches!(outcome.failure, Some(Failure::NotInstalled)) => {
                             PluginState::Installed { commit }
                         }
-                        commit => PluginState::NotInstalled { commit },
+                        _ => PluginState::NotInstalled,
                     };
                     (PluginOrigin::Git(source), state)
                 }
@@ -66,9 +66,9 @@ pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlug
 /// # Errors
 ///
 /// Returns a text for a failed resolve or fetch.
-pub(crate) async fn find(paths: &Paths, url: &str, reference: Option<&str>) -> Result<Vec<FoundPlugin>, String> {
+pub(crate) async fn find(paths: &Paths, url: &str) -> Result<Vec<FoundPlugin>, String> {
     let _held = hold(&paths.data).await?;
-    Ok(found(paths, url, reference).await?.1)
+    Ok(found(paths, url, None).await?.1)
 }
 
 /// The commit of `reference` in the repository `url`, and each folder of that commit with a `plugin.json` whose name
@@ -163,10 +163,9 @@ pub(crate) async fn add(
             Some(text) => add_plugin_item(&text, &item),
             None => format!("{{\n  \"plugins\": [\n    {item}\n  ]\n}}\n"),
         });
-        lock.commits.insert(source.clone(), commit.clone());
+        lock.commits.insert(source, commit.clone());
         added.push(AddedPlugin {
             name: plugin.name.clone(),
-            source,
             commit: commit.clone(),
         });
     }
@@ -234,7 +233,7 @@ pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -
     {
         return Err("plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`".to_owned());
     }
-    let mut plugins = Vec::with_capacity(sources.len());
+    let mut fresh = Lock::default();
     let mut failures = Vec::new();
     for source in sources {
         let locked_commit = lock.commits.get(source);
@@ -248,29 +247,22 @@ pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -
         }
         .await;
         match (installed, locked_commit) {
-            (Ok(commit), _) => plugins.push(LockedPlugin {
-                source: source.clone(),
-                commit,
-            }),
+            (Ok(commit), _) => {
+                fresh.commits.insert(source.clone(), commit);
+            }
             (Err(error), commit) => {
                 failures.push(format!("plugin {}: {error}", git_label(source)));
-                plugins.extend(commit.map(|commit| LockedPlugin {
-                    source: source.clone(),
-                    commit: commit.clone(),
-                }));
+                if let Some(commit) = commit {
+                    fresh.commits.insert(source.clone(), commit.clone());
+                }
             }
         }
     }
-    let fresh = Lock {
-        commits: (plugins.iter())
-            .map(|plugin| (plugin.source.clone(), plugin.commit.clone()))
-            .collect(),
-    };
     let written = !locked && fresh.write(&paths.config)?;
     if !failures.is_empty() {
         return Err(failures.join("; "));
     }
-    Ok(SyncPluginsResult { plugins, written })
+    Ok(SyncPluginsResult { written })
 }
 
 /// The new commit of each installed Git plugin of `target` whose ref moved, with the log of the move. Each new commit is

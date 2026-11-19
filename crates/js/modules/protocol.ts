@@ -36,10 +36,6 @@ export type AddedPlugin = {
  */
 name: string, 
 /**
- * The plugin, as `config.json` and `plugins.lock` hold it now.
- */
-source: PluginSource, 
-/**
  * The full commit id in the lock.
  */
 commit: string, };
@@ -417,13 +413,9 @@ error: string, };
  */
 export type FindPluginsParams = { 
 /**
- * The URL of the repository, as `git` takes it.
+ * The URL of the repository, as `git` takes it. yuke looks at its default branch.
  */
-git: string, 
-/**
- * The branch, tag, or commit to look at. Without it, the default branch.
- */
-ref?: string, };
+git: string, };
 
 /**
  * The result of `plugin/find`.
@@ -996,11 +988,7 @@ ref?: string, };
 /**
  * The state on disk of one plugin of `plugin/list`.
  */
-export type PluginState = { "kind": "local" } | { "kind": "notInstalled", 
-/**
- * The full commit id of the lock. Without it, `plugin/sync` locks the plugin at the commit of its ref.
- */
-commit?: string, } | { "kind": "installed", 
+export type PluginState = { "kind": "local" } | { "kind": "notInstalled" } | { "kind": "installed", 
 /**
  * The full commit id of the lock.
  */
@@ -1531,10 +1519,6 @@ export type SubjectKind = "text" | "file" | "uri";
  * The result of `plugin/sync`.
  */
 export type SyncPluginsResult = { 
-/**
- * Each Git plugin of `config.json` with its commit, in list order.
- */
-plugins: Array<LockedPlugin>, 
 /**
  * Whether `plugins.lock` changed.
  */

@@ -3,11 +3,7 @@
 /**
  * The state on disk of one plugin of `plugin/list`.
  */
-export type PluginState = { "kind": "local" } | { "kind": "notInstalled", 
-/**
- * The full commit id of the lock. Without it, `plugin/sync` locks the plugin at the commit of its ref.
- */
-commit?: string, } | { "kind": "installed", 
+export type PluginState = { "kind": "local" } | { "kind": "notInstalled" } | { "kind": "installed", 
 /**
  * The full commit id of the lock.
  */

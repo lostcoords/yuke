@@ -57,10 +57,8 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
         &json!([{ "git": url, "folder": "plugins/clock", "ref": "main" }]),
     );
 
-    let SyncPluginsResult {
-        plugins: synced,
-        written,
-    } = sync(&paths, false, &|_| {}).await.unwrap();
+    let written = sync(&paths, false, &|_| {}).await.unwrap().written;
+    let synced = Lock::read(&paths.config).unwrap().commits;
     let second = commit(&root, "feat: seconds");
     let written_again = sync(&paths, false, &|_| {}).await.unwrap().written;
     let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap().changes;
@@ -69,7 +67,7 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
         .unwrap();
     let after_apply = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap().changes;
 
-    assert_eq!(synced, [at(clock(&root, Some("main")), &first)]);
+    assert_eq!(synced, [(clock(&root, Some("main")), first.clone())].into());
     assert!(written);
     assert!(!written_again);
     assert_eq!(changes.len(), 1);
@@ -109,14 +107,11 @@ async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
         ]),
     );
 
-    let SyncPluginsResult {
-        plugins: synced,
-        written,
-    } = sync(&paths, false, &|_| {}).await.unwrap();
+    let written = sync(&paths, false, &|_| {}).await.unwrap().written;
 
     assert_eq!(
-        synced,
-        [at(clock(&root, Some("main")), &first), at(clock(&root, None), &second),]
+        Lock::read(&paths.config).unwrap().commits,
+        [(clock(&root, Some("main")), first), (clock(&root, None), second)].into()
     );
     assert!(written);
 }
@@ -262,12 +257,8 @@ async fn a_locked_sync_installs_the_locked_commit_and_keeps_the_lock_text() {
     let text = json!({ "plugins": [{ "git": url, "folder": "plugins/clock", "commit": first }] }).to_string();
     fs::write(paths.config.join("plugins.lock"), &text).unwrap();
 
-    let SyncPluginsResult {
-        plugins: synced,
-        written,
-    } = sync(&paths, true, &|_| {}).await.unwrap();
+    let written = sync(&paths, true, &|_| {}).await.unwrap().written;
 
-    assert_eq!(synced, [at(clock(&root, None), &first)]);
     assert!(!written);
     assert_eq!(fs::read_to_string(paths.config.join("plugins.lock")).unwrap(), text);
     assert!(git_folder(&paths.data, &url, &first).is_dir());
@@ -321,7 +312,7 @@ async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
     let last = commit_plugin(&root.join("remote"), "weather", "second");
     let url = clock(&root, None).git;
 
-    let found = find(&paths, &url, None).await.unwrap();
+    let found = find(&paths, &url).await.unwrap();
     let unnamed = add(&paths, &url, &[], None, &|_| {}).await.unwrap_err();
     let unknown = add(&paths, &url, &["sun".to_owned()], None, &|_| {}).await.unwrap_err();
     let added = add(&paths, &url, &["weather".to_owned(), "clock".to_owned()], None, &|_| {})
@@ -339,16 +330,8 @@ async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
         format!("{url} has 2 plugins: clock, weather: name the ones to add")
     );
     assert_eq!(unknown, format!("{url} has no plugin 'sun': it has clock, weather"));
-    let names: Vec<(&str, &str)> = added
-        .iter()
-        .map(|plugin| {
-            (
-                plugin.name.as_str(),
-                plugin.source.folder.as_deref().unwrap_or_default(),
-            )
-        })
-        .collect();
-    assert_eq!(names, [("weather", "plugins/weather"), ("clock", "plugins/clock")]);
+    let names: Vec<&str> = added.iter().map(|plugin| plugin.name.as_str()).collect();
+    assert_eq!(names, ["weather", "clock"]);
     assert!(added.iter().all(|plugin| plugin.commit == last));
     let states: Vec<(Option<&str>, &PluginState, &PluginLoad)> = listed
         .iter()
@@ -389,7 +372,6 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
         added,
         [AddedPlugin {
             name: "clock".to_owned(),
-            source: main.clone(),
             commit: first.clone(),
         }]
     );

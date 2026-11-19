@@ -25,7 +25,7 @@ const LISTED: readonly ManagedPlugin[] = [
     load: { kind: "pending" },
   },
   { source: { git: "https://h/weather" }, state: { kind: "notInstalled" }, load: { kind: "pending" } },
-  { source: { git: "https://h/maps" }, state: { kind: "notInstalled", commit: NEW }, load: { kind: "pending" } },
+  { source: { git: "https://h/maps" }, state: { kind: "notInstalled" }, load: { kind: "pending" } },
   {
     source: "./broken",
     name: "broken",
@@ -73,7 +73,7 @@ function manager(fake: Fake = {}) {
         });
       }
       if (fake.fail !== undefined) throw new Error(fake.fail);
-      return { plugins: [{ source: CHANGE.source, commit: OLD }], written: true };
+      return { written: true };
     },
     check: (target: PluginTarget, options) => {
       calls.push(`check ${JSON.stringify(target)}`);
