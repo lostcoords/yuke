@@ -30,11 +30,11 @@ use clap::{Parser, Subcommand};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, TurnEnd, chain_text};
-use yuke_protocol::{LockedPlugin, PluginLog, PluginState, PluginTarget, ReasoningLevel, SessionId};
+use yuke_protocol::{LockedPlugin, PluginLog, PluginTarget, ReasoningLevel, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
-use crate::plugins::manager;
+use crate::plugins::{Failure, manager};
 use crate::print::{Finished, SessionChoice, Task};
 use crate::providers::Providers;
 
@@ -122,7 +122,8 @@ enum Command {
 /// A command of `yuke plugin`.
 #[derive(Debug, Subcommand)]
 enum PluginCommand {
-    /// Show each plugin of config.json, its locked commit, and whether it is installed. It uses no network.
+    /// Show each plugin of config.json and its state: local, installed at a commit, not installed, or failed with the
+    /// reason. It uses no network.
     List,
     /// Install the commits of plugins.lock, and lock each new Git plugin at the commit of its ref.
     Sync {
@@ -329,20 +330,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
         |text: &str| writeln!(io::stdout(), "{text}").map_err(|error| format!("the output did not write: {error}"));
     let short = |commit: &str| commit[..7].to_owned();
     match command {
-        PluginCommand::List => {
-            for plugin in manager::list(&paths, &[])? {
-                let state = match &plugin.state {
-                    PluginState::Local => "local".to_owned(),
-                    PluginState::NotInstalled { .. } => "not installed: run `yuke plugin sync`".to_owned(),
-                    PluginState::Installed { commit } => short(commit),
-                };
-                say(&format!(
-                    "{}  {}  {state}",
-                    plugin.name.as_deref().unwrap_or("?"),
-                    plugin.source
-                ))?;
-            }
-        }
+        PluginCommand::List => say(&plugin_list(&paths)?)?,
         PluginCommand::Sync { locked } => {
             let synced = manager::sync(&paths, locked).await?;
             for plugin in &synced.plugins {
@@ -368,7 +356,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             };
             let changes = manager::check(&paths, &target).await?;
             if changes.is_empty() {
-                say("each plugin is at the newest commit of its ref")?;
+                say("Each plugin is at the newest commit of its ref.")?;
                 return Ok(ExitCode::SUCCESS);
             }
             for change in &changes {
@@ -383,8 +371,14 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                     PluginLog::Failed { error } => say(&format!("  no log: {error}"))?,
                 }
             }
-            if !yes && !confirm("Apply? [y/N] ")? {
-                say("plugins.lock unchanged")?;
+            let names: Vec<&str> = changes.iter().map(|change| change.name.as_str()).collect();
+            let names = match names.as_slice() {
+                [one] => (*one).to_owned(),
+                [first, second] => format!("{first} and {second}"),
+                _ => format!("{} plugins", names.len()),
+            };
+            if !yes && !confirm(&format!("Write the new commits of {names} to plugins.lock? [y/N] "))? {
+                say("plugins.lock is unchanged.")?;
                 return Ok(ExitCode::SUCCESS);
             }
             let locked: Vec<LockedPlugin> = changes
@@ -395,7 +389,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                 })
                 .collect();
             manager::apply(&paths, &locked).await?;
-            say("plugins.lock written: run /reload in open sessions")?;
+            say(&format!("Updated {names}. Run /reload in open sessions."))?;
         }
         PluginCommand::Add { url, names, reference } => {
             for added in manager::add(&paths, &url, &names, reference.as_deref()).await? {
@@ -406,11 +400,50 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
         PluginCommand::Remove { name } => {
             manager::remove(&paths, &name).await?;
             say(&format!(
-                "{name} removed from config.json: run /reload in open sessions"
+                "Removed {name}. Its files stay on disk. Run /reload in open sessions."
             ))?;
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The text of `yuke plugin list`: a table of the plugins of `config.json` with their states, the reason of each failure
+/// below its row, and the command that installs a missing plugin.
+fn plugin_list(paths: &Paths) -> Result<String, String> {
+    let outcomes = manager::outcomes(paths)?;
+    if outcomes.is_empty() {
+        return Ok("config.json has no plugins. `yuke plugin add URL` adds one.".to_owned());
+    }
+    let rows: Vec<(&str, String)> = (outcomes.iter())
+        .map(|outcome| {
+            let state = match (&outcome.failure, &outcome.commit) {
+                (Some(Failure::NotInstalled), _) => "not installed".to_owned(),
+                (Some(Failure::Invalid(_)), _) => "failed".to_owned(),
+                (None, Some(commit)) => format!("installed {}", &commit[..7]),
+                (None, None) => "local".to_owned(),
+            };
+            (outcome.label(), state)
+        })
+        .collect();
+    let name = rows.iter().map(|(name, _)| name.len()).fold("NAME".len(), usize::max);
+    let state = rows
+        .iter()
+        .map(|(_, state)| state.len())
+        .fold("STATE".len(), usize::max);
+    let mut lines = vec![format!("{:name$}  {:state$}  SOURCE", "NAME", "STATE")];
+    for (outcome, (label, words)) in outcomes.iter().zip(&rows) {
+        lines.push(format!("{label:name$}  {words:state$}  {}", outcome.source));
+        if let Some(Failure::Invalid(reason)) = &outcome.failure {
+            lines.push(format!("{:name$}  {reason}", ""));
+        }
+    }
+    if outcomes
+        .iter()
+        .any(|outcome| outcome.failure == Some(Failure::NotInstalled))
+    {
+        lines.push("`yuke plugin sync` installs the plugins that are not installed.".to_owned());
+    }
+    Ok(lines.join("\n"))
 }
 
 /// Ask `question` on the terminal. Gives whether the answer is yes.

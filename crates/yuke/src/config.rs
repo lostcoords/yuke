@@ -1,6 +1,7 @@
 //! `config.json`: the settings of the user. It and `providers.json` are JSON with `//` and `/* */` comments.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -44,6 +45,15 @@ pub(crate) enum Source {
     Folder(String),
     /// A folder of a Git repository, at the commit of `plugins.lock`.
     Git(PluginSource),
+}
+
+impl fmt::Display for Source {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Folder(folder) => f.write_str(folder),
+            Self::Git(source) => fmt::Display::fmt(source, f),
+        }
+    }
 }
 
 /// The source of the Git plugin `url`, `folder`, and `reference`, in the form that keys `plugins.lock`. The folders `./a/`

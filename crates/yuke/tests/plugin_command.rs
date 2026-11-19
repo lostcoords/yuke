@@ -1,0 +1,128 @@
+//! The `yuke plugin` command: its output and its exit status, with a local Git repository and an empty profile.
+#![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+/// Run `git` in `folder` with `args`, and give its output.
+fn git(folder: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(folder)
+        .args([
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// A repository in `root/remote` with the plugins `names` in `plugins/<name>`. Gives its URL and its commit.
+fn repository(root: &Path, names: &[&str]) -> (String, String) {
+    let remote = root.join("remote");
+    for name in names {
+        std::fs::create_dir_all(remote.join("plugins").join(name)).unwrap();
+        std::fs::write(
+            remote.join("plugins").join(name).join("plugin.json"),
+            format!(r#"{{ "name": "{name}" }}"#),
+        )
+        .unwrap();
+    }
+    git(&remote, &["init", "--quiet", "-b", "main"]);
+    git(&remote, &["add", "."]);
+    git(&remote, &["commit", "--quiet", "-m", "plugins"]);
+    (
+        remote.to_string_lossy().into_owned(),
+        git(&remote, &["rev-parse", "HEAD"]),
+    )
+}
+
+/// Run `yuke plugin` with `args` and the profile of `root`.
+fn yuke(root: &Path, args: &[&str]) -> Output {
+    let folder = |name: &str| -> PathBuf { root.join(name) };
+    Command::new(env!("CARGO_BIN_EXE_yuke"))
+        .arg("plugin")
+        .args(args)
+        .env("XDG_CONFIG_HOME", folder("config"))
+        .env("XDG_DATA_HOME", folder("data"))
+        .env("XDG_CACHE_HOME", folder("cache"))
+        .env_remove("YUKE_APPNAME")
+        .output()
+        .unwrap()
+}
+
+/// The standard output and the standard error of `output` as text.
+fn texts(output: &Output) -> (String, String) {
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn add_takes_the_plugins_of_a_repository_by_name_and_list_and_remove_show_them() {
+    let root = yuke_testing::folder("command", "plugin_add_list_remove");
+    let (url, commit) = repository(&root, &["clock", "weather"]);
+    let short = &commit[..7];
+
+    let unnamed = yuke(&root, &["add", &url]);
+    let added = yuke(&root, &["add", &url, "weather", "clock"]);
+    let listed = yuke(&root, &["list"]);
+    let removed = yuke(&root, &["remove", "clock"]);
+
+    assert_eq!(unnamed.status.code(), Some(1));
+    assert_eq!(
+        texts(&unnamed).1,
+        format!("yuke: {url} has 2 plugins: clock, weather: name the ones to add\n")
+    );
+    assert_eq!(
+        texts(&added),
+        (
+            format!("Added weather at {short}\nAdded clock at {short}\nRun /reload in open sessions.\n"),
+            String::new()
+        )
+    );
+    assert_eq!(
+        texts(&listed).0,
+        format!(
+            "NAME     STATE              SOURCE\n\
+             weather  installed {short}  {url} (folder plugins/weather)\n\
+             clock    installed {short}  {url} (folder plugins/clock)\n"
+        )
+    );
+    assert_eq!(
+        texts(&removed).0,
+        "Removed clock. Its files stay on disk. Run /reload in open sessions.\n"
+    );
+}
+
+#[test]
+fn list_shows_why_a_plugin_does_not_load_and_how_to_install_a_missing_one() {
+    let root = yuke_testing::folder("command", "plugin_list_problems");
+    std::fs::create_dir_all(root.join("config/yuke/broken")).unwrap();
+    std::fs::write(root.join("config/yuke/broken/plugin.json"), r#"{ "name": "Broken" }"#).unwrap();
+    std::fs::write(
+        root.join("config/yuke/config.json"),
+        r#"{ "plugins": ["./broken", { "git": "https://h/tools", "folder": "plugins/sun" }] }"#,
+    )
+    .unwrap();
+
+    let listed = yuke(&root, &["list"]);
+
+    assert_eq!(listed.status.code(), Some(0));
+    assert_eq!(
+        texts(&listed).0,
+        "NAME    STATE          SOURCE\n\
+         broken  failed         ./broken\n\
+         \x20       plugin broken did not load: name: 'Broken' must be 1 to 64 lowercase letters, digits, '-', or '.', \
+         start and end with a letter or a digit, and have no '--' or '..'\n\
+         sun     not installed  https://h/tools (folder plugins/sun)\n\
+         `yuke plugin sync` installs the plugins that are not installed.\n"
+    );
+}

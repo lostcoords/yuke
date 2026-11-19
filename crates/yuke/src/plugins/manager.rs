@@ -22,8 +22,7 @@ use crate::paths::Paths;
 ///
 /// Returns a text for a bad `config.json` or `plugins.lock`.
 pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlugin>, String> {
-    Ok(resolve(paths, &read_config(paths)?)?
-        .outcomes
+    Ok(outcomes(paths)?
         .into_iter()
         .map(|outcome| {
             let last = running.iter().find(|running| running.source == outcome.source);
@@ -196,6 +195,15 @@ pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
         lock.write(&paths.config)?;
     }
     Ok(())
+}
+
+/// The outcome of each plugin of `config.json` as a load sees it on disk now. It uses no network and changes nothing.
+///
+/// # Errors
+///
+/// Returns a text for a bad `config.json` or `plugins.lock`.
+pub(crate) fn outcomes(paths: &Paths) -> Result<Vec<Outcome>, String> {
+    Ok(resolve(paths, &read_config(paths)?)?.outcomes)
 }
 
 /// The plugins of `config` as a load sees them on disk now.
