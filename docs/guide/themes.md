@@ -41,7 +41,7 @@ A group can name a palette color. When you change `accent`, each group that name
 
 A color is a hex value (`"#88c0d0"`), a 256-color index (`110`), or `"reset"`. The value `"reset"` gives the color of the terminal. In `default`, `fg` and `bg` are `"reset"`.
 
-A terminal without 24-bit color uses `palette256`, such as `palette256: { accent: 110 }`, next to `palette`. A color that it leaves out comes from `palette`.
+A terminal without 24-bit color uses `palette256`, such as `palette256: { accent: 110 }`, next to `palette`. A color that it leaves out comes from `palette`. yuke finds 24-bit color from the variable `COLORTERM`: the values `truecolor` and `24bit` turn it on.
 
 ## Groups
 

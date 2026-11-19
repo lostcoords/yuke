@@ -4,7 +4,14 @@ description: Install yuke on macOS, Linux, or Windows (WSL), then connect a mode
 
 # Quick start
 
-yuke runs in your terminal on macOS, Linux, and Windows (WSL). One binary holds the agent and the terminal UI.
+yuke runs in your terminal. One binary holds the agent and the TUI.
+
+## Platforms
+
+- macOS and Linux, on x86-64 and arm64.
+- Windows, through WSL. Install yuke inside the WSL distribution, as on Linux.
+
+Native Windows is planned. It is not in 0.1.0.
 
 ## Install yuke
 
@@ -35,7 +42,13 @@ Remove the binary, the library, and the skill link:
 rm -rf ~/.local/bin/yuke ~/.local/lib/yuke ~/.agents/skills/yuke
 ```
 
-This keeps your configuration, sessions, and credentials. To remove them too, delete the folders in [Configuration](config.md).
+This keeps your configuration, sessions, and credentials. To remove them too, delete the config, data, and cache folders of [Configuration](config.md). With the default folders, run:
+
+```sh
+rm -rf ~/.config/yuke ~/.local/share/yuke ~/.cache/yuke
+```
+
+The data folder holds your sessions and `auth.json`. A deleted session cannot return.
 
 ## Connect a model
 
@@ -66,19 +79,19 @@ Read this project and explain how to run its tests. Do not change files.
 
 If yuke has no saved model choice, it asks for a model and a reasoning level. yuke saves the choice for new sessions. Use `/model` to change it.
 
-Send a follow-up message to continue the task. **Esc** drops a selection or stops the active turn. **Ctrl+Q** exits yuke.
+Send a follow-up message to continue the task. **Esc** drops a selection or stops the active turn. **Ctrl+Q** exits yuke. See [Use the TUI](use.md) for the other keys and the slash commands.
 
-yuke reads `~/.agents/AGENTS.md` and the `AGENTS.md` of the project. See [AGENTS.md and skills](instructions.md). Its tools run with your user rights, so a task can read or change files and run commands. A request such as “Do not change files” is an instruction to the model, not a sandbox.
+yuke reads `~/.agents/AGENTS.md` and the `AGENTS.md` of the project. See [AGENTS.md and skills](instructions.md). Its tools run with your user rights, so a task can read or change files and run commands. A request such as "Do not change files" is an instruction to the model, not a sandbox.
 
-## Continue a conversation
+## Continue a session
 
-From the same project directory, continue the newest conversation:
+From the same project folder, continue the newest session:
 
 ```sh
 yuke -c
 ```
 
-To select a saved conversation by its ID, in any folder:
+To select a saved session by its ID, in any folder:
 
 ```sh
 yuke --resume ID
@@ -92,6 +105,8 @@ yuke --resume ID
 
 ## Next steps
 
+- [Use the TUI](use.md): learn the composer, the slash commands, and the keys.
+- [Command line](cli.md): see each command and flag of `yuke`.
 - [Configuration](config.md) and [Providers](providers.md): set up your profile and your models.
 - [AGENTS.md and skills](instructions.md): give the model the rules of your project.
 - [MCP servers](mcp.md): connect a local MCP server.
