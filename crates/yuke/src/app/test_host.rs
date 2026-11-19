@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 use yuke_agent::MemoryStore;
-use yuke_ai::scripted::{Answer, Call, ScriptedTransport, Sent};
+use yuke_ai::scripted::{Call, ScriptedAnswer, ScriptedTransport, Sent};
 use yuke_ai::{Blob, Protocol};
 use yuke_engine::NoWait;
 use yuke_js::{Plugin, PluginCode, Report, Runtime, ScriptError, ScriptSession, TestError, TestHost, TestRuntime};
@@ -188,27 +188,27 @@ impl AppTestHost {
         };
         for reply in replies {
             self.transport.push_answer(match reply {
-                ReplyRequest::Text { text, input_tokens } => Answer::Text { text, input_tokens },
+                ReplyRequest::Text { text, input_tokens } => ScriptedAnswer::Text { text, input_tokens },
                 ReplyRequest::ToolCalls {
                     text,
                     calls: requested,
                     input_tokens,
-                } => Answer::Calls {
+                } => ScriptedAnswer::Calls {
                     text,
                     calls: calls(requested),
                     input_tokens,
                     cut: false,
                 },
-                ReplyRequest::Cut { calls: requested } => Answer::Calls {
+                ReplyRequest::Cut { calls: requested } => ScriptedAnswer::Calls {
                     text: String::new(),
                     calls: calls(requested),
                     input_tokens: 0,
                     cut: true,
                 },
-                ReplyRequest::Overloaded => Answer::Overloaded,
-                ReplyRequest::Overflow => Answer::Overflow,
-                ReplyRequest::Failed { text } => Answer::Failed { text },
-                ReplyRequest::Stall { text } => Answer::Stall { text },
+                ReplyRequest::Overloaded => ScriptedAnswer::Overloaded,
+                ReplyRequest::Overflow => ScriptedAnswer::Overflow,
+                ReplyRequest::Failed { text } => ScriptedAnswer::Failed { text },
+                ReplyRequest::Stall { text } => ScriptedAnswer::Stall { text },
             });
         }
     }
