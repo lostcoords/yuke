@@ -241,12 +241,10 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         // The reader stops first, so it reads nothing after the settings come back.
-        if self.stop_reader().is_err() {
-            // The drop cannot report how the thread ended.
-        }
-        if self.leave().is_err() {
-            // The drop cannot report the failure, and a terminal that refuses the write or the settings stays raw.
-        }
+        // The drop cannot report how the thread ended.
+        _ = self.stop_reader();
+        // The drop cannot report the failure, and a terminal that refuses the write or the settings stays raw.
+        _ = self.leave();
     }
 }
 

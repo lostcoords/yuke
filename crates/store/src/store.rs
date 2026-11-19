@@ -74,9 +74,8 @@ impl State {
     fn locked<T>(&mut self, function: impl FnOnce(&mut Index) -> Result<T, StoreError>) -> Result<T, StoreError> {
         self.lock.lock().map_err(failed)?;
         let result = self.index().and_then(function);
-        if self.lock.unlock().is_err() {
-            // The close of the file at the end of the process releases the lock, so nothing is left to do.
-        }
+        // The close of the file at the end of the process releases the lock, so a failed unlock leaves nothing to do.
+        _ = self.lock.unlock();
         result
     }
 }
@@ -170,9 +169,8 @@ impl FileStore {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         self.jobs
             .send(Box::new(move |state: &mut State| {
-                if sender.send(function(state)).is_err() {
-                    // The caller stopped waiting. The call ran, as a call of a stopped caller does.
-                }
+                // The caller stopped waiting. The call ran, as a call of a stopped caller does.
+                _ = sender.send(function(state));
             }))
             .map_err(|_| failed("the store thread stopped"))?;
         receiver.await.map_err(failed)?
@@ -231,9 +229,8 @@ fn make_session(
         Ok(()) => Ok(lock),
         Err(error) => {
             drop(lock);
-            if files::remove_session_folder(folder).is_err() {
-                // The error of the make tells the cause, so it wins over the error of the removal.
-            }
+            // The error of the make tells the cause, so it wins over the error of the removal.
+            _ = files::remove_session_folder(folder);
             Err(error)
         }
     }

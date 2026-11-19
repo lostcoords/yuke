@@ -445,9 +445,8 @@ fn write_color(out: &mut Vec<u8>, color: Color, base: u8, bright: u8, extended: 
 }
 
 fn write_bytes(out: &mut Vec<u8>, arguments: std::fmt::Arguments<'_>) {
-    if out.write_fmt(arguments).is_err() {
-        // Numbers format into a vector with no error.
-    }
+    // Numbers format into a vector with no error.
+    _ = out.write_fmt(arguments);
 }
 
 #[cfg(test)]

@@ -190,10 +190,8 @@ impl Servers {
     /// Wait until no server starts.
     pub async fn ready(&self) {
         let mut starting = self.starting.clone();
-        match starting.wait_for(|starting| *starting == 0).await {
-            // The tasks hold the sender, so its drop means that each task ended and no server starts.
-            Ok(_) | Err(_) => {}
-        }
+        // The tasks hold the sender, so its drop means that each task ended and no server starts.
+        _ = starting.wait_for(|starting| *starting == 0).await;
     }
 
     /// Each server and its state, in config order.
@@ -265,10 +263,8 @@ impl Servers {
                 Some(stop) => stop.cancel(),
                 None => task.abort(),
             }
-            match task.await {
-                // An aborted start dropped its program, and a cancelled connection closed it.
-                Ok(()) | Err(_) => {}
-            }
+            // An aborted start dropped its program, and a cancelled connection closed it.
+            _ = task.await;
         }
     }
 }
@@ -326,9 +322,7 @@ async fn run(index: usize, process: tokio::process::Command, shared: Rc<Shared>,
         return;
     };
     // The connection ends when the server ends or a close cancels it.
-    match client.waiting().await {
-        Ok(_) | Err(_) => {}
-    }
+    _ = client.waiting().await;
     let log = program.end().await;
     shared.update(index, |slot| {
         slot.peer = None;

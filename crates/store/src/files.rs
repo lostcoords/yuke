@@ -30,9 +30,8 @@ pub(crate) struct SessionLock(File);
 
 impl Drop for SessionLock {
     fn drop(&mut self) {
-        if self.0.unlock().is_err() {
-            // The close of the file releases the lock when no copy lives, so nothing is left to do.
-        }
+        // The close of the file releases the lock when no copy lives, so a failed unlock leaves nothing to do.
+        _ = self.0.unlock();
     }
 }
 
