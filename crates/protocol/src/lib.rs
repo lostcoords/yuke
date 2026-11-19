@@ -19,8 +19,8 @@ pub use auth::{
     CancelLoginParams, LoginFinishedParams, LoginOutcome, LoginParams, LoginResult, LogoutParams, SetApiKeyParams,
 };
 pub use catalog::{
-    ListCatalogParams, ListCatalogResult, ModelInfo, PriceBand, ProviderCredential, ProviderInfo, ProviderState,
-    ReasoningChoice, ReasoningSelection,
+    ListCatalogParams, ListCatalogResult, ModelInfo, ProviderCredential, ProviderInfo, ProviderState, ReasoningChoice,
+    ReasoningSelection,
 };
 pub use event::{CommitEvent, SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, JobId, LoginId, SessionId};

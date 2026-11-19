@@ -1010,11 +1010,11 @@ names: Array<string>, };
 export type Preview = "head" | "tail" | "none";
 
 /**
- * The prices of one band, in US dollars per million tokens. A missing price is unknown, never zero.
+ * The prices of one band, in US dollars per million tokens. A missing price is unknown, and never zero.
  */
 export type PriceBand = { 
 /**
- * The smallest prompt that this band prices. The prompt counts every input token, the cached ones too.
+ * The smallest prompt this band prices. The prompt counts every input token, the cached ones too.
  */
 minPromptTokens: number, 
 /**
@@ -1026,15 +1026,15 @@ input?: number,
  */
 output?: number, 
 /**
- * The price of a reasoning token, which replaces the output price for it.
+ * A reasoning token is also an output token. This price replaces the output price for it.
  */
 reasoning?: number, 
 /**
- * The price of a token that the prompt cache gives.
+ * The price of a token read from the prompt cache.
  */
 cacheRead?: number, 
 /**
- * The price of a token that the prompt cache keeps.
+ * The price of a token written to the prompt cache.
  */
 cacheWrite?: number, };
 
@@ -1466,7 +1466,7 @@ export type SetApiKeyParams = {
  */
 provider: string, 
 /**
- * The API key. It is not empty and has no control character.
+ * The API key. It is not empty.
  */
 apiKey: string, };
 

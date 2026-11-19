@@ -2,7 +2,7 @@
 
 use yuke_ai::catalog::{Model, Provider, ReasoningLevel};
 use yuke_ai::{Modality, ReasoningSettings};
-use yuke_protocol::{ModelInfo, PriceBand, ProviderInfo, ProviderState, ReasoningChoice, ReasoningSelection};
+use yuke_protocol::{ModelInfo, ProviderInfo, ProviderState, ReasoningChoice, ReasoningSelection};
 
 /// The info of `provider` in `state`. A provider that is not ready has no models.
 pub(super) fn provider_info(provider: &Provider, state: ProviderState) -> ProviderInfo {
@@ -26,18 +26,7 @@ fn model_info(model: &Model) -> ModelInfo {
         context_window: model.limits.context_window,
         max_output_tokens: model.limits.max_output_tokens,
         reasoning: reasoning_choices(model),
-        cost: model
-            .cost
-            .iter()
-            .map(|band| PriceBand {
-                min_prompt_tokens: band.min_prompt_tokens,
-                input: band.input,
-                output: band.output,
-                reasoning: band.reasoning,
-                cache_read: band.cache_read,
-                cache_write: band.cache_write,
-            })
-            .collect(),
+        cost: model.cost.to_vec(),
         tools: model.caps.tools,
         tool_search: model.caps.tool_search,
         input: model

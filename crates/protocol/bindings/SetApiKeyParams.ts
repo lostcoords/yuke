@@ -9,6 +9,6 @@ export type SetApiKeyParams = {
  */
 provider: string, 
 /**
- * The API key. It is not empty and has no control character.
+ * The API key. It is not empty.
  */
 apiKey: string, };

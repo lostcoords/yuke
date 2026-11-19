@@ -7,7 +7,7 @@ mod generated;
 use std::borrow::Cow;
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::oauth::Flow;
 use crate::{
@@ -86,21 +86,27 @@ pub struct Limits {
     pub max_output_tokens: Option<u64>,
 }
 
-/// The prices of one band, in US dollars per million tokens. A `None` price is unknown, and never zero.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+/// The prices of one band, in US dollars per million tokens. A missing price is unknown, and never zero.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct PriceBand {
     /// The smallest prompt this band prices. The prompt counts every input token, the cached ones too.
     pub min_prompt_tokens: u64,
     /// The price of an input token.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<f64>,
     /// The price of an output token.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<f64>,
     /// A reasoning token is also an output token. This price replaces the output price for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<f64>,
     /// The price of a token read from the prompt cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_read: Option<f64>,
     /// The price of a token written to the prompt cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write: Option<f64>,
 }
 

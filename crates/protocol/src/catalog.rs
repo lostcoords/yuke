@@ -95,7 +95,7 @@ pub struct ModelInfo {
     /// The reasoning choices of the model, each with the settings that a session sends for it.
     pub reasoning: Vec<ReasoningChoice>,
     /// The price bands in threshold order. The last band that the prompt reaches prices the whole request.
-    pub cost: Vec<PriceBand>,
+    pub cost: Vec<yuke_ai::catalog::PriceBand>,
     /// Whether the model calls tools. It is absent when the catalog does not know it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<bool>,
@@ -147,28 +147,4 @@ impl std::str::FromStr for ReasoningSelection {
                 .map_err(|_| yuke_ai::ParseError::new("a reasoning level", text)),
         }
     }
-}
-
-/// The prices of one band, in US dollars per million tokens. A missing price is unknown, never zero.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
-#[serde(rename_all = "camelCase")]
-pub struct PriceBand {
-    /// The smallest prompt that this band prices. The prompt counts every input token, the cached ones too.
-    pub min_prompt_tokens: u64,
-    /// The price of an input token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input: Option<f64>,
-    /// The price of an output token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<f64>,
-    /// The price of a reasoning token, which replaces the output price for it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning: Option<f64>,
-    /// The price of a token that the prompt cache gives.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_read: Option<f64>,
-    /// The price of a token that the prompt cache keeps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_write: Option<f64>,
 }
