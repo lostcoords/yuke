@@ -41,7 +41,7 @@ declare module "yuke:internal/native" {
     SyncPluginsResult,
     ToolHints,
   } from "yuke:protocol";
-  import type { CallOutcome, Frame, ModelRequest } from "yuke:test";
+  import type { Frame, ModelRequest, TestCallResult } from "yuke:test";
   import type { ToolMedia } from "yuke:tools";
   import type { Cursor } from "yuke:tui";
 
@@ -581,5 +581,7 @@ declare module "yuke:internal/native" {
   /** Run the hook point `point` of the session `id` with `event`. The answer is the decision of the host. */
   export function testHostRun(request: readonly [id: SessionId, point: string, event: unknown]): Operation<unknown>;
   /** Call the tool `tool` of the session `id` with `args`. The answer has the live texts of the call in order. */
-  export function testHostCall(request: readonly [id: SessionId, tool: string, args: unknown]): Operation<CallOutcome>;
+  export function testHostCall(
+    request: readonly [id: SessionId, tool: string, args: unknown],
+  ): Operation<TestCallResult>;
 }

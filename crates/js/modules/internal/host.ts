@@ -20,7 +20,6 @@ import { jsonCopy } from "yuke:internal/values";
 import { ClientRequestError, type Frozen, type SessionHandleEvent } from "yuke:plugins";
 import type { ExtensionRequestParams, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
 import type {
-  CallOutcome,
   CallsOptions,
   HookEvents,
   HookResults,
@@ -30,6 +29,7 @@ import type {
   Reply,
   ReplyOptions,
   ScriptedCall,
+  TestCallResult,
   TestQuestion,
   TestSession,
 } from "yuke:test";
@@ -192,7 +192,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         operation?.signal?.throwIfAborted();
         return (result ?? undefined) as HookResults[K];
       },
-      async call(tool: string, args: unknown, operation?: OperationOptions): Promise<CallOutcome> {
+      async call(tool: string, args: unknown, operation?: OperationOptions): Promise<TestCallResult> {
         const result = await underSignal(operation?.signal, () => testHostCall([id, tool, args]));
         await testWaitForSettled();
         // The tool ends early after a cancel, so its result is no answer.

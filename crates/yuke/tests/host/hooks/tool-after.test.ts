@@ -2,7 +2,7 @@
 
 import { writeFile, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
-import { assertEquals, createHost, folder, reply, type TestMedia, type ToolOutcome, test } from "yuke:test";
+import { assertEquals, createHost, folder, reply, type TestMedia, type TestToolResult, test } from "yuke:test";
 
 const call = { callId: "c1", name: "read", arguments: { path: "notes.md" } };
 const png = new Uint8Array([1, 2, 3]);
@@ -24,7 +24,7 @@ function plain(media: readonly TestMedia[]): unknown[] {
 }
 
 /** The outcome of `run` with plain media. */
-function outcome(result: ToolOutcome): unknown {
+function outcome(result: TestToolResult): unknown {
   return { text: result.text, isError: result.isError, media: plain(result.media) };
 }
 
