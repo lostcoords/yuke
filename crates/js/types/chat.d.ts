@@ -289,14 +289,14 @@ declare module "yuke:chat" {
    * The default label is `Working…`, including during tool calls, without tool names or arguments.
    * The time counts from the first active state that this instance observes with a live handle, not from tool start.
    * Another session or the end of the handle stops the count. This block asks for no frame: while `active`, the owner draws
-   * again each `frameMs`.
+   * again each `SPINNER_INTERVAL` of `yuke:tui`.
    *
    * ```ts
    * const working = new ChatWorking(chat, { signal: mount.signal, now: () => tui.now() });
    * let stop: (() => void) | undefined;
    * const tick = () => {
    *   stop?.();
-   *   stop = working.active && !mount.signal.aborted ? tui.addTimer(working.frameMs, tick) : undefined;
+   *   stop = working.active && !mount.signal.aborted ? tui.addTimer(SPINNER_INTERVAL, tick) : undefined;
    * };
    * working.addChangeListener(tick);
    * tick();
@@ -308,8 +308,6 @@ declare module "yuke:chat" {
     constructor(chat: ChatSession, options: ChatWorkingOptions);
     /** A turn of the shown session runs. */
     get active(): boolean;
-    /** The time of one frame of the spinner, in milliseconds. */
-    get frameMs(): number;
     /** The spinner and the text now, or `undefined` while no turn runs. */
     text(options?: ChatWorkingTextOptions): { readonly spinner: string; readonly text: string } | undefined;
     /** Call `listener` after each change of `active`. */

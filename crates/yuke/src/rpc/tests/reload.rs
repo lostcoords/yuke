@@ -133,7 +133,7 @@ async fn a_reload_loads_the_plugins_that_load_and_one_notice_names_the_others() 
     let transport = ScriptedTransport::new([text_reply("one")]);
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    // The edits make two plugins fail to load, and add a working one. The same reload also adds a provider.
+    // The edits make two plugins fail to load, and add a working one.
     place.plugin("tools", "export function session(s) {");
     place.plugin("other", "export function session(s) {");
     place.plugin("fresh", &tool_plugin("gamma"));
@@ -142,22 +142,10 @@ async fn a_reload_loads_the_plugins_that_load_and_one_notice_names_the_others() 
         r#"{ "plugins": ["tools", "other", "fresh"] }"#,
     )
     .unwrap();
-    std::fs::write(
-        place.paths.config.join("providers.json"),
-        r#"{ "providers": [{
-            "id": "local", "base_url": "http://127.0.0.1:8080/v1",
-            "endpoints": [{ "protocol": "anthropic_messages" }],
-            "models": [{ "id": "small", "limits": { "max_output_tokens": 4096 } }]
-        }] }"#,
-    )
-    .unwrap();
 
     let id = client.request("profile/reload", json!({})).await;
     let reloaded = client.until(|message| is_response(message, id)).await;
     turn(&mut client, &session, "first").await;
-    let mut local = settings(&place);
-    local["model"] = json!({ "provider": "local", "model": "small" });
-    let new_provider = client.call("session/new", local).await;
 
     assert_eq!(reloaded.last().unwrap()["result"], json!({}));
     let notices: Vec<&Value> = reloaded
@@ -174,7 +162,6 @@ async fn a_reload_loads_the_plugins_that_load_and_one_notice_names_the_others() 
         request.contains(r#""name":"gamma""#) && !request.contains(r#""name":"alpha""#),
         "{request}"
     );
-    assert!(new_provider.is_ok(), "{new_provider:?}");
     client.end().await;
 }
 

@@ -230,12 +230,11 @@ export interface Auth {
 }
 
 /**
- * The plugin manager of the profile, for the bundled plugin `plugins`. Each method calls the plugin manager of yuke in
- * this process, the same one that the protocol methods `plugin/*` reach. No call runs plugin code, and a new commit
- * loads at the next reload. Git asks for no password.
+ * The plugin manager of the profile, for the bundled plugin `plugins`. It does the work of the requests `plugin/*`. No
+ * call runs plugin code, and a new commit loads at the next reload. Git asks for no password.
  */
 export interface PluginManager {
-  /** The plugins of `config.json` with their state on disk, and whether each one runs. It uses no network. */
+  /** The plugins of `config.json` with their state on disk and their load. It uses no network. */
   readonly list: () => Promise<ListPluginsResult>;
   /**
    * Install the locked commit of each Git plugin, and lock each new one at the commit of its ref. `options.signal`
@@ -247,8 +246,8 @@ export interface PluginManager {
    * is installed, and `plugins.lock` stays as it is until `apply`. `options.signal` stops the work.
    */
   readonly check: (target: PluginTarget, options?: { readonly signal?: AbortSignal }) => Promise<CheckPluginsResult>;
-  /** Write the commit of each plugin of `plugins` into `plugins.lock`. Each plugin must be in the lock. */
-  readonly apply: (plugins: readonly LockedPlugin[]) => Promise<void>;
+  /** Write the commit of each entry of `entries` into `plugins.lock`. Each plugin must be in the lock. */
+  readonly apply: (entries: readonly LockedPlugin[]) => Promise<void>;
   /** The plugins of a Git repository: each folder with a `plugin.json`. `options.signal` stops the work. */
   readonly find: (params: FindPluginsParams, options?: { readonly signal?: AbortSignal }) => Promise<FindPluginsResult>;
   /**
@@ -288,8 +287,8 @@ export const plugins: PluginManager = Object.freeze({
   list: () => pluginsList(null),
   sync: (options) => underStop(options?.signal, () => pluginsSync(null)),
   check: (target, options) => underStop(options?.signal, () => pluginsCheck({ target })),
-  async apply(plugins) {
-    await pluginsApply({ plugins: [...plugins] });
+  async apply(entries) {
+    await pluginsApply({ plugins: [...entries] });
   },
   find: (params, options) => underStop(options?.signal, () => pluginsFind(params)),
   add: (params, options) => underStop(options?.signal, () => pluginsAdd(params)),

@@ -1,16 +1,14 @@
 // The bundled plugin `plugins`: the dashboard of the plugins of `config.json` with its sections and keys, the review of
-// a check, its apply, its stop, and the sync.
+// a check and its apply, the add of a plugin of a repository, the remove, and the sync.
 
 import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:internal/sessions";
-import type { ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
+import type { FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import { assert, assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
 const NEW = "8d02e77".padEnd(40, "0");
-/** The text of the source of the plugin `clock`, as a row shows it. */
-const SOURCE = "https://h/r (folder plugins/clock)";
 
 const LISTED: readonly ManagedPlugin[] = [
   {
@@ -28,6 +26,12 @@ const LISTED: readonly ManagedPlugin[] = [
   },
   { source: { git: "https://h/weather" }, state: { kind: "notInstalled" }, load: { kind: "pending" } },
   { source: { git: "https://h/maps" }, state: { kind: "notInstalled", commit: NEW }, load: { kind: "pending" } },
+  {
+    source: "./broken",
+    name: "broken",
+    state: { kind: "local" },
+    load: { kind: "failed", error: "plugin broken did not load: Error: no luck" },
+  },
 ];
 
 const CHANGE: PluginChange = {
@@ -38,13 +42,21 @@ const CHANGE: PluginChange = {
   log: { kind: "commits", commits: ["8d02e77 fix: 12h format", "5b1e0c3 feat: add seconds"] },
 };
 
-/**
- * A manager that records each call. `check` gives `changes`. With `hold` it waits until its signal aborts, and with
- * `fail` it rejects with that text.
- */
-function manager(changes: readonly PluginChange[], hold = false, fail?: string) {
+/** The options of a fake manager. */
+interface Fake {
+  /** What `check` gives. */
+  readonly changes?: readonly PluginChange[];
+  /** `check` waits until its signal aborts. */
+  readonly hold?: boolean;
+  /** `check` and `sync` reject with this text. */
+  readonly fail?: string;
+  /** What `find` gives. */
+  readonly found?: readonly FoundPlugin[];
+}
+
+/** A manager that records each call. A sync waits for `syncs.finish` when a test sets `syncs.hold`. */
+function manager(fake: Fake = {}) {
   const calls: string[] = [];
-  // A sync waits for `finish` when a test sets `syncs.hold`.
   const syncs: { hold: boolean; finish?: () => void } = { hold: false };
   const plugins: PluginManager = {
     list: async () => {
@@ -58,12 +70,13 @@ function manager(changes: readonly PluginChange[], hold = false, fail?: string) 
           syncs.finish = resolve;
         });
       }
+      if (fake.fail !== undefined) throw new Error(fake.fail);
       return { plugins: [{ source: CHANGE.source, commit: OLD }], written: true };
     },
     check: (target: PluginTarget, options) => {
       calls.push(`check ${JSON.stringify(target)}`);
-      if (fail !== undefined) return Promise.reject(new Error(fail));
-      if (!hold) return Promise.resolve({ changes: [...changes] });
+      if (fake.fail !== undefined) return Promise.reject(new Error(fake.fail));
+      if (fake.hold !== true) return Promise.resolve({ changes: [...(fake.changes ?? [])] });
       return new Promise((_, reject) => {
         options?.signal?.addEventListener("abort", () => {
           calls.push("check stopped");
@@ -71,16 +84,16 @@ function manager(changes: readonly PluginChange[], hold = false, fail?: string) 
         });
       });
     },
-    apply: async (chosen) => {
-      calls.push(`apply ${chosen.map((plugin) => `${plugin.source.git} ${plugin.commit.slice(0, 7)}`).join(", ")}`);
+    apply: async (entries) => {
+      calls.push(`apply ${entries.map((entry) => `${entry.source.git} ${entry.commit.slice(0, 7)}`).join(", ")}`);
     },
     find: async (params) => {
-      calls.push(`find ${JSON.stringify(params)}`);
-      return { plugins: [{ name: "news" }] };
+      calls.push(`find ${params.git}`);
+      return { plugins: [...(fake.found ?? [{ name: "news" }])] };
     },
     add: async (params) => {
       calls.push(`add ${JSON.stringify(params)}`);
-      return { plugins: [{ name: "news", source: { git: params.git }, commit: NEW }] };
+      return { plugins: [] };
     },
     remove: async (name) => {
       calls.push(`remove ${name}`);
@@ -106,9 +119,9 @@ function load(frame: FrameTest, plugins: PluginManager): string[] {
   return notices;
 }
 
-/** Run `command`, and give the drawn rows after it settles. */
-async function run(frame: FrameTest, command: string): Promise<string[]> {
-  frame.surface("plugins").tui.commands.run(command);
+/** Open the dashboard, and give the drawn rows after it settles. */
+async function open(frame: FrameTest): Promise<string[]> {
+  frame.surface("plugins").tui.commands.run("plugins:open");
   await waitForSettled();
   frame.draw();
   return rows(frame.frame);
@@ -124,186 +137,227 @@ async function press(frame: FrameTest, ...keys: [string, ...string[]]): Promise<
   return rows(frame.frame);
 }
 
+/** Type `text` into the open field, press Enter, and give the drawn rows after they settle. */
+async function submit(frame: FrameTest, text: string): Promise<string[]> {
+  frame.paste(text);
+  return press(frame, "enter");
+}
+
 const shows = (all: readonly string[], text: string) => all.some((line) => line.includes(text));
 
-/** Whether one row of `all` holds every text of `texts`, in any column. */
-const showsRow = (all: readonly string[], ...texts: string[]) =>
-  all.some((line) => texts.every((text) => line.includes(text)));
+/** The row of `all` that holds `text`, with its end trimmed, or "" without one. */
+const rowOf = (all: readonly string[], text: string) => all.find((line) => line.includes(text))?.trimEnd() ?? "";
 
-test("the dashboard shows the plugins in sections with their state, and enter shows the details", async () => {
+test("the dashboard shows each plugin in its section with its state, and the reason of a plugin that needs attention", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
-  load(frame, fake.plugins);
+  load(frame, manager().plugins);
 
-  const opened = await run(frame, "plugins:open");
-  const detailed = await press(frame, "j", "j", "enter");
-  const hidden = await press(frame, "enter");
+  const opened = await open(frame);
 
   assertEquals(
     [
-      shows(opened, "Plugins · 5"),
-      shows(opened, "Needs sync (2)"),
-      showsRow(opened, "https://h/weather", "not installed"),
-      showsRow(opened, "https://h/maps", "8d02e77", "not installed"),
-      shows(opened, "Installed (2)"),
-      showsRow(opened, "●", "clock", SOURCE, "3f9c1a2"),
-      showsRow(opened, "○", "tools", "https://h/tools", "3f9c1a2", "not loaded"),
-      shows(opened, "Local (1)"),
-      showsRow(opened, "●", "notes", "./notes"),
+      rowOf(opened, "Plugins"),
+      rowOf(opened, "Needs attention"),
+      rowOf(opened, "weather"),
+      rowOf(opened, "maps"),
+      rowOf(opened, "broken"),
+      rowOf(opened, "Git ("),
+      rowOf(opened, "clock"),
+      rowOf(opened, "tools"),
+      rowOf(opened, "Local"),
+      rowOf(opened, "notes"),
     ],
-    [true, true, true, true, true, true, true, true, true],
-  );
-  // The first plugin needs a sync and has no name, so `u` and `d` do not work on it.
-  assertEquals(
-    [shows(opened, "S: sync"), shows(opened, "esc: close"), shows(opened, "u: update")],
-    [true, true, false],
-  );
-  assertEquals(
     [
-      shows(detailed, `${SOURCE} · commit ${OLD} · loaded`),
-      shows(detailed, "u: update · a: add · d: remove"),
-      shows(hidden, `commit ${OLD}`),
+      " Plugins · 6",
+      " Needs attention (3)",
+      "  ! weather  not installed             h/weather",
+      "  ! maps     not installed             h/maps",
+      "  ✗ broken   failed                    ./broken",
+      " Git (2)",
+      "  ● clock    loaded           3f9c1a2  h/r · plugins/clock",
+      "  ○ tools    reload loads it  3f9c1a2  h/tools",
+      " Local (1)",
+      "  ● notes    loaded                    ./notes",
     ],
-    [true, true, false],
   );
+  assertEquals(
+    opened.filter((line) => line.startsWith("      ")).map((line) => line.trim()),
+    ["s installs it", "s installs it", "plugin broken did not load: Error: no luck"],
+  );
+  // The first plugin is not installed and has no name, so `u` and `d` do not work on it.
+  assertEquals(rowOf(opened, "esc: close"), " s: sync · c: check updates · a: add · r: reload · esc: close");
 });
 
 test("u reviews the new commits of the selected plugin, and enter writes them and loads the list again", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([CHANGE]);
+  const fake = manager({ changes: [CHANGE] });
   const notices = load(frame, fake.plugins);
 
-  await run(frame, "plugins:open");
-  const reviewed = await press(frame, "j", "j", "u");
+  await open(frame);
+  const reviewed = await press(frame, "j", "j", "j", "u");
   const after = await press(frame, "enter");
 
   assertEquals(
-    [shows(reviewed, "clock  3f9c1a2 → 8d02e77"), shows(reviewed, "  8d02e77 fix: 12h format")],
-    [true, true],
+    [rowOf(reviewed, "Updates"), rowOf(reviewed, "→"), rowOf(reviewed, "12h"), rowOf(reviewed, "enter:")],
+    [" Updates · 1 plugins", "clock  3f9c1a2 → 8d02e77", "  8d02e77 fix: 12h format", " enter: update · esc: close"],
   );
-  assertEquals(shows(reviewed, "enter: write plugins.lock · esc: close"), true);
   assertEquals(fake.calls, ["list", 'check {"kind":"names","names":["clock"]}', "apply https://h/r 8d02e77", "list"]);
-  assertEquals(shows(after, "Plugins · 5 · plugins.lock written: R reloads"), true);
+  assertEquals(rowOf(after, "Plugins"), " Plugins · 6 · updated clock · r loads the new commits");
   // The dashboard tells the result in its title, not in a notice.
   assertEquals(notices, []);
 });
 
-test("S syncs and shows the result in the title, and the actions wait while it runs", async () => {
+test("s syncs with a spinner in the title, the keys wait while it runs, and the title counts the installs", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
+  const fake = manager();
   fake.syncs.hold = true;
   load(frame, fake.plugins);
 
-  await run(frame, "plugins:open");
-  const running = await press(frame, "S");
+  await open(frame);
+  const running = await press(frame, "s");
   fake.syncs.finish?.();
   await waitForSettled();
   frame.draw();
   const synced = rows(frame.frame);
 
-  assertEquals(
-    [shows(running, "Plugins · 5 · syncing"), shows(running, "S: sync"), shows(running, "/: search")],
-    [true, false, false],
-  );
+  assertEquals([rowOf(running, "Plugins"), rowOf(running, "esc: close")], [" Plugins · 6 · ⠋ Syncing…", " esc: close"]);
   assertEquals(fake.calls, ["list", "sync with a signal", "list"]);
-  assertEquals(shows(synced, "Plugins · 5 · plugins.lock written: R reloads"), true);
+  assertEquals(rowOf(synced, "Plugins"), " Plugins · 6 · installed 2 plugins · r loads them");
 });
 
-test("a adds the plugin of a URL, and an empty line says why", async () => {
+test("a failed action gives a notice and leaves the title", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
-  load(frame, fake.plugins);
+  const notices = load(frame, manager({ fail: "the remote is gone" }).plugins);
 
-  await run(frame, "plugins:open");
-  frame.key("a");
-  frame.paste(" https://h/news ");
-  const added = await press(frame, "enter");
-  frame.key("a");
-  const refused = await press(frame, "enter");
+  await open(frame);
+  const after = await press(frame, "s");
 
-  assertEquals(fake.calls, ["list", 'add {"git":"https://h/news"}', "list"]);
-  assertEquals(shows(added, "news added: R reloads"), true);
-  // The prompt stays open after the error.
-  assertEquals(shows(refused, "type the URL first"), true);
+  assertEquals(rowOf(after, "Plugins"), " Plugins · 6");
+  assertEquals(notices, ["error Syncing failed: the remote is gone"]);
 });
 
-test("d asks before it removes the selected plugin, and esc keeps it", async () => {
+test("a adds the one new plugin of a repository, and an empty URL or a repository of known plugins says why", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
+  const fake = manager();
   load(frame, fake.plugins);
 
-  await run(frame, "plugins:open");
-  const asked = await press(frame, "j", "j", "d");
+  await open(frame);
+  frame.key("a");
+  const empty = await press(frame, "enter");
+  const added = await submit(frame, " https://h/news ");
+
+  assertEquals(rowOf(empty, "type the URL"), " type the URL of a Git repository");
+  assertEquals(fake.calls, ["list", "find https://h/news", 'add {"git":"https://h/news","names":["news"]}', "list"]);
+  assertEquals(rowOf(added, "Plugins"), " Plugins · 6 · added news · r loads it");
+
+  using known = createFrame({ width: 100, height: 20 });
+  load(known, manager({ found: [{ name: "clock" }] }).plugins);
+  await open(known);
+  known.key("a");
+  const refused = await submit(known, "https://h/r");
+  // The prompt stays open with its text after the error.
+  assertEquals(
+    [rowOf(refused, "config.json has"), rowOf(refused, "https://h/r")],
+    [" config.json has each plugin of the repository already", " https://h/r"],
+  );
+});
+
+test("a repository of more plugins offers its new ones, and the add takes the chosen name", async () => {
+  using frame = createFrame({ width: 100, height: 20 });
+  const fake = manager({
+    found: [
+      { name: "clock", folder: "plugins/clock" },
+      { name: "sun", folder: "plugins/sun" },
+      { name: "moon", folder: "plugins/moon" },
+    ],
+  });
+  load(frame, fake.plugins);
+
+  await open(frame);
+  frame.key("a");
+  const offered = await submit(frame, "https://h/sky");
+  await press(frame, "down", "enter");
+
+  assertEquals(
+    [rowOf(offered, "Add a plugin"), rowOf(offered, "sun"), rowOf(offered, "moon"), shows(offered, "clock")],
+    [" Add a plugin · h/sky", "sun  plugins/sun", "moon  plugins/moon", false],
+  );
+  assertEquals(fake.calls.at(-2), 'add {"git":"https://h/sky","names":["moon"]}');
+});
+
+test("d asks before it removes the selected plugin, esc keeps it, and enter removes it", async () => {
+  using frame = createFrame({ width: 120, height: 20 });
+  const fake = manager();
+  load(frame, fake.plugins);
+
+  await open(frame);
+  const asked = await press(frame, "j", "j", "j", "d");
   await press(frame, "esc");
   const removed = await press(frame, "d", "enter");
 
-  assertEquals(shows(asked, "Remove clock from config.json and plugins.lock?"), true);
+  assertEquals(
+    [rowOf(asked, "Remove"), rowOf(asked, "yuke removes"), rowOf(asked, "enter:")],
+    [
+      " Remove clock?",
+      "yuke removes clock from config.json and plugins.lock. Its files stay on disk, and it runs until the next reload.",
+      " enter: remove · esc: keep",
+    ],
+  );
   assertEquals(fake.calls, ["list", "remove clock", "list"]);
-  assertEquals(shows(removed, "clock removed: R reloads"), true);
+  assertEquals(rowOf(removed, "Plugins"), " Plugins · 6 · removed clock · r unloads it");
 });
 
-test("/ finds a plugin by its name and selects it", async () => {
+test("c checks each plugin, and esc closes the review, stops its check, and keeps the lock", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
-  load(frame, fake.plugins);
-
-  await run(frame, "plugins:open");
-  frame.key("/");
-  frame.paste("tools");
-  await press(frame, "enter", "u");
-
-  assertEquals(fake.calls, ["list", 'check {"kind":"names","names":["tools"]}']);
-});
-
-test("esc closes the review, stops its check, and keeps the lock", async () => {
-  using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([CHANGE], true);
+  const fake = manager({ changes: [CHANGE], hold: true });
   const notices = load(frame, fake.plugins);
 
-  const checking = await run(frame, "plugins:update");
+  await open(frame);
+  const checking = await press(frame, "c");
   const closed = await press(frame, "esc");
 
   assertEquals(
-    [shows(checking, "the check of the Git plugins runs"), shows(closed, "the check of the Git plugins runs")],
-    [true, false],
+    [rowOf(checking, "Updates"), shows(checking, "Checking each Git plugin"), shows(closed, "Checking")],
+    [" Updates · ⠋ checking…", true, false],
   );
-  assertEquals(fake.calls, ['check {"kind":"all"}', "check stopped"]);
+  assertEquals(fake.calls, ["list", 'check {"kind":"all"}', "check stopped"]);
   assertEquals(notices, []);
 });
 
 test("a check without a change says so, and enter writes nothing", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
+  const fake = manager();
   load(frame, fake.plugins);
 
-  const reviewed = await run(frame, "plugins:update");
+  await open(frame);
+  const reviewed = await press(frame, "c");
   await press(frame, "enter");
 
   assertEquals(
-    [shows(reviewed, "each Git plugin is at the newest commit of its ref"), shows(reviewed, "esc: close")],
-    [true, true],
+    [rowOf(reviewed, "Each Git plugin"), rowOf(reviewed, "esc:")],
+    ["Each Git plugin is at the newest commit of its ref", " esc: close"],
   );
-  assertEquals(fake.calls, ['check {"kind":"all"}']);
+  assertEquals(fake.calls, ["list", 'check {"kind":"all"}']);
 });
 
 test("a check that fails closes the review and gives one error notice", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([], false, "the remote is gone");
-  const notices = load(frame, fake.plugins);
+  const notices = load(frame, manager({ fail: "the remote is gone" }).plugins);
 
-  const after = await run(frame, "plugins:update");
+  await open(frame);
+  const after = await press(frame, "c");
 
-  assertEquals(shows(after, "the check of the Git plugins runs"), false);
-  assertEquals(notices, ["error The update failed: Error: the remote is gone"]);
+  assertEquals(shows(after, "Checking"), false);
+  assertEquals(notices, ["error The check failed: the remote is gone"]);
 });
 
 test("the arrow and page keys scroll a long review", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   const commits = Array.from({ length: 30 }, (_, index) => `c${String(index).padStart(2, "0")} change ${index}`);
-  const fake = manager([{ ...CHANGE, log: { kind: "commits", commits } }]);
-  load(frame, fake.plugins);
+  load(frame, manager({ changes: [{ ...CHANGE, log: { kind: "commits", commits } }] }).plugins);
 
-  const top = await run(frame, "plugins:update");
+  await open(frame);
+  const top = await press(frame, "c");
   const paged = await press(frame, "pagedown");
   const back = await press(frame, "up");
 
@@ -312,78 +366,55 @@ test("the arrow and page keys scroll a long review", async () => {
   assertEquals(shows(back, "c09 change 9"), true);
 });
 
-test("the sync command tells its start and its result", async () => {
+test("the selection and its reason stay visible in a dashboard of a few body rows", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
-  const notices = load(frame, fake.plugins);
+  load(frame, manager().plugins);
+  // The dialog has 13 rows at the bottom; a body of two rows needs a screen of 4 rows.
+  frame.resize({ width: 100, height: 4 });
 
-  await run(frame, "plugins:sync");
+  const shown = await open(frame);
+  const moved = await press(frame, "j", "j");
 
-  assertEquals(fake.calls, ["sync with a signal"]);
-  assertEquals(notices, ["info The sync of the Git plugins runs", "info plugins.lock written: run /reload"]);
+  assertEquals(shows(shown, "weather"), true);
+  assertEquals([shows(moved, "✗ broken"), shows(moved, "no luck")], [true, true]);
 });
 
-test("the command update writes the chosen commits with a notice", async () => {
+test("the dashboard has a default look that a plugin changes, and a failure has the look of an error", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([CHANGE]);
-  const notices = load(frame, fake.plugins);
-
-  await run(frame, "plugins:update");
-  await press(frame, "enter");
-
-  assertEquals(fake.calls, ['check {"kind":"all"}', "apply https://h/r 8d02e77"]);
-  assertEquals(notices, ["info plugins.lock written: run /reload to load the new commits"]);
-});
-
-test("the selection stays visible in a dashboard of one body row", async () => {
-  using frame = createFrame({ width: 100, height: 20 });
-  const fake = manager([]);
-  load(frame, fake.plugins);
-  // The dialog has 13 rows at the bottom; a body of one row needs a screen of 3 rows.
-  frame.resize({ width: 100, height: 3 });
-
-  const shown = await run(frame, "plugins:open");
-  const moved = await press(frame, "j", "j", "enter");
-
-  assertEquals(shows(shown, "https://h/weather"), true);
-  assertEquals(shows(moved, "clock"), true);
-});
-
-test("the dashboard has a default look that a plugin changes", async () => {
-  using frame = createFrame({ width: 100, height: 20 });
-  load(frame, manager([]).plugins);
-  await run(frame, "plugins:open");
-  const shown = await press(frame, "j", "j", "enter");
-  const title = shown.findIndex((line) => line.includes("Installed (2)"));
-  const selected = shown.findIndex((line) => line.includes("● clock"));
-  const column = shown[title]?.indexOf("Installed") ?? 0;
-  const mark = shown[selected]?.indexOf("●") ?? 0;
-  const looks = () => {
-    const cells = frame.draw().cells;
-    return [
-      cells[title]?.[column]?.style,
-      cells[selected]?.[mark]?.style,
-      cells[selected + 1]?.[mark + 4]?.style,
-      cells[selected]?.[99]?.style,
-    ];
-  };
-  const before = looks();
+  load(frame, manager().plugins);
+  const shown = await open(frame);
+  const title = shown.findIndex((line) => line.includes("Git (2)"));
+  const selected = shown.findIndex((line) => line.includes("! weather"));
+  const column = shown[title]?.indexOf("Git") ?? 0;
+  const mark = shown[selected]?.indexOf("!") ?? 0;
+  const failure = shown.findIndex((line) => line.includes("no luck"));
   frame.surface("theme").tui.styles.add({
     "plugins.title": { fg: 1, bold: null },
-    "plugins.detail": { fg: 2, dim: null },
+    "picker.detail": { fg: 2, dim: null },
     "picker.selected": { fg: 3, bg: null },
+    "dialog.error": { fg: 4 },
   });
-  // The band of the selected row reaches the last column.
-  assert(before[1]?.bg !== undefined);
-  assertEquals([before[3]?.bg, looks()], [before[1]?.bg, [{ fg: 1 }, { fg: 3 }, { fg: 2 }, { fg: 3 }]]);
+  const cells = frame.draw().cells;
+
+  // The band of the selected row reaches the last column, and the reason below it has the look of a detail.
+  assert(cells[selected]?.[99] !== undefined);
+  assertEquals(
+    [
+      cells[title]?.[column]?.style,
+      cells[selected]?.[mark]?.style,
+      cells[selected]?.[99]?.style,
+      cells[selected + 1]?.[6]?.style,
+      cells[failure]?.[6]?.style,
+    ],
+    [{ fg: 1 }, { fg: 3 }, { fg: 3 }, { fg: 2 }, { fg: 4 }],
+  );
 });
 
-test("the line of an empty dashboard uses the look of the details", async () => {
+test("an empty dashboard tells how to add a plugin", async () => {
   using frame = createFrame({ width: 100, height: 20 });
-  load(frame, { ...manager([]).plugins, list: async () => ({ plugins: [] }) });
-  frame.surface("theme").tui.styles.add({ "plugins.detail": { fg: 2, dim: null } });
-  const shown = await run(frame, "plugins:open");
-  const row = shown.findIndex((line) => line.includes("config.json has no plugins"));
-  const column = shown[row]?.indexOf("config.json") ?? 0;
-  assertEquals(frame.draw().cells[row]?.[column]?.style, { fg: 2 });
+  load(frame, { ...manager().plugins, list: async () => ({ plugins: [] }) });
+
+  const shown = await open(frame);
+
+  assertEquals(rowOf(shown, "config.json"), " config.json has no plugins · a adds one");
 });

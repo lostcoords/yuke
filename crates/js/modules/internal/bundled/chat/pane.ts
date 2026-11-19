@@ -40,6 +40,7 @@ import {
   type Placement,
   type Rect,
   type Size,
+  SPINNER_INTERVAL,
   TextEditor,
   TextView,
   type Tui,
@@ -228,7 +229,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         dirty = true;
       }
     }
-    stopTick = working.active && !mount.signal.aborted ? tui.addTimer(working.frameMs, tick) : undefined;
+    stopTick = working.active && !mount.signal.aborted ? tui.addTimer(SPINNER_INTERVAL, tick) : undefined;
   };
   working.addChangeListener(() => {
     stopTick?.();

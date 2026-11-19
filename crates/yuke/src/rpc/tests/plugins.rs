@@ -65,16 +65,9 @@ async fn a_plugin_that_does_not_load_at_the_start_lists_as_failed_with_its_reaso
 
     let listed = client.call("plugin/list", json!({})).await.unwrap();
 
-    let loads: Vec<(&Value, &Value)> = listed["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|plugin| (&plugin["name"], &plugin["load"]))
-        .collect();
-    assert_eq!(loads[1], (&json!("fine"), &json!({ "kind": "loaded" })));
-    assert_eq!(loads[0].0, "broken");
-    assert_eq!(loads[0].1["kind"], "failed");
-    let error = loads[0].1["error"].as_str().unwrap();
+    assert_eq!(listed["plugins"][1]["load"], json!({ "kind": "loaded" }));
+    assert_eq!(listed["plugins"][0]["load"]["kind"], "failed");
+    let error = listed["plugins"][0]["load"]["error"].as_str().unwrap();
     assert!(error.starts_with("plugin broken did not load: Error: no"), "{error}");
     client.end().await;
 }

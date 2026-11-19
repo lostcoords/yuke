@@ -285,7 +285,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
                 mount.close();
               },
             },
-            { key: "esc", label: "no", run: () => mount.close() },
+            { key: "esc", label: options.cancelLabel ?? "no", run: () => mount.close() },
           ],
           rows: (title === undefined ? 0 : 1) + Math.min(lines, CONFIRM_ROWS) + 1,
           signal: options.signal,

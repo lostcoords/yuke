@@ -7,6 +7,7 @@ import { stack } from "yuke:internal/tui/layout";
 import { Markdown } from "yuke:internal/tui/markdown";
 import { Picker } from "yuke:internal/tui/picker";
 import { ScrollList } from "yuke:internal/tui/scroll";
+import { SPINNER_INTERVAL, spinner } from "yuke:internal/tui/spinner";
 import { fit, graphemes, measure, wrap as wrapPacked } from "yuke:internal/tui/text";
 import { TextView } from "yuke:internal/tui/text-view";
 import type { WrappedRow } from "yuke:tui";
@@ -20,6 +21,8 @@ export {
   Picker,
   parseKeys,
   ScrollList,
+  SPINNER_INTERVAL,
+  spinner,
   stack,
   strokeOf,
   TextEditor,
@@ -51,5 +54,7 @@ const declared = {
   TextView,
   fuzzyMatch,
   Picker,
+  spinner,
+  SPINNER_INTERVAL,
 } satisfies typeof import("yuke:tui");
 void declared;

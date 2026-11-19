@@ -1,43 +1,53 @@
 /**
- * The bundled plugin `plugins`. Its command `plugins:open` shows a dashboard of the plugins of `config.json` in three
- * sections: the plugins that a sync needs, the installed Git plugins, and the local plugins. Its keys sync, update,
- * add, remove, search, and reload. `plugins:sync` and `plugins:update` run the same actions without the dashboard. An
- * update shows a review of the new commits first, and a new commit loads at the next reload.
+ * The bundled plugin `plugins`. Its command `plugins:open` shows the plugins of `config.json` in three sections: the
+ * plugins that need attention, the Git plugins, and the local plugins. Its keys sync, check for updates, update, add,
+ * remove, and reload. A check shows the new commits before it writes them, and each change loads at the next reload.
  */
 
 import { plugins as manager, type PluginManager } from "yuke:internal/sessions";
 import type { PluginContext } from "yuke:plugins";
-import type { LockedPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
-import { type Canvas, type KeyEvent, strokeOf, type TextDocument, TextView, type Tui, type View } from "yuke:tui";
+import type { FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
+import {
+  type Canvas,
+  type KeyEvent,
+  type Placement,
+  ScrollList,
+  type Size,
+  SPINNER_INTERVAL,
+  spinner,
+  strokeOf,
+  type TextDocument,
+  type TextRow,
+  TextView,
+  type Tui,
+  type View,
+  wrap,
+} from "yuke:tui";
 
 const TITLE = "plugins.title";
-const DETAIL = "plugins.detail";
+const DETAIL = "picker.detail";
+const ERROR = "dialog.error";
 const SELECTED = "picker.selected";
 
 /** A test gives a fake manager as `plugins`. */
 export function apply(ctx: PluginContext, plugins: PluginManager = manager): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
-  const report = (what: string) => (error: unknown) => ctx.notify("error", `${what}: ${String(error)}`);
   tui.commands.add({
     name: "open",
     slash: "plugins",
-    description: "Show the plugins of config.json, and sync, update, add, or remove them",
-    run: () => open(ctx, tui, plugins).catch(report("The plugins did not load")),
-  });
-  tui.commands.add({
-    name: "sync",
-    slash: "plugins:sync",
-    description: "Install the locked Git plugins, and lock the new ones",
-    run: () => sync(ctx, plugins).catch(report("The sync failed")),
-  });
-  tui.commands.add({
-    name: "update",
-    slash: "plugins:update",
-    description: "Check each Git plugin for a new commit of its ref",
-    run: () => update(ctx, tui, plugins).catch(report("The update failed")),
+    description: "Show your plugins, and sync, update, add, or remove them",
+    run: () =>
+      open(ctx, tui, plugins).catch((error: unknown) =>
+        ctx.notify("error", `The plugins did not load: ${messageOf(error)}`),
+      ),
   });
   return undefined;
+}
+
+/** The text of `error` without the name of its class. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** The first seven digits of `commit`. */
@@ -45,69 +55,109 @@ function short(commit: string): string {
   return commit.slice(0, 7);
 }
 
-/** The sections of the dashboard, in order, with the test of the plugins of each one. */
-const SECTIONS: readonly { readonly title: string; readonly has: (plugin: ManagedPlugin) => boolean }[] = [
-  { title: "Needs sync", has: (plugin) => plugin.state.kind === "notInstalled" },
-  { title: "Installed", has: (plugin) => plugin.state.kind === "installed" },
-  { title: "Local", has: (plugin) => plugin.state.kind === "local" },
-];
-
-/** The mark of `plugin`: loaded, not loaded, or a problem that a sync fixes. */
-function markOf(plugin: ManagedPlugin): string {
-  if (plugin.state.kind === "notInstalled") return "!";
-  return plugin.load.kind === "loaded" ? "●" : "○";
+/** The name of `plugin`, else the last part of its folder or of its URL. */
+function nameOf(plugin: ManagedPlugin): string {
+  if (plugin.name !== undefined) return plugin.name;
+  const source = plugin.source;
+  const text = (typeof source === "string" ? source : (source.folder ?? source.git)).replace(/\/+$/, "");
+  return (text.split(/[/:]/).at(-1) ?? text).replace(/\.git$/, "");
 }
 
-/** The source of `plugin` as text, as `yuke plugin list` prints it: the folder, or the Git URL with its folder and ref. */
+/** The source of `plugin` on its row: the folder, or the Git URL without `https://`, with its folder and ref. */
 function sourceOf(plugin: ManagedPlugin): string {
   const source = plugin.source;
   if (typeof source === "string") return source;
   const parts = [
-    ...(source.folder === undefined ? [] : [`folder ${source.folder}`]),
-    ...(source.ref === undefined ? [] : [`ref ${source.ref}`]),
+    source.git.replace(/^https:\/\//, ""),
+    source.folder,
+    source.ref === undefined ? undefined : `ref ${source.ref}`,
   ];
-  return parts.length === 0 ? source.git : `${source.git} (${parts.join(", ")})`;
+  return parts.filter((part) => part !== undefined).join(" · ");
 }
 
-/** The state of `plugin` after its source on its row. */
-function stateOf(plugin: ManagedPlugin): string {
-  const state = plugin.state;
-  const loaded = plugin.load.kind === "loaded";
-  switch (state.kind) {
-    case "local":
-      return loaded ? "" : "not loaded";
-    case "notInstalled":
-      return state.commit === undefined ? "not installed" : `${short(state.commit)} not installed`;
-    case "installed":
-      return loaded ? short(state.commit) : `${short(state.commit)} not loaded`;
-  }
+/** The key of `plugin` in the list. */
+function keyOf(plugin: ManagedPlugin): string {
+  return JSON.stringify(plugin.source);
 }
 
-/** The details of `plugin` under its row. */
-function detailsOf(plugin: ManagedPlugin): string {
-  const commit =
-    "commit" in plugin.state && plugin.state.commit !== undefined ? ` · commit ${plugin.state.commit}` : "";
-  return `${sourceOf(plugin)}${commit} · ${plugin.load.kind === "loaded" ? "loaded" : "not loaded"}`;
+/** Whether `plugin` needs the user: it is not installed, or it does not load. */
+function needsAttention(plugin: ManagedPlugin): boolean {
+  return plugin.state.kind === "notInstalled" || plugin.load.kind === "failed";
 }
 
-/** One row of the dashboard: a section title, a plugin, or the details of a plugin. */
+/** The sections of the dashboard, in order, with the test of the plugins of each one. */
+const SECTIONS: readonly { readonly title: string; readonly has: (plugin: ManagedPlugin) => boolean }[] = [
+  { title: "Needs attention", has: needsAttention },
+  { title: "Git", has: (plugin) => !needsAttention(plugin) && plugin.state.kind === "installed" },
+  { title: "Local", has: (plugin) => !needsAttention(plugin) && plugin.state.kind === "local" },
+];
+
+/** The mark and the state word of each load of a plugin that is installed. */
+const LOADS = {
+  loaded: { mark: "●", state: "loaded" },
+  pending: { mark: "○", state: "reload loads it" },
+  failed: { mark: "✗", state: "failed" },
+} as const;
+
+/** The width of the state column: the longest state word. */
+const STATE_WIDTH = "reload loads it".length;
+
+/** The mark and the state word of `plugin`. */
+function statusOf(plugin: ManagedPlugin): { readonly mark: string; readonly state: string } {
+  return plugin.state.kind === "notInstalled" ? { mark: "!", state: "not installed" } : LOADS[plugin.load.kind];
+}
+
+/** Why `plugin` needs attention, or `undefined` when it does not. */
+function reasonOf(plugin: ManagedPlugin): string | undefined {
+  if (plugin.state.kind === "notInstalled") return "s installs it";
+  return plugin.load.kind === "failed" ? plugin.load.error : undefined;
+}
+
+/** One row of the dashboard: a section title, a plugin, or the reason of a plugin that needs attention. */
 type Row =
   | { readonly kind: "title"; readonly text: string }
-  | { readonly kind: "plugin"; readonly plugin: ManagedPlugin }
-  | { readonly kind: "details"; readonly plugin: ManagedPlugin };
+  | { readonly kind: "plugin"; readonly plugin: ManagedPlugin; readonly nameWidth: number; readonly selected: boolean }
+  | { readonly kind: "reason"; readonly plugin: ManagedPlugin; readonly text: string; readonly failed: boolean };
+
+/** The id of `row` in the list. */
+function idOf(row: Row): string {
+  return row.kind === "title" ? `title ${row.text}` : `${row.kind} ${keyOf(row.plugin)}`;
+}
+
+/** The text rows of `row` at `width` cells. A reason wraps below its plugin. */
+function render(row: Row, width: number): readonly TextRow[] {
+  if (row.kind === "title") return [{ segments: [{ text: ` ${row.text}`, style: TITLE }], join: "\n" }];
+  if (row.kind === "reason") {
+    const indent = "      ";
+    return wrap(row.text, Math.max(1, width - indent.length)).map((part) => ({
+      segments: [{ text: `${indent}${row.text.slice(part.start, part.end)}`, style: row.failed ? ERROR : DETAIL }],
+      join: "\n",
+    }));
+  }
+  const plugin = row.plugin;
+  const status = statusOf(plugin);
+  const commit = plugin.state.kind === "installed" ? short(plugin.state.commit) : "";
+  const text = `  ${status.mark} ${nameOf(plugin).padEnd(row.nameWidth)}  ${status.state.padEnd(STATE_WIDTH)}  ${commit.padEnd(7)}  ${sourceOf(plugin)}`;
+  // The band of the selected row reaches the last column.
+  return [
+    {
+      segments: [{ text: row.selected ? text.padEnd(width) : text, style: row.selected ? SELECTED : undefined }],
+      join: "\n",
+    },
+  ];
+}
 
 /** The rows that each move key of the list moves the selection. */
 const MOVES: Readonly<Record<string, number>> = { up: -1, k: -1, down: 1, j: 1 };
 
-/**
- * The body of the dashboard: the plugins in their sections and a selection. Up, down, `j`, and `k` move the selection,
- * and Enter shows or hides the details of the selected plugin. The dialog takes each other key.
- */
+/** The body of the dashboard: the plugins in their sections and a selection. Up, down, `j`, and `k` move it. */
 class PluginList implements View {
   readonly focusable = true;
+  readonly #list = new ScrollList<Row>({ id: idOf, render });
   #plugins: readonly ManagedPlugin[] = [];
   #selected = 0;
-  readonly #open = new Set<string>();
+  /** The selection moved, so the next layout shows it. */
+  #reveal = true;
 
   /** The plugins in section order. */
   get plugins(): readonly ManagedPlugin[] {
@@ -119,67 +169,78 @@ class PluginList implements View {
     return this.#plugins[this.#selected];
   }
 
-  /** Replace the plugins. The selection stays on the same item when the item is still there. */
+  /** The count of the rows of the list. */
+  get rowCount(): number {
+    return this.#list.items.length;
+  }
+
+  /** Replace the plugins. The selection stays on the same plugin when it is still there, else on its place. */
   setPlugins(plugins: readonly ManagedPlugin[]): void {
-    const kept = this.selected === undefined ? undefined : sourceOf(this.selected);
+    const kept = this.selected === undefined ? undefined : keyOf(this.selected);
     this.#plugins = SECTIONS.flatMap((section) => plugins.filter(section.has));
-    this.select(kept);
+    const index = this.#plugins.findIndex((plugin) => keyOf(plugin) === kept);
+    this.#select(index >= 0 ? index : this.#selected);
   }
 
-  /** Select the plugin of `item`, else keep the place in the list. */
-  select(source: string | undefined): void {
-    const index = this.#plugins.findIndex((plugin) => sourceOf(plugin) === source);
-    this.#selected = index >= 0 ? index : Math.min(this.#selected, Math.max(0, this.#plugins.length - 1));
-  }
-
-  #rows(): readonly Row[] {
+  #select(index: number): void {
+    this.#selected = Math.max(0, Math.min(this.#plugins.length - 1, index));
+    const nameWidth = Math.max(0, ...this.#plugins.map((plugin) => nameOf(plugin).length));
+    const selected = this.selected;
     const rows: Row[] = [];
     for (const section of SECTIONS) {
       const plugins = this.#plugins.filter(section.has);
-      if (plugins.length === 0) continue;
-      rows.push({ kind: "title", text: `${section.title} (${plugins.length})` });
+      if (plugins.length > 0) rows.push({ kind: "title", text: `${section.title} (${plugins.length})` });
       for (const plugin of plugins) {
-        rows.push({ kind: "plugin", plugin });
-        if (this.#open.has(sourceOf(plugin))) rows.push({ kind: "details", plugin });
+        rows.push({ kind: "plugin", plugin, nameWidth, selected: plugin === selected });
+        const reason = reasonOf(plugin);
+        if (reason !== undefined) {
+          rows.push({ kind: "reason", plugin, text: reason, failed: plugin.state.kind !== "notInstalled" });
+        }
       }
     }
-    return rows;
+    this.#list.setItems(rows);
+    this.#reveal = true;
+  }
+
+  layout(size: Size): readonly Placement[] {
+    this.#list.layout(size);
+    const selected = this.selected;
+    if (this.#reveal && selected !== undefined) {
+      // The reason below the selected plugin shows when it fits, and the plugin row shows always.
+      this.#list.ensureVisible(`reason ${keyOf(selected)}`);
+      this.#list.ensureVisible(`plugin ${keyOf(selected)}`);
+    }
+    this.#reveal = false;
+    return [{ view: this.#list, rect: { column: 0, row: 0, width: size.width, height: size.height } }];
   }
 
   draw(canvas: Canvas): void {
-    const rows = this.#rows();
-    const selected = this.selected;
-    if (rows.length === 0) canvas.text(1, 0, "config.json has no plugins: a adds one", DETAIL);
-    const at = rows.findIndex((row) => row.kind === "plugin" && row.plugin === selected);
-    const below = selected !== undefined && this.#open.has(sourceOf(selected)) ? 1 : 0;
-    // The view starts at the top, and it moves down only as far as the selection and its details need.
-    const top = Math.max(0, Math.min(at, at + below - canvas.height + 1, rows.length - canvas.height));
-    for (const [index, row] of rows.slice(top, top + canvas.height).entries()) {
-      if (row.kind === "title") {
-        canvas.text(1, index, row.text, TITLE);
-      } else if (row.kind === "details") {
-        canvas.text(6, index, detailsOf(row.plugin), DETAIL);
-      } else {
-        const plugin = row.plugin;
-        const text = `${markOf(plugin)} ${(plugin.name ?? "?").padEnd(12)} ${sourceOf(plugin)}  ${stateOf(plugin)}`;
-        if (plugin === selected) canvas.fill(0, index, canvas.width, 1, SELECTED);
-        canvas.text(2, index, text.trimEnd(), plugin === selected ? SELECTED : undefined);
-      }
-    }
+    if (this.#plugins.length === 0) canvas.text(1, 0, "config.json has no plugins · a adds one", DETAIL);
   }
 
   onKey(event: KeyEvent): boolean {
-    const stroke = strokeOf(event);
-    const move = MOVES[stroke];
-    if (move !== undefined) {
-      this.#selected = Math.max(0, Math.min(this.#plugins.length - 1, this.#selected + move));
-      return true;
-    }
-    const source = this.selected === undefined ? undefined : sourceOf(this.selected);
-    if (stroke !== "enter" || source === undefined) return false;
-    if (!this.#open.delete(source)) this.#open.add(source);
+    const move = MOVES[strokeOf(event)];
+    if (move === undefined) return false;
+    this.#select(this.#selected + move);
     return true;
   }
+}
+
+/** A spinner that draws a frame of `tui` at each step until `stop`. */
+function startSpinner(tui: Tui): { readonly frame: () => string; readonly stop: () => void } {
+  const start = tui.now();
+  let cancel = (): void => {};
+  const tick = (): void => {
+    cancel = tui.addTimer(SPINNER_INTERVAL, tick);
+  };
+  tick();
+  return { frame: () => spinner(tui.now() - start), stop: () => cancel() };
+}
+
+/** The names of `plugins` as a list for a sentence: `a`, `a and b`, or `2 plugins`. */
+function namesOf(plugins: readonly { readonly name: string }[]): string {
+  if (plugins.length > 2) return `${plugins.length} plugins`;
+  return plugins.map((plugin) => plugin.name).join(" and ");
 }
 
 /** Open the dashboard. The title shows the count of the plugins and the state of the last action. */
@@ -187,15 +248,14 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
   const list = new PluginList();
   list.setPlugins((await plugins.list()).plugins);
   let status = "";
-  let busy = false;
-  const refresh = async (): Promise<void> => {
-    list.setPlugins((await plugins.list()).plugins);
-    tui.requestFrame();
-  };
-  /** Run `action` with `running` in the title, then show what it gives and load the list again. */
-  const run = (running: string, action: () => Promise<string>): void => {
-    busy = true;
-    status = running;
+  let running: ReturnType<typeof startSpinner> | undefined;
+  /**
+   * Run `action` with `doing` and a spinner in the title. Then show the text that it gives, or give a notice of its
+   * failure, and load the list again.
+   */
+  const run = (doing: string, action: () => Promise<string>): void => {
+    running = startSpinner(tui);
+    status = doing;
     tui.requestFrame();
     action()
       .then(
@@ -203,36 +263,31 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
           status = done;
         },
         (error: unknown) => {
-          status = `failed: ${String(error)}`;
+          status = "";
+          if (!dialog.signal.aborted) ctx.notify("error", `${doing} failed: ${messageOf(error)}`);
         },
       )
-      .then(refresh)
-      .catch((error: unknown) => ctx.notify("error", `The plugins did not load: ${String(error)}`))
+      .then(async () => list.setPlugins((await plugins.list()).plugins))
+      .catch((error: unknown) => ctx.notify("error", `The plugins did not load: ${messageOf(error)}`))
       .finally(() => {
-        busy = false;
+        running?.stop();
+        running = undefined;
         tui.requestFrame();
       });
   };
-  const idle = () => !busy;
-  const named = () => {
-    const name = list.selected?.name;
-    return typeof name === "string" ? name : undefined;
-  };
+  const idle = () => running === undefined;
+  const named = () => list.selected?.name;
   const dialog = tui.dialog({
-    title: () => `Plugins · ${list.plugins.length}${status === "" ? "" : ` · ${status}`}`,
+    title: () => {
+      const doing = running === undefined ? status : `${running.frame()} ${status}…`;
+      return `Plugins · ${list.plugins.length}${doing === "" ? "" : ` · ${doing}`}`;
+    },
     body: list,
+    // The dialog shows each plugin when the screen has the rows: the list, the head row, and the footer.
+    rows: Math.max(13, list.rowCount + 2),
     keys: [
-      {
-        key: "S",
-        label: "sync",
-        when: idle,
-        run: () =>
-          run("syncing", async () => {
-            const synced = await plugins.sync({ signal: dialog.signal });
-            return synced.written ? "plugins.lock written: R reloads" : "each Git plugin is at its locked commit";
-          }),
-      },
-      { key: "U", label: "update all", when: idle, run: () => update({ kind: "all" }) },
+      { key: "s", label: "sync", when: idle, run: () => sync() },
+      { key: "c", label: "check updates", when: idle, run: () => update({ kind: "all" }) },
       {
         key: "u",
         label: "update",
@@ -241,76 +296,94 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       },
       { key: "a", label: "add", when: idle, run: () => void add() },
       { key: "d", label: "remove", when: () => idle() && named() !== undefined, run: () => void remove(named() ?? "") },
-      { key: "/", label: "search", when: () => idle() && list.plugins.length > 0, run: () => void search() },
-      { key: "R", label: "reload", when: idle, run: () => tui.commands.run("core:reload") },
+      { key: "r", label: "reload", when: idle, run: () => tui.commands.run("core:reload") },
     ],
   });
-  /** Review the new commits of `target`, and write the chosen ones as an action of the dashboard. */
+  const sync = (): void => {
+    const missing = list.plugins.filter((plugin) => plugin.state.kind === "notInstalled").length;
+    run("Syncing", async () => {
+      await plugins.sync({ signal: dialog.signal });
+      return missing === 0 ? "each Git plugin is installed" : `installed ${missing} plugins · r loads them`;
+    });
+  };
+  /** Check the plugins of `target` in a review, and write the commits that the user chooses. */
   const update = (target: PluginTarget): void => {
     review(tui, plugins, target, dialog.signal).then(
       (chosen) => {
         if (chosen === undefined) return;
-        run("writing plugins.lock", async () => {
-          await plugins.apply(lockedOf(chosen));
-          return "plugins.lock written: R reloads";
+        run("Updating", async () => {
+          await plugins.apply(chosen.map((change) => ({ source: change.source, commit: change.new })));
+          return `updated ${namesOf(chosen)} · r loads the new commits`;
         });
       },
-      (error: unknown) => {
-        status = `the check failed: ${String(error)}`;
-        tui.requestFrame();
-      },
+      (error: unknown) => ctx.notify("error", `The check failed: ${messageOf(error)}`),
     );
   };
   const add = async (): Promise<void> => {
-    // An empty line keeps the prompt open, so the user sees why.
+    let found: readonly FoundPlugin[] = [];
+    // A URL that gives no new plugin keeps the prompt open with its text and the reason.
     const line = await tui.input({
-      title: "Add a Git plugin",
-      placeholder: "URL of the repository",
+      title: "Add a plugin",
+      placeholder: "URL of a Git repository",
       signal: dialog.signal,
-      onSubmit: (text) => {
-        if (text.trim() === "") throw new Error("type the URL first");
+      onSubmit: async (text) => {
+        if (text.trim() === "") throw new Error("type the URL of a Git repository");
+        const added = new Set(list.plugins.map(nameOf));
+        const all = (await plugins.find({ git: text.trim() }, { signal: dialog.signal })).plugins;
+        found = all.filter((plugin) => !added.has(plugin.name));
+        if (all.length === 0) throw new Error("the repository has no plugin.json");
+        if (found.length === 0) throw new Error("config.json has each plugin of the repository already");
       },
     });
     if (line === undefined) return;
     const git = line.trim();
-    run(`adding ${git}`, async () => {
-      const added = await plugins.add({ git }, { signal: dialog.signal });
-      return `${added.plugins.map((plugin) => plugin.name).join(", ")} added: R reloads`;
+    const chosen =
+      found.length === 1
+        ? found[0]
+        : await tui.select({
+            title: `Add a plugin · ${git.replace(/^https:\/\//, "")}`,
+            items: found,
+            label: (plugin) => plugin.name,
+            detail: (plugin) => plugin.folder ?? "the root of the repository",
+            signal: dialog.signal,
+          });
+    if (chosen === undefined) return;
+    run(`Adding ${chosen.name}`, async () => {
+      await plugins.add({ git, names: [chosen.name] }, { signal: dialog.signal });
+      return `added ${chosen.name} · r loads it`;
     });
   };
   const remove = async (name: string): Promise<void> => {
-    const text = `Remove ${name} from config.json and plugins.lock?`;
-    if (!(await tui.confirm({ text, confirmLabel: "remove", signal: dialog.signal }))) return;
-    run(`removing ${name}`, async () => {
-      await plugins.remove(name);
-      return `${name} removed: R reloads`;
-    });
-  };
-  const search = async (): Promise<void> => {
-    const plugin = await tui.select({
-      title: "Search the plugins",
-      items: list.plugins,
-      label: (item) => `${item.name ?? "?"}  ${sourceOf(item)}`,
+    const git = typeof list.selected?.source === "object";
+    const confirmed = await tui.confirm({
+      title: `Remove ${name}?`,
+      text: `yuke removes ${name} from config.json${git ? " and plugins.lock" : ""}. Its files stay on disk, and it runs until the next reload.`,
+      confirmLabel: "remove",
+      cancelLabel: "keep",
       signal: dialog.signal,
     });
-    if (plugin !== undefined) list.select(sourceOf(plugin));
+    if (!confirmed) return;
+    run(`Removing ${name}`, async () => {
+      await plugins.remove(name);
+      return `removed ${name} · r unloads it`;
+    });
   };
 }
 
-/** Install the locked commits and lock the new Git plugins. A notice tells the result. */
-async function sync(ctx: PluginContext, plugins: PluginManager): Promise<void> {
-  ctx.notify("info", "The sync of the Git plugins runs");
-  const synced = await plugins.sync({ signal: ctx.signal });
-  ctx.notify("info", synced.written ? "plugins.lock written: run /reload" : "Each Git plugin is at its locked commit");
-}
-
-/** The new commit of each change of `changes`, for `apply`. */
-function lockedOf(changes: readonly PluginChange[]): readonly LockedPlugin[] {
-  return changes.map((change) => ({ source: change.source, commit: change.new }));
-}
-
-/** A document of one text item for each entry of `items`: a label and its lines. */
-function documentOf(items: readonly { readonly label: string; readonly lines: readonly string[] }[]): TextDocument {
+/** The review of `changes`: each plugin with its move and the log of the move, or one line without a change. */
+function reviewOf(changes: readonly PluginChange[] | undefined): TextDocument {
+  const items =
+    changes === undefined
+      ? [{ label: "Checking each Git plugin for a new commit", lines: [] }]
+      : changes.length === 0
+        ? [{ label: "Each Git plugin is at the newest commit of its ref", lines: [] }]
+        : changes.map((change) => ({
+            label: `${change.name}  ${short(change.old)} → ${short(change.new)}`,
+            lines:
+              change.log.kind === "commits"
+                ? change.log.commits.map((line) => `  ${line}`)
+                : [`  no log: ${change.log.error}`],
+          }));
   return {
     id: "plugins-review",
     items: items.map((item, index) => ({
@@ -323,27 +396,6 @@ function documentOf(items: readonly { readonly label: string; readonly lines: re
   };
 }
 
-/** The review of `changes`: each plugin with its move and the log of the move. */
-function reviewOf(changes: readonly PluginChange[]): TextDocument {
-  return documentOf(
-    changes.map((change) => ({
-      label: `${change.name}  ${short(change.old)} → ${short(change.new)}`,
-      lines:
-        change.log.kind === "commits"
-          ? change.log.commits.map((line) => `  ${line}`)
-          : [`  no log: ${change.log.error}`],
-    })),
-  );
-}
-
-/** Check each Git plugin in a review, and write the new commits that the user chooses. Notices tell the result. */
-async function update(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promise<void> {
-  const chosen = await review(tui, plugins, { kind: "all" }, ctx.signal);
-  if (chosen === undefined) return;
-  await plugins.apply(lockedOf(chosen));
-  ctx.notify("info", "plugins.lock written: run /reload to load the new commits");
-}
-
 /**
  * Check the Git plugins of `target` in a dialog that closes when `signal` aborts. The dialog opens at once, and its close
  * (Esc) stops the check. Gives the changes when the user presses Enter on them, else `undefined` at the close.
@@ -354,18 +406,21 @@ async function review(
   target: PluginTarget,
   signal: AbortSignal,
 ): Promise<readonly PluginChange[] | undefined> {
-  let changes: readonly PluginChange[] = [];
+  let changes: readonly PluginChange[] | undefined;
   let chosen: readonly PluginChange[] | undefined;
-  const text = new TextView({ document: documentOf([{ label: "the check of the Git plugins runs", lines: [] }]) });
+  const text = new TextView({ document: reviewOf(undefined) });
+  const checking = startSpinner(tui);
   const dialog = tui.dialog({
+    title: () =>
+      changes === undefined ? `Updates · ${checking.frame()} checking…` : `Updates · ${changes.length} plugins`,
     body: text,
     scroll: text.scroll,
     signal,
     keys: [
       {
         key: "enter",
-        label: "write plugins.lock",
-        when: () => changes.length > 0,
+        label: "update",
+        when: () => changes !== undefined && changes.length > 0,
         run: () => {
           chosen = changes;
           dialog.close();
@@ -383,12 +438,10 @@ async function review(
     if (dialog.signal.aborted) return undefined;
     dialog.close();
     throw error;
+  } finally {
+    checking.stop();
   }
-  text.setDocument(
-    changes.length === 0
-      ? documentOf([{ label: "each Git plugin is at the newest commit of its ref", lines: [] }])
-      : reviewOf(changes),
-  );
+  text.setDocument(reviewOf(changes));
   tui.requestFrame();
   await closed;
   return chosen;

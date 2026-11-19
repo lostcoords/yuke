@@ -6,11 +6,7 @@
 import type { ChatSession, ChatWorkingOptions, ChatWorkingTextOptions } from "yuke:chat";
 import { clipped } from "yuke:internal/chat/rows";
 import type { Transcript, TurnFailure } from "yuke:transcript";
-import { measure } from "yuke:tui";
-
-const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-
-const FRAME_MS = 80;
+import { measure, spinner } from "yuke:tui";
 
 /** How long a tool call waits before the row offers to move it, so a quick call does not flash the hint. */
 const BACKGROUND_HINT_MS = 2000;
@@ -60,15 +56,11 @@ export class ChatWorking {
     return this.#start !== undefined;
   }
 
-  get frameMs(): number {
-    return FRAME_MS;
-  }
-
   text(options: ChatWorkingTextOptions = {}): { readonly spinner: string; readonly text: string } | undefined {
     const start = this.#start;
     if (start === undefined) return undefined;
     const now = this.#now();
-    const spinner = SPINNER[Math.floor((now - start) / FRAME_MS) % SPINNER.length] ?? "";
+    const mark = spinner(now - start);
     const movable = this.#chat.handle?.canMoveJobsToBackground() === true;
     if (!movable) this.#movableSince = undefined;
     else this.#movableSince ??= now;
@@ -84,9 +76,9 @@ export class ChatWorking {
     const tail = (): string => `(${[elapsed(now - start), ...hints].join(" · ")})`;
     const head = phase(this.#chat.transcript, now, this.#retryAt);
     const width = options.width;
-    if (width === undefined) return { spinner, text: `${head} ${tail()}` };
+    if (width === undefined) return { spinner: mark, text: `${head} ${tail()}` };
     while (hints.length > 0 && measure(tail()) + 1 + SMALLEST_PHASE > width) hints.pop();
-    return { spinner, text: `${clipped(head, Math.max(0, width - measure(tail()) - 1))} ${tail()}` };
+    return { spinner: mark, text: `${clipped(head, Math.max(0, width - measure(tail()) - 1))} ${tail()}` };
   }
 
   addChangeListener(listener: () => void): () => void {

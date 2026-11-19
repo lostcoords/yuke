@@ -765,13 +765,13 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
         &runtime,
         "const listed = await plugins.list();
          const synced = await plugins.sync();
-         const applied = await plugins.apply([{ source: { git: 'https://host/repo' }, commit: 'b'.repeat(40) }]);
+         await plugins.apply([{ source: { git: 'https://host/repo' }, commit: 'b'.repeat(40) }]);
          globalThis.controller = new AbortController();
          globalThis.checked = plugins.check({ kind: 'names', names: ['clock'] }, { signal: controller.signal });
          const found = await plugins.find({ git: 'https://host/tools', ref: 'v1' });
          const added = await plugins.add({ git: 'https://host/tools', names: ['clock'] });
          await plugins.remove('clock');
-         return JSON.stringify([listed, synced.written, applied, found.plugins, added.plugins[0].source]);",
+         return JSON.stringify([listed, synced.written, found.plugins, added.plugins[0].name]);",
     )
     .await
     .unwrap();
@@ -789,7 +789,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
 
     assert_eq!(
         answers,
-        r#"[{"plugins":[]},true,null,[{"name":"clock","folder":"plugins/clock"}],{"git":"https://host/tools","folder":"plugins/clock"}]"#
+        r#"[{"plugins":[]},true,[{"name":"clock","folder":"plugins/clock"}],"clock"]"#
     );
     assert!(aborted);
     assert_eq!(scripted.released.get(), 1);

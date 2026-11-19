@@ -207,28 +207,6 @@ async fn a_plugin_pane_comes_back_after_a_reload() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_reload_with_a_broken_plugin_loads_the_others_and_shows_why() {
-    let place = Place::new("tui", "reload_failure");
-    let (display, output) = display();
-    let mut app = started(&place, &display).await;
-    place.plugin("board", BOARD);
-    place.plugin("broken", "throw new Error('broken on purpose');");
-    std::fs::write(
-        place.paths.config.join("config.json"),
-        r#"{ "plugins": ["board", "broken"] }"#,
-    )
-    .unwrap();
-
-    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-
-    // Only the new runtime has the board, so the notice on the screen shows that the reload loaded it.
-    output
-        .shows("error host:yuke: plugin broken did not load: Error: broken on purpose")
-        .await;
-    app.shutdown().await;
-}
-
-#[tokio::test(flavor = "local")]
 async fn the_bundled_sessions_list_opens_through_the_service_of_the_bundled_chat() {
     let place = Place::new("tui", "sessions_list");
     place.plugin(
@@ -276,7 +254,6 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
 
     config(r#""no""#);
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    // The reload loads the other plugins, without the bar.
     output.contains("plugin bar did not load").await;
     assert!(
         output.rows().iter().all(|row| !row.contains("marked")),

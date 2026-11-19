@@ -68,7 +68,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   the title to 200 Unicode scalar values. `session/rename { sessionId, title }` changes the title of an open or closed session
   and answers `{}` without a session update.
 - `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions
-  stay open. Their process jobs go on, and their plugin jobs stop. It fails while a turn runs, or for a bad `config.json`, `plugins.lock`, or `providers.json`, and a failure keeps the old plugins and providers. A plugin that does not load does not fail it: the other plugins load, and a `notice` names the failed ones. The
+  stay open. Their process jobs go on, and their plugin jobs stop. It fails while a turn runs, or for a bad `config.json`, `plugins.lock`, or `providers.json`. A failure keeps the old plugins and providers. A plugin that does not load does not fail it. A `notice` names the failed ones. The
   next request of an open session can miss the prompt cache when the reload changes its tools.
 - Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that
   reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client

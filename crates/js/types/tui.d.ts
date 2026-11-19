@@ -961,6 +961,8 @@ declare module "yuke:tui" {
     readonly text: string;
     /** The label of Enter in the footer. The default is `yes`. */
     readonly confirmLabel?: string | undefined;
+    /** The label of Esc in the footer. The default is `no`. */
+    readonly cancelLabel?: string | undefined;
     /** The dialog closes when this signal aborts, and the answer is `false`. */
     readonly signal?: AbortSignal | undefined;
   }
@@ -1163,6 +1165,20 @@ declare module "yuke:tui" {
 
   /** The cells of `text`. */
   export function measure(text: string): number;
+  /** The milliseconds between two frames of `spinner`. */
+  export const SPINNER_INTERVAL: number;
+  /**
+   * The frame of a spinner `elapsed` milliseconds after its start. To animate it, draw again each `SPINNER_INTERVAL`:
+   *
+   * ```ts
+   * const start = tui.now();
+   * const tick = () => {
+   *   stop = running ? tui.addTimer(SPINNER_INTERVAL, tick) : undefined;
+   * };
+   * const mark = spinner(tui.now() - start); // in draw
+   * ```
+   */
+  export function spinner(elapsed: number): string;
   /**
    * The UTF-16 offset, the UTF-16 length, and the cells of each grapheme of `text`, three numbers each: grapheme `n` is
    * at `3 * n`. The packed form keeps a long text fast; an object for each grapheme costs about 15 times more.

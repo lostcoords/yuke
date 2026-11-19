@@ -42,6 +42,17 @@ A plugin that does not load does not stop the others. This covers a plugin that 
 | `yuke plugin sync` | Install the locked commits, and lock each new Git plugin. With `--locked`, fail instead when `plugins.lock` does not match `config.json`. |
 | `yuke plugin update NAME...` | Show the new commits of each plugin's ref, and ask before it moves the lock. `--all` updates every Git plugin, and `--yes` skips the question. |
 
+In the terminal UI, `/plugins` shows your plugins in three sections. **Needs attention** shows each plugin that is not installed or does not load, with the reason. **Git** and **Local** show the others. The state of a plugin is `loaded`, `reload loads it`, `failed`, or `not installed`.
+
+| Key | Action |
+|---|---|
+| `s` | Install each Git plugin that is not installed. |
+| `c` | Check each Git plugin for new commits, and show them before the update. |
+| `u` | Check the selected Git plugin for new commits. |
+| `a` | Add a plugin. Paste the URL of a Git repository, and select a plugin when the repository has more. |
+| `d` | Remove the selected plugin. Its files stay on disk. |
+| `r` | Reload, so the changes load. |
+
 A plugin runs with your user rights. Read its source before you install it.
 
 ## Bundled plugins
@@ -151,6 +162,6 @@ Check the types with `tsc -p ~/.config/yuke/tsconfig.json`. Use your actual prof
 
 For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`. A test uses an isolated app and a fake model, and needs no provider credentials. `types/test.d.ts` has the test API. A type check or a test does not show how the terminal draws: start a terminal session to check that.
 
-`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end first. A reload replaces the JavaScript runtime, so module state resets and plugin jobs stop. A plugin that does not load does not fail the reload: the other plugins load. A bad `config.json`, `plugins.lock`, or `providers.json` fails the reload, and yuke keeps the previous plugins and providers.
+`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end first. A reload replaces the JavaScript runtime, so module state resets and plugin jobs stop. A bad `config.json`, `plugins.lock`, or `providers.json` fails the reload, and yuke keeps the previous plugins and providers.
 
 Console output becomes a `notice` from the source `console`. A terminal shows it as a notice, and an RPC client gets it as a `notice` notification. CLI startup errors go to stderr.

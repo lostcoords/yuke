@@ -59,7 +59,6 @@ const GROUPS: Readonly<Record<string, Style>> = {
   "toast.warn": { inherits: "toast.body", fg: "warn" },
   "toast.error": { inherits: "toast.body", fg: "danger" },
   "plugins.title": { bold: true },
-  "plugins.detail": { dim: true },
 };
 
 /** The palettes of each background. Each 256-color pick keeps the hue of its 24-bit color. */
