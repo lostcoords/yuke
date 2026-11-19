@@ -87,7 +87,7 @@ impl Providers {
             Some((provider, Auth::OAuth(flow))) => return Ok((provider, *flow)),
             Some((_, Auth::ApiKey(Some(variable)))) => {
                 return Err(format!(
-                    "{id} takes an API key: set {variable}. {}",
+                    "{id} takes an API key, not a login: run /login {id} in yuke to store one, or set {variable}. {}",
                     self.login_providers()
                 ));
             }

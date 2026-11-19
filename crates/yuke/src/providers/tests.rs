@@ -434,7 +434,9 @@ fn a_changed_login_provider_keeps_its_login_and_other_providers_have_none() {
     );
     assert_eq!(
         providers.login("openai").unwrap_err(),
-        format!("openai takes an API key: set OPENAI_API_KEY. {supported}")
+        format!(
+            "openai takes an API key, not a login: run /login openai in yuke to store one, or set OPENAI_API_KEY. {supported}"
+        )
     );
     assert!(
         supported.contains("xai-grok") && supported.contains("openai-codex"),

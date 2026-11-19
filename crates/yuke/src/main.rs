@@ -95,13 +95,14 @@ struct Cli {
 /// A command of `yuke`.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Log in to PROVIDER, and save the grant.
+    /// Log in to PROVIDER with a device code, and save the login in auth.json. A provider with an API key has no
+    /// login: run /login in yuke, or set its environment variable.
     Login {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
     },
-    /// Remove the stored login or API key of PROVIDER from auth.json. yuke revokes no token at the provider, and a
-    /// running server keeps a token of credential/update.
+    /// Remove the login or API key that /login stored for PROVIDER from auth.json. A key in an environment variable
+    /// stays. yuke revokes no token at the provider, and a running server keeps a token of credential/update.
     Logout {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
