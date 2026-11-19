@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use yuke_js::{Plugin, PluginCode};
-use yuke_protocol::PluginSource;
+use yuke_protocol::{PluginOrigin, PluginSource};
 
 use self::lock::Lock;
-use crate::config::{Config, ConfigPlugin, Source, read_json};
+use crate::config::{Config, ConfigPlugin, read_json};
 
 /// The name of the manifest in each plugin folder.
 const MANIFEST: &str = "plugin.json";
@@ -118,10 +118,10 @@ pub(crate) struct PluginList {
 }
 
 /// A plugin of `config.json` at a load.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct Outcome {
     /// The plugin as `config.json` names it.
-    pub(crate) source: Source,
+    pub(crate) source: PluginOrigin,
     /// The name of its manifest, when the manifest reads.
     pub(crate) name: Option<String>,
     /// The commit of a Git plugin in `plugins.lock`, when the lock has one.
@@ -143,8 +143,8 @@ impl Outcome {
     /// The name of the plugin, else the last part of its folder or of its URL.
     pub(crate) fn label(&self) -> &str {
         self.name.as_deref().unwrap_or_else(|| match &self.source {
-            Source::Folder(folder) => last_part(folder),
-            Source::Git(source) => git_label(source),
+            PluginOrigin::Folder(folder) => last_part(folder),
+            PluginOrigin::Git(source) => git_label(source),
         })
     }
 
@@ -216,12 +216,12 @@ fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data
     let mut outcomes = Vec::with_capacity(config.plugins.len());
     for ConfigPlugin { source, options } in &config.plugins {
         let commit = match source {
-            Source::Git(git) => lock.commits.get(git).cloned(),
-            Source::Folder(_) => None,
+            PluginOrigin::Git(git) => lock.commits.get(git).cloned(),
+            PluginOrigin::Folder(_) => None,
         };
         let root = match source {
-            Source::Folder(folder) => Some(config_folder.join(folder)),
-            Source::Git(git) => (commit.as_ref())
+            PluginOrigin::Folder(folder) => Some(config_folder.join(folder)),
+            PluginOrigin::Git(git) => (commit.as_ref())
                 .map(|commit| git_folder(data, &git.git, commit))
                 .filter(|installed| installed.is_dir())
                 .map(|installed| installed.join(git.folder.as_deref().unwrap_or_default())),

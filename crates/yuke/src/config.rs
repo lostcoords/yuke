@@ -1,14 +1,13 @@
 //! `config.json`: the settings of the user. It and `providers.json` are JSON with `//` and `/* */` comments.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
 
 use serde::de::{DeserializeOwned, Error as _};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
-use yuke_protocol::PluginSource;
+use yuke_protocol::{PluginOrigin, PluginSource};
 
 /// The settings of `config.json`. A missing key keeps its default, and an unknown key is an error.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
@@ -33,27 +32,9 @@ pub(crate) struct Config {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfigPlugin {
     /// Where the plugin comes from.
-    pub(crate) source: Source,
+    pub(crate) source: PluginOrigin,
     /// The options of the plugin. They are empty when the item gives none.
     pub(crate) options: Map<String, Value>,
-}
-
-/// Where a plugin of `plugins` comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Source {
-    /// A folder. A relative folder starts in the folder of `config.json`.
-    Folder(String),
-    /// A folder of a Git repository, at the commit of `plugins.lock`.
-    Git(PluginSource),
-}
-
-impl fmt::Display for Source {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Folder(folder) => f.write_str(folder),
-            Self::Git(source) => fmt::Display::fmt(source, f),
-        }
-    }
 }
 
 /// The source of the Git plugin `url`, `folder`, and `reference`, in the form that keys `plugins.lock`. The folders `./a/`
@@ -85,7 +66,7 @@ impl<'de> Deserialize<'de> for ConfigPlugin {
         }
         match Value::deserialize(deserializer)? {
             Value::String(path) => Ok(Self {
-                source: Source::Folder(path),
+                source: PluginOrigin::Folder(path),
                 options: Map::new(),
             }),
             // The error of serde names the bad field or the unknown field.
@@ -99,8 +80,8 @@ impl<'de> Deserialize<'de> for ConfigPlugin {
                             "\"folder\" and \"ref\" go with \"git\", not with \"path\"",
                         ));
                     }
-                    (Some(path), None) => Source::Folder(path),
-                    (None, Some(url)) => Source::Git(git_source(url, full.folder.as_deref(), full.reference)),
+                    (Some(path), None) => PluginOrigin::Folder(path),
+                    (None, Some(url)) => PluginOrigin::Git(git_source(url, full.folder.as_deref(), full.reference)),
                 };
                 Ok(Self {
                     source,
@@ -406,12 +387,12 @@ mod tests {
         }))
         .unwrap();
 
-        let item = |source: Source, options: Value| ConfigPlugin {
+        let item = |source: PluginOrigin, options: Value| ConfigPlugin {
             source,
             options: options.as_object().unwrap().clone(),
         };
         let git = |folder: Option<&str>, reference: Option<&str>| {
-            Source::Git(PluginSource {
+            PluginOrigin::Git(PluginSource {
                 git: "https://host/repo".to_owned(),
                 folder: folder.map(str::to_owned),
                 reference: reference.map(str::to_owned),
@@ -420,8 +401,11 @@ mod tests {
         assert_eq!(
             config.plugins,
             [
-                item(Source::Folder("./plain".to_owned()), json!({})),
-                item(Source::Folder("./notes".to_owned()), json!({ "folder": "~/notes" })),
+                item(PluginOrigin::Folder("./plain".to_owned()), json!({})),
+                item(
+                    PluginOrigin::Folder("./notes".to_owned()),
+                    json!({ "folder": "~/notes" })
+                ),
                 item(git(Some("plugins/clock"), Some("main")), json!({ "a": 1 })),
                 item(git(None, None), json!({})),
             ]

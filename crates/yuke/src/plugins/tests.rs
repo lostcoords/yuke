@@ -50,7 +50,7 @@ fn load_with(bundled: &[Bundled], root: &Path, list: &[&str], disable: &[&str]) 
         plugins: list
             .iter()
             .map(|&path| ConfigPlugin {
-                source: Source::Folder(path.to_owned()),
+                source: PluginOrigin::Folder(path.to_owned()),
                 options: Map::new(),
             })
             .collect(),
@@ -377,7 +377,7 @@ fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() 
 /// The `plugins` item of the folder `folder` of the repository `url` at `reference`.
 fn git(url: &str, folder: &str, reference: Option<&str>) -> ConfigPlugin {
     ConfigPlugin {
-        source: Source::Git(git_source(url.to_owned(), Some(folder), reference.map(str::to_owned))),
+        source: PluginOrigin::Git(git_source(url.to_owned(), Some(folder), reference.map(str::to_owned))),
         options: Map::new(),
     }
 }
@@ -444,7 +444,7 @@ fn a_git_plugin_without_its_commit_in_the_lock_or_on_disk_is_not_installed_and_t
     write_plugin(&root, "config/local", &manifest("local", &json!({})));
     write_lock(&root, &json!([{ "git": URL, "folder": "clock", "commit": commit }]));
     let local = ConfigPlugin {
-        source: Source::Folder("local".to_owned()),
+        source: PluginOrigin::Folder("local".to_owned()),
         options: Map::new(),
     };
 

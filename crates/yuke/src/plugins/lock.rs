@@ -12,7 +12,7 @@ use yuke_protocol::PluginSource;
 use crate::config::{git_source, read_json, write_text};
 
 /// The name of the lock file in the config folder.
-pub(crate) const LOCK: &str = "plugins.lock";
+const LOCK: &str = "plugins.lock";
 
 /// The commits of `plugins.lock`, by source.
 #[derive(Debug, Default, PartialEq, Eq)]

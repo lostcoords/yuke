@@ -44,6 +44,15 @@ pub enum PluginOrigin {
     Git(PluginSource),
 }
 
+impl fmt::Display for PluginOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Folder(folder) => f.write_str(folder),
+            Self::Git(source) => fmt::Display::fmt(source, f),
+        }
+    }
+}
+
 /// One plugin of `config.json` in `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]

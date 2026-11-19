@@ -12,12 +12,9 @@ use yuke_protocol::{
 
 use super::lock::Lock;
 use super::{
-    Failure, MANIFEST, Manifest, Outcome, PluginList, git, git_folder, git_label, manifest_plugin, repository_key,
-    valid_name,
+    Failure, MANIFEST, Manifest, Outcome, git, git_folder, git_label, manifest_plugin, repository_key, valid_name,
 };
-use crate::config::{
-    Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, without_comments, write_text,
-};
+use crate::config::{Config, add_plugin_item, git_source, read_json, remove_plugin_item, without_comments, write_text};
 use crate::paths::Paths;
 
 /// The plugins of `config.json`, with the state of each one on disk. `running` holds the outcomes of the last load, and
@@ -31,17 +28,12 @@ pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlug
         .into_iter()
         .map(|outcome| {
             let last = running.iter().find(|running| running.source == outcome.source);
-            let (source, state) = match outcome.source {
-                Source::Folder(folder) => (PluginOrigin::Folder(folder), PluginState::Local),
-                Source::Git(source) => {
-                    let state = match outcome.commit {
-                        Some(commit) if !matches!(outcome.failure, Some(Failure::NotInstalled)) => {
-                            PluginState::Installed { commit }
-                        }
-                        _ => PluginState::NotInstalled,
-                    };
-                    (PluginOrigin::Git(source), state)
+            let state = match (&outcome.source, outcome.commit) {
+                (PluginOrigin::Folder(_), _) => PluginState::Local,
+                (PluginOrigin::Git(_), Some(commit)) if !matches!(outcome.failure, Some(Failure::NotInstalled)) => {
+                    PluginState::Installed { commit }
                 }
+                (PluginOrigin::Git(_), _) => PluginState::NotInstalled,
             };
             // A problem on disk shows first, and a failure of the code shows until the next load.
             let load = match (&outcome.failure, last.map(|last| &last.failure)) {
@@ -52,7 +44,7 @@ pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlug
                 _ => PluginLoad::Pending,
             };
             ManagedPlugin {
-                source,
+                source: outcome.source,
                 name: outcome.name,
                 state,
                 load,
@@ -182,11 +174,9 @@ pub(crate) async fn add(
 /// Returns a text for a bad file, or when no plugin of `config.json` has the name.
 pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
     let _held = hold(&paths.data).await?;
-    let config = read_config(paths)?;
     let mut lock = Lock::read(&paths.config)?;
-    let index = resolve(paths, &config)?
-        .outcomes
-        .iter()
+    let outcomes = outcomes(paths)?;
+    let index = (outcomes.iter())
         .position(|outcome| outcome.name.as_deref() == Some(name))
         .ok_or_else(|| format!("no plugin of config.json has the name '{name}': see `yuke plugin list`"))?;
     let path = paths.config.join("config.json");
@@ -194,7 +184,7 @@ pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
     let text = remove_plugin_item(&text, index)
         .ok_or_else(|| format!("{}: the edit did not find the plugin", path.display()))?;
     write_text(&path, &text)?;
-    if let Source::Git(source) = &config.plugins[index].source {
+    if let PluginOrigin::Git(source) = &outcomes[index].source {
         lock.commits.remove(source);
         lock.write(&paths.config)?;
     }
@@ -207,12 +197,7 @@ pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
 ///
 /// Returns a text for a bad `config.json` or `plugins.lock`.
 pub(crate) fn outcomes(paths: &Paths) -> Result<Vec<Outcome>, String> {
-    Ok(resolve(paths, &read_config(paths)?)?.outcomes)
-}
-
-/// The plugins of `config` as a load sees them on disk now.
-fn resolve(paths: &Paths, config: &Config) -> Result<PluginList, String> {
-    super::plugins(&paths.config, config, &paths.data)
+    Ok(super::plugins(&paths.config, &read_config(paths)?, &paths.data)?.outcomes)
 }
 
 /// Install the commit of `plugins.lock` of each Git plugin, and lock each new Git plugin at the commit of its ref. The
@@ -282,7 +267,7 @@ pub(crate) async fn check(
     let mut targets: Vec<(PluginSource, String, String)> = outcomes(paths)?
         .into_iter()
         .filter_map(|outcome| match (outcome.source, outcome.commit, outcome.name) {
-            (Source::Git(source), Some(commit), Some(name)) => Some((source, commit, name)),
+            (PluginOrigin::Git(source), Some(commit), Some(name)) => Some((source, commit, name)),
             _ => None,
         })
         .collect();
@@ -414,7 +399,7 @@ fn read_config(paths: &Paths) -> Result<Config, String> {
 fn git_sources(config: &Config) -> Vec<&PluginSource> {
     let mut sources: Vec<&PluginSource> = Vec::new();
     for plugin in &config.plugins {
-        if let Source::Git(source) = &plugin.source
+        if let PluginOrigin::Git(source) = &plugin.source
             && !sources.contains(&source)
         {
             sources.push(source);
