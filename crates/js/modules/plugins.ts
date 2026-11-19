@@ -4,7 +4,7 @@
  * - `session(s)` runs once per session, for the tools and hooks of that session.
  * - `optionsSchema` is the `ObjectSchema` of the options that the user gives in `config.json`. Without it, the plugin
  *   takes no options. Type the contexts with `PluginContext<Infer<typeof optionsSchema>>`.
- * - The declarations need TypeScript 5.4 or later.
+ * - The declarations need TypeScript 7.0.2 or later.
  *
  * Errors:
  * - A cancellation aborts a signal with a `DOMException` named `AbortError`.
