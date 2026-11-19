@@ -101,7 +101,7 @@ pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<Prompt, Str
             .map(|skill| {
                 format!(
                     "<skill>\n  <name>{}</name>\n  <description>{}</description>\n  <location>{}</location>\n</skill>",
-                    skill.name,
+                    escape(&skill.name),
                     escape(&skill.description),
                     escape(&skill.location.to_string_lossy())
                 )
@@ -236,7 +236,7 @@ mod tests {
         )
         .unwrap();
         let charts = plugin.join("skills/charts/SKILL.md");
-        std::fs::write(&charts, "---\nname: charts\ndescription: Draw charts.\n---\n").unwrap();
+        std::fs::write(&charts, "---\nname: charts <2>\ndescription: Draw charts.\n---\n").unwrap();
 
         let prompt = system_prompt(&Environment {
             workspace: &workspace,
@@ -256,7 +256,7 @@ mod tests {
             format!(
                 "{BASE}\n\n<instructions>\n{INSTRUCTIONS_LEAD}\n\n<agents_md path=\"{}\" scope=\"global\">\nGlobal \
                  rule.\n</agents_md>\n\n<agents_md path=\"{}\" scope=\"workspace\">\nWorkspace rule.\n</agents_md>\n\
-                 </instructions>\n\n<skills>\n{SKILLS_LEAD}\n\n<skill>\n  <name>charts</name>\n  <description>Draw \
+                 </instructions>\n\n<skills>\n{SKILLS_LEAD}\n\n<skill>\n  <name>charts &lt;2&gt;</name>\n  <description>Draw \
                  charts.</description>\n  <location>{}</location>\n</skill>\n<skill>\n  <name>pdf</name>\n  \
                  <description>Read &amp; fill &lt;PDF&gt; forms.</description>\n  <location>{}</location>\n</skill>\n\
                  </skills>\n\n<environment>\nworkspace: {}\noperating_system: {}\nshell: \

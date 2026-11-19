@@ -4,8 +4,6 @@ use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const MAX_NAME_BYTES: usize = 64;
-
 const MAX_DESCRIPTION_CHARS: usize = 1024;
 
 /// One skill.
@@ -60,16 +58,7 @@ pub(crate) fn catalog(roots: &[PathBuf]) -> Catalog {
                         .warnings
                         .push(skipped(&location, "another skill already holds this name"));
                 }
-                Ok(skill) => {
-                    if skill.name != folder_name {
-                        catalog.warnings.push(format!(
-                            "The skill at {} has the name '{}', which is not the name of its folder",
-                            location.display(),
-                            skill.name
-                        ));
-                    }
-                    catalog.skills.push(skill);
-                }
+                Ok(skill) => catalog.skills.push(skill),
                 Err(reason) => catalog.warnings.push(skipped(&location, &reason)),
             }
         }
@@ -87,7 +76,9 @@ fn skill(folder_name: &str, location: &Path) -> Result<Skill, String> {
     let text = std::fs::read_to_string(location).map_err(|error| error.to_string())?;
     let fields = frontmatter(&text).ok_or("the file has no frontmatter")?;
     let name = fields.name.unwrap_or_else(|| folder_name.to_owned());
-    check_name(&name)?;
+    if name.trim().is_empty() {
+        return Err("the name is missing".to_owned());
+    }
     let description = fields.description.unwrap_or_default();
     check_description(&description)?;
     Ok(Skill {
@@ -95,23 +86,6 @@ fn skill(folder_name: &str, location: &Path) -> Result<Skill, String> {
         description,
         location: location.to_owned(),
     })
-}
-
-/// The name rules of the Agent Skills specification.
-fn check_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.len() > MAX_NAME_BYTES {
-        return Err(format!("the name '{name}' is not 1 to {MAX_NAME_BYTES} characters"));
-    }
-    if !name
-        .bytes()
-        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    {
-        return Err(format!("the name '{name}' has a character other than a-z, 0-9, and -"));
-    }
-    if name.starts_with('-') || name.ends_with('-') || name.contains("--") {
-        return Err(format!("the name '{name}' starts or ends with -, or holds --"));
-    }
-    Ok(())
 }
 
 fn check_description(description: &str) -> Result<(), String> {
