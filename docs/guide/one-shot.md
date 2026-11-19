@@ -50,5 +50,5 @@ Plugins load in this mode. Their tools and engine hooks work as in the TUI. Comm
 No person can answer, so some actions do not work:
 
 - A question from `s.ask` gets no answer. A hook that asks before a tool call therefore blocks that call. See [Approve a tool call](engine.md#approve-a-tool-call).
-- A job cannot start without a call: `s.jobs.start` and `background: true` of `exec` reject. See [Background jobs](tools.md#background-jobs).
+- A job cannot start without a call. `s.jobs.start` rejects, and `exec` with `background: true` returns an error. See [Background jobs](tools.md#background-jobs).
 - Project MCP servers start only when an earlier session kept their approval. See [MCP servers](mcp.md#sources-and-trust).
