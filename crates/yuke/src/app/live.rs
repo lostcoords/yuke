@@ -668,7 +668,8 @@ impl Output {
         drop(sent);
         self.publish(SessionUpdate::Live(update));
         // The asker closes the question before it stops waiting, so an open question has a receiver.
-        question.answer.send(response).map_err(|_| AppError::NoInteraction(id))
+        drop(question.answer.send(response));
+        Ok(())
     }
 
     /// Tell the observer about the session.
