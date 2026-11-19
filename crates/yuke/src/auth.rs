@@ -234,11 +234,7 @@ impl LockedFiles {
             .map_err(files.file_error(TEMPORARY))?;
         file.write_all(&bytes).map_err(files.file_error(TEMPORARY))?;
         file.sync_all().map_err(files.file_error(TEMPORARY))?;
-        fs::rename(&temporary, files.path(FILE)).map_err(files.file_error(FILE))?;
-        // The rename is durable only after the folder syncs.
-        File::open(&files.folder)
-            .and_then(|folder| folder.sync_all())
-            .map_err(files.file_error(""))
+        fs::rename(&temporary, files.path(FILE)).map_err(files.file_error(FILE))
     }
 }
 
