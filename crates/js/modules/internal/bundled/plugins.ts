@@ -211,9 +211,7 @@ class PluginList implements View {
   }
 
   draw(canvas: Canvas): void {
-    if (this.#sections.every((section) => section.length === 0)) {
-      canvas.text(1, 0, "config.json has no plugins · a adds one", DETAIL);
-    }
+    if (this.plugins.length === 0) canvas.text(1, 0, "config.json has no plugins · a adds one", DETAIL);
   }
 
   onKey(event: KeyEvent): boolean {
@@ -258,8 +256,8 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       status = await action();
     } catch (error) {
       status = "";
-      const action = `${doing.charAt(0).toUpperCase()}${doing.slice(1)}`;
-      if (!dialog.signal.aborted) ctx.notify("error", `${action} failed: ${messageOf(error)}`);
+      const label = `${doing.charAt(0).toUpperCase()}${doing.slice(1)}`;
+      if (!dialog.signal.aborted) ctx.notify("error", `${label} failed: ${messageOf(error)}`);
     }
     try {
       list.setPlugins((await plugins.list()).plugins);

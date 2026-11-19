@@ -142,13 +142,10 @@ pub(crate) enum Failure {
 impl Outcome {
     /// The name of the plugin, else the last part of its folder or of its URL.
     pub(crate) fn label(&self) -> &str {
-        if let Some(name) = &self.name {
-            return name;
-        }
-        match &self.source {
+        self.name.as_deref().unwrap_or_else(|| match &self.source {
             Source::Folder(folder) => last_part(folder),
             Source::Git(source) => git_label(source),
-        }
+        })
     }
 
     /// The text of the failure, which names the plugin. `None` for a plugin that loads.

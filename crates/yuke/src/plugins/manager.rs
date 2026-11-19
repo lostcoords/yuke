@@ -238,14 +238,15 @@ pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -
     let mut failures = Vec::new();
     for source in sources {
         let locked_commit = lock.commits.get(source);
-        let commit = match locked_commit {
-            Some(commit) => Ok(commit.clone()),
-            None => git::resolve(&source.git, source.reference.as_deref()).await,
-        };
-        let installed = match commit {
-            Ok(commit) => install(paths, source, &commit, progress).await.map(|()| commit),
-            Err(error) => Err(error),
-        };
+        let installed = async {
+            let commit = match locked_commit {
+                Some(commit) => commit.clone(),
+                None => git::resolve(&source.git, source.reference.as_deref()).await?,
+            };
+            install(paths, source, &commit, progress).await?;
+            Ok::<_, String>(commit)
+        }
+        .await;
         match (installed, locked_commit) {
             (Ok(commit), _) => plugins.push(LockedPlugin {
                 source: source.clone(),
@@ -285,8 +286,7 @@ pub(crate) async fn check(
 ) -> Result<Vec<PluginChange>, String> {
     let _held = hold(&paths.data).await?;
     // A plugin that is not installed has no name, so a sync comes before its update.
-    let mut targets: Vec<(PluginSource, String, String)> = resolve(paths, &read_config(paths)?)?
-        .outcomes
+    let mut targets: Vec<(PluginSource, String, String)> = outcomes(paths)?
         .into_iter()
         .filter_map(|outcome| match (outcome.source, outcome.commit, outcome.name) {
             (Source::Git(source), Some(commit), Some(name)) => Some((source, commit, name)),
@@ -317,10 +317,11 @@ pub(crate) async fn check(
         let cache = cache(paths, &source.git);
         git::fetch(&cache, &source.git, &new).await.map_err(fail)?;
         // A new cache does not have the old commit yet.
-        let log = match git::fetch(&cache, &source.git, &old).await {
-            Ok(()) => git::log(&cache, &old, &new, source.folder.as_deref()).await,
-            Err(error) => Err(error),
-        };
+        let log = async {
+            git::fetch(&cache, &source.git, &old).await?;
+            git::log(&cache, &old, &new, source.folder.as_deref()).await
+        }
+        .await;
         // The new commits of other folders of the repository change nothing of the plugin.
         if matches!(&log, Ok(commits) if commits.is_empty()) {
             continue;
@@ -369,30 +370,33 @@ pub(crate) async fn apply(paths: &Paths, plugins: &[LockedPlugin]) -> Result<(),
 async fn install(paths: &Paths, source: &PluginSource, commit: &str, progress: &dyn Fn(&str)) -> Result<(), String> {
     let installed = git_folder(&paths.data, &source.git, commit);
     let folder = source.folder.as_deref().unwrap_or_default();
-    if !installed.is_dir() {
-        progress(&format!("Installing {}", git_label(source)));
-        let cache = cache(paths, &source.git);
-        git::fetch(&cache, &source.git, commit).await?;
-        let staging = installed.with_file_name(format!(".staging-{commit}"));
-        let fail = |error: io::Error| format!("{}: {error}", staging.display());
-        // A stopped install can leave its staging folder.
-        match fs::remove_dir_all(&staging) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(fail(error)),
-        }
-        fs::create_dir_all(&staging).map_err(fail)?;
-        git::export(&cache, commit, &staging).await?;
-        // A wrong folder is the usual fault, so its text names the file in the repository, not in the staging folder.
+    // A wrong folder is the usual fault, so its text names the file in the repository, not on disk. The whole manifest
+    // gets its check here, so a plugin that cannot load fails now and not at the next reload.
+    let check = |files: &Path| {
         let manifest = Path::new(folder).join(MANIFEST);
-        if !staging.join(&manifest).is_file() {
+        if !files.join(&manifest).is_file() {
             return Err(format!("the commit has no {}", manifest.display()));
         }
-        // An install checks the whole manifest, so a plugin that cannot load fails here and not at the next reload.
-        manifest_plugin(&staging.join(folder), &paths.data, Map::new())?;
-        return fs::rename(&staging, &installed).map_err(fail);
+        manifest_plugin(&files.join(folder), &paths.data, Map::new()).map(|_| ())
+    };
+    if installed.is_dir() {
+        return check(&installed);
     }
-    manifest_plugin(&installed.join(folder), &paths.data, Map::new()).map(|_| ())
+    progress(&format!("Installing {}", git_label(source)));
+    let cache = cache(paths, &source.git);
+    git::fetch(&cache, &source.git, commit).await?;
+    let staging = installed.with_file_name(format!(".staging-{commit}"));
+    let fail = |error: io::Error| format!("{}: {error}", staging.display());
+    // A stopped install can leave its staging folder.
+    match fs::remove_dir_all(&staging) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(fail(error)),
+    }
+    fs::create_dir_all(&staging).map_err(fail)?;
+    git::export(&cache, commit, &staging).await?;
+    check(&staging)?;
+    fs::rename(&staging, &installed).map_err(fail)
 }
 
 /// The cache repository of `url`: `<cache>/git/<key>.git`.

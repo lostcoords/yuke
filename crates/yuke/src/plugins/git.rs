@@ -187,5 +187,7 @@ pub(crate) async fn log(cache: &Path, old: &str, new: &str, folder: Option<&str>
     if let Some(folder) = folder {
         log.args(["--", folder]);
     }
-    Ok(run(log, "log").await?.lines().map(str::to_owned).collect())
+    run(log, "log")
+        .await
+        .map(|text| text.lines().map(str::to_owned).collect())
 }

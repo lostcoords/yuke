@@ -2,7 +2,7 @@
 //! that loads it.
 
 use super::*;
-use crate::testing::commit_plugin;
+use yuke_testing::commit_plugin;
 
 #[tokio::test(flavor = "local")]
 async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_load_it() {

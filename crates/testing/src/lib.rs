@@ -91,3 +91,40 @@ pub fn folder(group: &str, name: &str) -> std::path::PathBuf {
         .canonicalize()
         .unwrap_or_else(|error| panic!("cannot canonicalize test folder {}: {error}", folder.display()))
 }
+
+/// Run `git` with `args` in `folder`, as a test user with no hooks and no signing, and give its output. A failure of
+/// git causes a panic that reports its standard error.
+pub fn git(folder: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(folder)
+        .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("git does not start: {error}"));
+    assert!(
+        output.status.success(),
+        "git {}: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// Commit the plugin `name` in the folder `plugins/<name>` of the repository `remote`, with the subject `subject`. A
+/// missing repository starts on branch `main`. Gives the commit id.
+pub fn commit_plugin(remote: &std::path::Path, name: &str, subject: &str) -> String {
+    let write = |path: std::path::PathBuf, text: &str| {
+        std::fs::write(&path, text).unwrap_or_else(|error| panic!("cannot write {}: {error}", path.display()));
+    };
+    let folder = remote.join("plugins").join(name);
+    std::fs::create_dir_all(&folder).unwrap_or_else(|error| panic!("cannot create {}: {error}", folder.display()));
+    if !remote.join(".git").exists() {
+        git(remote, &["init", "--quiet", "-b", "main"]);
+    }
+    write(folder.join("plugin.json"), &format!(r#"{{ "name": "{name}" }}"#));
+    write(folder.join("notes.txt"), subject);
+    git(remote, &["add", "."]);
+    git(remote, &["commit", "--quiet", "-m", subject]);
+    git(remote, &["rev-parse", "HEAD"])
+}

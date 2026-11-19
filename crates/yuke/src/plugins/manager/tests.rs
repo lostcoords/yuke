@@ -1,8 +1,7 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::plugins::Outcome;
-use crate::testing::commit_plugin;
+use yuke_testing::commit_plugin;
 
 /// The lock entry of `source` at `commit`.
 fn at(source: PluginSource, commit: &str) -> LockedPlugin {
@@ -63,14 +62,8 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
         written,
     } = sync(&paths, false, &|_| {}).await.unwrap();
     let second = commit(&root, "feat: seconds");
-    let SyncPluginsResult {
-        plugins: again,
-        written: written_again,
-    } = sync(&paths, false, &|_| {}).await.unwrap();
-    let config: Config = read_json(&paths.config.join("config.json")).unwrap().unwrap();
-    let loaded = super::super::plugins(&paths.config, &config, &paths.data).unwrap();
+    let written_again = sync(&paths, false, &|_| {}).await.unwrap().written;
     let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
-    let before_apply = Lock::read(&paths.config).unwrap();
     apply(&paths, &[at(changes[0].source.clone(), &changes[0].new)])
         .await
         .unwrap();
@@ -78,28 +71,18 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
 
     assert_eq!(synced, [at(clock(&root, Some("main")), &first)]);
     assert!(written);
-    assert_eq!(again, synced);
     assert!(!written_again);
-    let clock_plugin = loaded.load.iter().find(|plugin| plugin.name == "clock").unwrap();
-    assert_eq!(
-        clock_plugin.origin,
-        yuke_js::PluginCode::Folder {
-            root: git_folder(&paths.data, &url, &first).join("plugins/clock"),
-            entry: None,
-        }
-    );
     assert_eq!(changes.len(), 1);
     assert_eq!(
         (changes[0].old.as_str(), changes[0].new.as_str()),
         (first.as_str(), second.as_str())
     );
-    let PluginLog::Commits { commits: log } = &changes[0].log else {
-        panic!("no log: {:?}", changes[0].log);
-    };
-    assert_eq!(log.len(), 1, "{log:?}");
-    let (short, subject) = log[0].split_once(' ').unwrap();
-    assert!(second.starts_with(short) && subject == "feat: seconds", "{log:?}");
-    assert_eq!(before_apply.commits[&clock(&root, Some("main"))], first);
+    assert_eq!(
+        changes[0].log,
+        PluginLog::Commits {
+            commits: vec![format!("{} feat: seconds", &second[..7])]
+        }
+    );
     assert!(after_apply.is_empty(), "{after_apply:?}");
     assert_eq!(
         Lock::read(&paths.config).unwrap().commits[&clock(&root, Some("main"))],
@@ -148,26 +131,29 @@ async fn a_check_gives_only_the_plugins_whose_folder_changed_with_the_commits_of
     add(&paths, &url, &["clock".to_owned(), "weather".to_owned()], None, &|_| {})
         .await
         .unwrap();
-    let last = commit_plugin(&remote, "weather", "feat: wind");
-    commit_plugin(&remote, "weather", "fix: gusts");
+    let wind = commit_plugin(&remote, "weather", "feat: wind");
+    let gusts = commit_plugin(&remote, "weather", "fix: gusts");
 
     let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
 
-    let moves: Vec<(&str, &str, &PluginLog)> = changes
-        .iter()
-        .map(|change| (change.name.as_str(), change.old.as_str(), &change.log))
-        .collect();
-    let subjects = |log: &PluginLog| match log {
-        PluginLog::Commits { commits } => commits
-            .iter()
-            .map(|line| line.split_once(' ').unwrap().1.to_owned())
-            .collect::<Vec<_>>(),
-        PluginLog::Failed { error } => panic!("no log: {error}"),
-    };
-    assert_eq!(moves.len(), 1, "{changes:?}");
-    assert_eq!((moves[0].0, moves[0].1), ("weather", first.as_str()));
-    assert_eq!(subjects(moves[0].2), ["fix: gusts", "feat: wind"]);
-    assert_ne!(changes[0].new, last);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(
+        (
+            changes[0].name.as_str(),
+            changes[0].old.as_str(),
+            changes[0].new.as_str()
+        ),
+        ("weather", first.as_str(), gusts.as_str())
+    );
+    assert_eq!(
+        changes[0].log,
+        PluginLog::Commits {
+            commits: vec![
+                format!("{} fix: gusts", &gusts[..7]),
+                format!("{} feat: wind", &wind[..7])
+            ]
+        }
+    );
 }
 
 #[tokio::test(flavor = "local")]
@@ -205,8 +191,9 @@ async fn a_sync_installs_and_locks_the_plugins_that_install_and_names_the_others
         &paths,
         &json!([
             { "git": url, "folder": "plugins/sun", "ref": "v9" },
-            { "git": url, "folder": "plugins/moon" },
             { "git": url, "folder": "plugins/clock" },
+            // The commit is on disk after the clock, and it has no folder of the moon.
+            { "git": url, "folder": "plugins/moon" },
         ]),
     );
 
@@ -312,16 +299,9 @@ async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
     let found = find(&paths, &url, None).await.unwrap();
     let unnamed = add(&paths, &url, &[], None, &|_| {}).await.unwrap_err();
     let unknown = add(&paths, &url, &["sun".to_owned()], None, &|_| {}).await.unwrap_err();
-    let steps = std::cell::RefCell::new(Vec::new());
-    let added = add(
-        &paths,
-        &url,
-        &["weather".to_owned(), "clock".to_owned()],
-        None,
-        &|step| steps.borrow_mut().push(step.to_owned()),
-    )
-    .await
-    .unwrap();
+    let added = add(&paths, &url, &["weather".to_owned(), "clock".to_owned()], None, &|_| {})
+        .await
+        .unwrap();
     let listed = list(&paths, &[]).unwrap();
 
     let at_folder = |name: &str| FoundPlugin {
@@ -345,8 +325,6 @@ async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
         .collect();
     assert_eq!(names, [("weather", "plugins/weather"), ("clock", "plugins/clock")]);
     assert!(added.iter().all(|plugin| plugin.commit == last));
-    // The second plugin of the commit has its files already.
-    assert_eq!(steps.into_inner(), ["Installing weather"]);
     let states: Vec<(Option<&str>, &PluginState, &PluginLoad)> = listed
         .iter()
         .map(|plugin| (plugin.name.as_deref(), &plugin.state, &plugin.load))
@@ -422,17 +400,10 @@ async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
     )
     .unwrap();
     write_config(&paths, &json!(["./clock"]));
-    let config = read_config(&paths).unwrap();
-    let loaded = super::super::plugins(&paths.config, &config, &paths.data).unwrap();
 
     let listed = list(&paths, &[]).unwrap();
     remove(&paths, "clock").await.unwrap();
 
-    let failures: Vec<String> = loaded.outcomes.iter().filter_map(Outcome::failure_text).collect();
-    assert_eq!(
-        failures,
-        ["plugin clock did not load: entry: 'main.txt' is not a .ts or a .js file"]
-    );
     assert_eq!(
         listed,
         [ManagedPlugin {

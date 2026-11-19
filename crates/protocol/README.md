@@ -15,19 +15,21 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   `auth/cancelLogin`, `auth/logout`, `auth/setApiKey`, `catalog/list`, `job/list`, `job/stop`,
   `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`,
   `plugin/apply`, `plugin/find`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
-- `plugin/list` gives each plugin of `config.json` with its `source` (the folder text of a local plugin, or the
-  `{ git, folder?, ref? }` object of a Git plugin), its `state` on disk (the kind `local`, `notInstalled` with the
-  `commit?` of the lock, or `installed` with its `commit`), and its `load` (the kind `loaded`, `pending` until the next
-  `profile/reload`, or `failed` with its `error`). It uses no network. `plugin/sync` installs the commits of
-  `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes
-  `{ "kind": "all" }` or `{ "kind": "names", "names": [...] }`, installs each new commit of an installed Git plugin, and
-  answers the `changes` with their `log`. `plugin/apply { plugins }` writes the `{ source, commit }` of each plugin into
-  `plugins.lock`, and fails for a plugin that the lock does not have. `plugin/find { git, ref? }` answers the `plugins`
-  of a repository: the `name` and the `folder?` of each `plugin.json`. `plugin/add { git, names?, ref? }` adds those
-  plugins to `config.json` by name, installs them, locks them, and answers each one with its `name`, `source`, and
-  `commit`. Without `names`, the repository must have one plugin. `plugin/remove { name }` removes a plugin from
-  `config.json` and `plugins.lock`. Each edit keeps the comments of `config.json`. Git asks for no password. A new
-  commit loads at `profile/reload`.
+- `plugin/list` gives each plugin of `config.json` with its `source`, its `state` on disk, and its `load`. The `source`
+  is the folder text of a local plugin, or the `{ git, folder?, ref? }` object of a Git plugin. The `state` kind is
+  `local`, `notInstalled` with the `commit?` of the lock, or `installed` with its `commit`. The `load` kind is `loaded`,
+  `pending` until the next `profile/reload`, or `failed` with its `error`. It uses no network.
+- `plugin/sync` installs the commits of `plugins.lock` and locks each new Git plugin at the commit of its ref.
+- `plugin/check { target }` takes `{ "kind": "all" }` or `{ "kind": "names", "names": [...] }`. It installs each new
+  commit of an installed Git plugin, and answers the `changes` with their `log`.
+- `plugin/apply { plugins }` writes the `{ source, commit }` of each plugin into `plugins.lock`. It fails for a plugin
+  that the lock does not have.
+- `plugin/find { git, ref? }` answers the `plugins` of a repository: the `name` and the `folder?` of each `plugin.json`.
+- `plugin/add { git, names?, ref? }` adds those plugins to `config.json` by name, installs them, and locks them. It
+  answers each one with its `name`, `source`, and `commit`. Without `names`, the repository must have one plugin.
+- `plugin/remove { name }` removes a plugin from `config.json` and `plugins.lock`.
+- Each edit keeps the comments of `config.json`. Git never asks for a password, so a private repository needs a
+  credential helper or an ssh agent. A new commit loads at `profile/reload`.
 - `blob/put { sessionId, data }` decodes the base64 `data` and saves the bytes in a saved session. It
   answers the blob `{ digest, len }` for a media block of an input. `blob/get { sessionId, blob }` answers the bytes
   as base64 `{ data }`, also for a closed session. It reads the blob by its digest, and fails with -32007 when the
@@ -68,7 +70,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   the title to 200 Unicode scalar values. `session/rename { sessionId, title }` changes the title of an open or closed session
   and answers `{}` without a session update.
 - `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions
-  stay open. Their process jobs go on, and their plugin jobs stop. It fails while a turn runs, or for a bad `config.json`, `plugins.lock`, or `providers.json`. A failure keeps the old plugins and providers. A plugin that does not load does not fail it. A `notice` names the failed ones. The
+  stay open. Their process jobs go on, and their plugin jobs stop. It fails while a turn runs, or for a bad `config.json`, `plugins.lock`, or `providers.json`. A failure keeps the old plugins and providers. A plugin that does not load does not fail it, and a `notice` names it. The
   next request of an open session can miss the prompt cache when the reload changes its tools.
 - Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that
   reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client
