@@ -43,7 +43,7 @@ test("a drag over the transcript copies at the release, and the composer keeps t
   frame.paste("x");
   frame.draw();
   assertEquals(
-    [frame.copies, chat.tui.focused === chat.transcript(), rows(frame.frame).at(-2)],
+    [frame.copies, chat.tui.focusedView === chat.transcript(), rows(frame.frame).at(-2)],
     [["hello"], false, "x"],
   );
 });

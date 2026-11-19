@@ -17,8 +17,6 @@ export interface ChatCompletionsOptions {
   readonly signal: AbortSignal;
   /** While this gives `false`, the list shows nothing and takes no key. */
   readonly enabled: () => boolean;
-  /** Called when a list comes later than the change of the draft, so the owner asks for a frame. */
-  readonly onChange: () => void;
   /** Gets the throw or the rejection of a provider. The ask then goes on to the next provider. */
   readonly onError: (error: unknown) => void;
 }
@@ -35,15 +33,16 @@ export interface ChatCompletionsOptions {
  *   cwd: () => folder,
  *   signal: mount.signal,
  *   enabled: () => true,
- *   onChange: () => tui.requestFrame(),
  *   onError: (error) => ctx.notify("error", String(error)),
  * });
+ * completions.addChangeListener(() => tui.requestFrame());
  * // in layout: { view: completions.view, rect: { column: 0, row: editorRow - completions.rows, width, height: completions.rows } }
  * ```
  */
 export class ChatCompletions {
   readonly #editor: TextEditor;
   readonly #options: ChatCompletionsOptions;
+  readonly #listeners = new Set<() => void>();
   /** The list of the last answer, or `undefined` while no provider gave one. */
   #list: CompletionList | undefined;
   #ask: AbortController | undefined;
@@ -65,6 +64,12 @@ export class ChatCompletions {
   /** The count of rows that the list needs now: at most 6, and 0 without a list. */
   get rows(): number {
     return Math.min(ROWS, this.#items().length);
+  }
+
+  /** Call `listener` when a list comes later than the change of the draft, so the owner asks for a frame. */
+  addChangeListener(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
   }
 
   /** The view of the list. A place with fewer rows than `rows` scrolls the list to the selected item. */
@@ -136,7 +141,7 @@ export class ChatCompletions {
               return;
             }
             this.#list = list;
-            this.#options.onChange();
+            for (const listener of [...this.#listeners]) listener();
           },
           (error: unknown) => {
             if (context.signal.aborted) return;

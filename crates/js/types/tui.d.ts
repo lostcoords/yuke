@@ -377,7 +377,8 @@ declare module "yuke:tui" {
     addMouseHandler: (handler: (event: MouseEvent) => boolean) => () => void;
     addPasteHandler: (handler: (event: PasteEvent) => boolean) => () => void;
     addChangeListener: (listener: (event: E) => void) => () => void;
-    dispose: () => void;
+    /** Remove the whole part of the plugin. A second call does nothing. */
+    close: () => void;
   }
 
   /** A range of UTF-16 offsets. `to` is not in the range. */
@@ -824,7 +825,8 @@ declare module "yuke:tui" {
   export class Picker<T> implements View {
     constructor(options: PickerOptions<T>);
     readonly input: TextEditor;
-    readonly selected: T | undefined;
+    /** The item that is selected now, or `undefined` for a query without a result. */
+    readonly selectedItem: T | undefined;
     /** The picker takes the focus and gives it to its search field. */
     readonly focusable: boolean;
     readonly initialFocus: View;
@@ -840,10 +842,12 @@ declare module "yuke:tui" {
     onMouse(event: MouseEvent): boolean;
   }
 
-  /** A change of `tui.focused`. `pane` is the pane that holds `current`, or `undefined` outside the panes. */
+  /** A change of `tui.focusedView`. `pane` is the pane that holds `focusedView`, or `undefined` outside the panes. */
   export interface FocusChange {
-    readonly previous: View | undefined;
-    readonly current: View | undefined;
+    /** The deepest view on the focus path before the change. */
+    readonly previousView: View | undefined;
+    /** The deepest view on the focus path after the change. */
+    readonly focusedView: View | undefined;
     readonly pane: Pane | undefined;
   }
 
@@ -884,7 +888,7 @@ declare module "yuke:tui" {
     /** The view of the tree. */
     readonly view: View;
     /** The active pane beneath any modal. */
-    readonly active: Pane | undefined;
+    readonly activePane: Pane | undefined;
     /** Split the active pane. The new pane gets the focus. The close of the last pane gives a new default pane. */
     readonly split: (create: ViewFactory, options?: { readonly direction?: Direction | undefined }) => Pane;
     /**
@@ -1028,9 +1032,9 @@ declare module "yuke:tui" {
     readonly startup: Startup;
     readonly panes: Panes;
     /** The deepest view on the focus path. */
-    readonly focused: View | undefined;
+    readonly focusedView: View | undefined;
     readonly focus: (view: View) => boolean;
-    /** Give each later change of `focused` to `listener`. */
+    /** Give each later change of `focusedView` to `listener`. */
     readonly addFocusListener: (listener: (change: FocusChange) => void) => () => void;
     /**
      * Call `callback` once after `delay` milliseconds, and draw a frame after it. The disposer cancels the call, and the

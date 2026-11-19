@@ -167,7 +167,7 @@ export class TextSupport<P, E> {
       addMouseHandler: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler),
       addPasteHandler: (handler: (event: PasteEvent) => boolean): (() => void) => add(this.#pastes, handler),
       addChangeListener: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener),
-      dispose: part.dispose,
+      close: part.dispose,
     });
   }
 

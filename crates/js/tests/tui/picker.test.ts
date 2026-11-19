@@ -82,9 +82,9 @@ test("the selection follows its key and goes to the first result when its key le
   view.move(1);
   const replacement = { name: "b" };
   view.setItems([{ name: "c" }, replacement, { name: "a" }]);
-  const kept = view.selected;
+  const kept = view.selectedItem;
   view.setItems([{ name: "c" }, { name: "a" }]);
-  assertEquals([kept === replacement, view.selected], [true, { name: "c" }]);
+  assertEquals([kept === replacement, view.selectedItem], [true, { name: "c" }]);
   void frame;
 });
 
@@ -93,13 +93,13 @@ test("Esc cancels, Up and Down stop at the ends, and an empty result chooses not
   const view = picker(["open", "close"], log);
   using frame = createFrame({ width: 10, height: 3 }, () => view);
   frame.key("up");
-  const top = view.selected;
+  const top = view.selectedItem;
   frame.key("down down");
-  const bottom = view.selected;
+  const bottom = view.selectedItem;
   frame.key("esc");
   frame.key("z z enter");
   assertEquals(
-    [top, bottom, log, view.selected, view.choose()],
+    [top, bottom, log, view.selectedItem, view.choose()],
     [{ name: "open" }, { name: "close" }, ["cancel"], undefined, false],
   );
 });
@@ -133,7 +133,7 @@ test("a selected row pads by cells, and a picker with its field takes the focus"
   // The pad cell has the band of the row.
   assert(cells?.[1]?.style.bg !== undefined);
   assertEquals(
-    [cells?.[2]?.style.bg, surface.tui.focus(view), surface.tui.focused === view.input],
+    [cells?.[2]?.style.bg, surface.tui.focus(view), surface.tui.focusedView === view.input],
     [cells?.[1]?.style.bg, true, true],
   );
 });
@@ -143,14 +143,14 @@ test("a new query selects its best result, and new items keep the selection", ()
   const list = picker(["save", "send", "search", "sessions"], log);
   list.query = "s";
   list.move(2);
-  const moved = list.selected?.name;
+  const moved = list.selectedItem?.name;
   // "search" still matches "se", but "send" is the best result.
   list.query = "se";
-  const typed = list.selected?.name;
+  const typed = list.selectedItem?.name;
   list.move(1);
-  const before = list.selected?.name;
+  const before = list.selectedItem?.name;
   list.setItems([{ name: "save" }, { name: "send" }, { name: "search" }, { name: "sessions" }, { name: "set" }]);
-  assertEquals([moved, typed, before, list.selected?.name], ["search", "send", "search", "search"]);
+  assertEquals([moved, typed, before, list.selectedItem?.name], ["search", "send", "search", "search"]);
 });
 
 test("the rows of a picker have a default look that a plugin changes", () => {

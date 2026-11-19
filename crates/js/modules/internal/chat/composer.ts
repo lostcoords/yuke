@@ -150,7 +150,7 @@ export class ChatComposer {
   }
 
   /** The waiting messages of the user in the queue of the session, oldest first. An input of a plugin is not one of them. */
-  get waiting(): [InputId, Frozen<Input>][] {
+  get waitingMessages(): [InputId, Frozen<Input>][] {
     return [...this.#chat.transcript.pending]
       .filter((entry) => entry[1].source.kind === "user" && entry[1].kind === "message")
       .sort((a, b) => a[0] - b[0]);
@@ -242,7 +242,7 @@ export class ChatComposer {
     const before = this.#recalled;
     // A browse starts only when no message is recallable, and new messages wait after the recalled one.
     if (before === undefined && this.#editor.state.text !== "") return undefined;
-    return this.waiting.findLast((entry) => before === undefined || entry[0] < before);
+    return this.waitingMessages.findLast((entry) => before === undefined || entry[0] < before);
   }
 
   /** Take the waiting message `id` back into the editor, above its text. A message that a turn took stays sent. */

@@ -161,7 +161,7 @@ test("each pane makes one view per call and gives its live fields, and a close e
   frame.draw();
   assertEquals(made.length, 2);
   // The close of a pane ends only its own mount.
-  chat.tui.panes.active?.close();
+  chat.tui.panes.activePane?.close();
   frame.draw();
   assertEquals(
     made.map((entry) => entry.signal.aborted),
@@ -238,9 +238,9 @@ test("a press on a view reaches it and leaves the focus on the composer", async 
   frame.start();
   await waitForSettled();
   frame.draw();
-  const focused = chat.tui.focused;
+  const focused = chat.tui.focusedView;
   click(frame, 2, 7);
-  assertEquals([pressed, chat.tui.focused === focused], [[0], true]);
+  assertEquals([pressed, chat.tui.focusedView === focused], [[0], true]);
 });
 
 test("views below leave the composer half of the rows that remain", async () => {

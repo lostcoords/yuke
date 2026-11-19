@@ -37,7 +37,7 @@ test("/new empties the pane, ends the old handle, and shows the header with the 
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
-  const view = chat.tui.panes.active?.view as View;
+  const view = chat.tui.panes.activePane?.view as View;
   const before = items(chat);
   frame.key("/ n e w enter");
   await waitForSettled();
@@ -100,7 +100,7 @@ test("ctrl+k n empties a draft", async () => {
   frame.draw();
 
   assertEquals(
-    [chat.chat.sessionIdOf(chat.tui.panes.active?.view as View), rows(frame.frame).at(-2)],
+    [chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View), rows(frame.frame).at(-2)],
     [undefined, "Message…"],
   );
 });
@@ -137,7 +137,7 @@ test("ctrl+k n during a send keeps the session and its handle", async () => {
 
   assertEquals(
     [
-      chat.chat.sessionIdOf(chat.tui.panes.active?.view as View),
+      chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View),
       chat.opened.map((open) => [open.id, open.signal.aborted]),
     ],
     ["s1", [["s1", false]]],
@@ -158,7 +158,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
 
   assertEquals(
     [
-      chat.chat.sessionIdOf(chat.tui.panes.active?.view as View),
+      chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View),
       sessions.state.cancels,
       chat.notices,
       shown.includes("Type / for commands"),

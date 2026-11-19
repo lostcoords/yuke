@@ -187,7 +187,7 @@ export class Scene {
 
   /** Give `event` to the `beforeKeymap` handlers of the focused text widget. */
   beforeKeymap(event: KeyEvent): boolean {
-    const view = this.focused;
+    const view = this.focusedView;
     if (view === undefined) return false;
     return supportOf(view)?.key(event, "beforeKeymap") === true;
   }
@@ -278,7 +278,7 @@ export class Scene {
   }
 
   /** The deepest view on the focus path of the input layer. */
-  get focused(): View | undefined {
+  get focusedView(): View | undefined {
     return this.#path.at(-1)?.view;
   }
 
@@ -415,7 +415,9 @@ export class Scene {
     }
     const previous = before.at(-1)?.view;
     const change =
-      deepest === previous ? undefined : Object.freeze({ previous, current: deepest, pane: path.at(-1)?.pane });
+      deepest === previous
+        ? undefined
+        : Object.freeze({ previousView: previous, focusedView: deepest, pane: path.at(-1)?.pane });
     if (inputChanged || !sameViews(rootPath, rootBefore)) this.#host.focusMoved(rootPath, change);
   }
 

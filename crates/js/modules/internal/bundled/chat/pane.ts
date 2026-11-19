@@ -293,9 +293,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     cwd: () => chatSession.transcript.settings?.folder ?? nextFolder ?? tui.startup.cwd,
     signal: mount.signal,
     enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
-    onChange: () => tui.requestFrame(),
     onError: (error) => ctx.notify("error", `A completion failed: ${failureOf(error)}`),
   });
+  completions.addChangeListener(() => tui.requestFrame());
   // The word of a draft that Enter runs as a command gets its style, so a user sees it before the key.
   const composerExtension = composer.extend(mount.signal);
   const markCommand = (): void => {
@@ -671,7 +671,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const workingRow = working.active && free > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need. When rows run out, the strip keeps the
       // newest messages.
-      const list = chatComposer.waiting;
+      const list = chatComposer.waitingMessages;
       const above = Math.max(0, free - workingRow);
       shown = list.slice(Math.max(0, list.length - above));
       // Plugin views get the rows that the strip leaves, at most half the rows above the frame.

@@ -266,7 +266,10 @@ test("older recalls the newest waiting message, and gives taken when a turn took
   const text = editor.state.text;
   sessions.state.removed = false;
   const taken = await composer.olderMessage();
-  assertEquals([recalled, text, taken, composer.waiting.map((entry) => entry[0])], [undefined, "newest", "taken", [5]]);
+  assertEquals(
+    [recalled, text, taken, composer.waitingMessages.map((entry) => entry[0])],
+    [undefined, "newest", "taken", [5]],
+  );
 });
 
 test("the questions show the first open one, a cancel answers it once, and a refused answer goes to failed and stays open", async () => {

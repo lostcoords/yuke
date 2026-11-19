@@ -316,7 +316,7 @@ test("a picker body gets the focus of its search field, so typed text filters it
   frame.key("l");
   frame.draw();
 
-  assertEquals([picker.query, picker.selected?.name, shows(frame, "clock")], ["tool", "tools", false]);
+  assertEquals([picker.query, picker.selectedItem?.name, shows(frame, "clock")], ["tool", "tools", false]);
 });
 
 test("the title and the keys of a dialog have a default look that a plugin changes", () => {

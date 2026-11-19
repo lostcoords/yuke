@@ -76,7 +76,7 @@ export class Picker<T> implements View {
     return this.input;
   }
 
-  get selected(): T | undefined {
+  get selectedItem(): T | undefined {
     return this.#entries.find((entry) => entry.key === this.#selected)?.match.item;
   }
 
@@ -104,7 +104,7 @@ export class Picker<T> implements View {
 
   /** Give the selected item to `onChoose`. `false` without a selected item. */
   choose(): boolean {
-    const item = this.selected;
+    const item = this.selectedItem;
     if (item === undefined) return false;
     this.#options.onChoose(item);
     return true;
@@ -172,7 +172,7 @@ export class Picker<T> implements View {
     this.#entries = matches.map((match, at) => ({ match, key: keys[at] as string, selected: keys[at] === selected }));
     this.#list.setItems(this.#entries);
     this.#reveal = true;
-    if (moved) this.#options.onSelectionChange?.(this.selected);
+    if (moved) this.#options.onSelectionChange?.(this.selectedItem);
   }
 
   /** Select `key`: the old and the new selected entries become new objects, so only their rows render again. */
@@ -186,7 +186,7 @@ export class Picker<T> implements View {
     this.#list.setItems(this.#entries);
     this.#reveal = true;
     this.#list.ensureVisible(key);
-    this.#options.onSelectionChange?.(this.selected);
+    this.#options.onSelectionChange?.(this.selectedItem);
   }
 
   /** The default row shows the label with its matched ranges marked, then the detail. It marks a selected row. */

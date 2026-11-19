@@ -80,7 +80,7 @@ export class PaneTree {
   }
 
   /** The handle of the active pane, or `undefined` while an empty pane is active. */
-  get active(): Pane | undefined {
+  get activePane(): Pane | undefined {
     return this.#active.pane;
   }
 

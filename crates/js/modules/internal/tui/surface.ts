@@ -129,9 +129,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
 
   const panes: Panes = Object.freeze({
     view: core.panes.view,
-    get active(): Pane | undefined {
+    get activePane(): Pane | undefined {
       scope.check();
-      return core.panes.active;
+      return core.panes.activePane;
     },
     split: live(
       (create: ViewFactory, options?: { readonly direction?: Direction | undefined }): Pane =>
@@ -313,9 +313,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       return core.startup;
     },
     panes,
-    get focused(): View | undefined {
+    get focusedView(): View | undefined {
       scope.check();
-      return core.scene.focused;
+      return core.scene.focusedView;
     },
     focus: live((view: View): boolean => core.scene.focus(view)),
     addFocusListener: live((listener: (change: FocusChange) => void): (() => void) =>

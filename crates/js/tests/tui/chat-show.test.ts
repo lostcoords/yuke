@@ -13,7 +13,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  const view = chat.tui.panes.active?.view as View;
+  const view = chat.tui.panes.activePane?.view as View;
   const moves: (string | undefined)[] = [];
   chat.chat.addChangeListener((moved) => moves.push(chat.chat.sessionIdOf(moved)));
   frame.paste("draft of s1");
@@ -51,7 +51,7 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
   assertEquals(
     [
       error,
-      chat.chat.sessionIdOf(chat.tui.panes.active?.view as View),
+      chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View),
       chat.opened.map((open) => [open.id, open.signal.aborted]),
     ],
     [
@@ -93,7 +93,7 @@ test("show in a pane of another plugin opens a new chat pane, and a pane without
   const kept = composerOf(chat).state.text;
   frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
   await chat.chat.show("s2");
-  const active = chat.tui.panes.active?.view as View;
+  const active = chat.tui.panes.activePane?.view as View;
   assertEquals(
     [kept, chat.opened.map((open) => open.id), chat.chat.sessionIdOf(active)],
     ["first words", ["s1", "s2"], "s2"],
@@ -106,7 +106,7 @@ test("a failed show from a pane of another plugin closes the new chat pane again
   frame.start();
   const other = frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
   const error = String(await assertRejects(() => chat.chat.show("missing")));
-  assertEquals([error, chat.tui.panes.active?.view === other.view], ["Error: no session missing", true]);
+  assertEquals([error, chat.tui.panes.activePane?.view === other.view], ["Error: no session missing", true]);
   assertEquals(JSON.parse(frame.snapshot()).tree.split, "row");
 });
 

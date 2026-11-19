@@ -337,6 +337,6 @@ export function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEdit
       (mount) =>
         mount.widget instanceof TextEditor &&
         mount.widget.role === "composer" &&
-        mount.pane?.view === chat.tui.panes.active?.view,
+        mount.pane?.view === chat.tui.panes.activePane?.view,
     )?.widget as TextEditor;
 }

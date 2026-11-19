@@ -191,14 +191,14 @@ test("a press focuses and captures and a modal cancels the capture", () => {
     draw() {},
   }));
   core.event(click(11, 1));
-  assert(core.scene.focused === b, "a press focuses b");
+  assert(core.scene.focusedView === b, "a press focuses b");
   core.event(click(2, 0, "press"));
   core.event(click(15, 4, "drag"));
   core.event(click(16, 5, "release"));
   core.event(click(1, 1, "press"));
   core.scene.overlay("test", () => ({ draw() {} }));
   core.event(click(3, 3, "release"));
-  assert(core.scene.focused !== a, "the modal takes the focus from a");
+  assert(core.scene.focusedView !== a, "the modal takes the focus from a");
   // The drag and the release reach `a` outside its rect; the modal sends `cancel` and takes the later release.
   assertEquals(log, [
     ["b", "press", 1, 1],
@@ -232,9 +232,9 @@ test("a press on a view without focusOnPress reaches it and focuses its parent, 
     draw() {},
   }));
   core.event(click(1, 1));
-  const pressed = core.scene.focused === outer;
+  const pressed = core.scene.focusedView === outer;
   core.scene.focus(inner);
-  assertEquals([presses, pressed, core.scene.focused === inner], [["press"], true, true]);
+  assertEquals([presses, pressed, core.scene.focusedView === inner], [["press"], true, true]);
 });
 
 test("the view of a pane takes a press without focusOnPress", () => {
@@ -244,9 +244,9 @@ test("the view of a pane takes a press without focusOnPress", () => {
   // The split puts the pane right of the empty pane. A press on the empty pane takes the focus away first.
   const right = panes.split(view);
   core.event(click(1, 1));
-  const away = core.scene.focused !== right.view;
+  const away = core.scene.focusedView !== right.view;
   core.event(click(12, 1));
-  assertEquals([away, core.scene.focused === right.view], [true, true]);
+  assertEquals([away, core.scene.focusedView === right.view], [true, true]);
 });
 
 test("panes split focus and close and the last close gives an empty pane without a default", () => {
@@ -275,12 +275,12 @@ test("panes split focus and close and the last close gives an empty pane without
   core.commands.run("core:focus-right");
   b.close();
   assertEquals(terminal.screen(core).slice(0, 3), ["          │A", "          │", "          │"]);
-  assert(panes.active === a, "the close of b makes a active");
+  assert(panes.activePane === a, "the close of b makes a active");
   // The close of `a` leaves the empty pane; without a default pane, a last close gives an empty pane.
   core.commands.run("core:close");
   core.commands.run("core:close");
   assertEquals(terminal.screen(core)[0], "");
-  assertEquals(panes.active, undefined);
+  assertEquals(panes.activePane, undefined);
   assertEquals(a.signal.aborted, true);
   // A plugin pane as the last pane gives way to an empty pane too.
   const c = panes.split(pane("c"));
@@ -319,7 +319,7 @@ test("a pane gets its inner focus back and focus changes reach the path", () => 
   core.commands.run("core:focus-right");
   core.scene.layout();
   // Back in the chat pane the composer has the focus again; the focus change drops the pending `ctrl+k`.
-  assert(core.scene.focused === composer, "the composer has the focus again");
+  assert(core.scene.focusedView === composer, "the composer has the focus again");
   assertEquals(core.keymap.pending(), "");
   assertEquals(log, ["chat true", "composer true", "chat false", "composer false", "chat true", "composer true"]);
 });
@@ -346,14 +346,14 @@ test("a pane starts at its initial focus and each focus change names the view an
   const changes: string[] = [];
   tui.addFocusListener((change) => {
     const pane = change.pane === undefined ? "no pane" : change.pane === a ? "pane a" : "pane b";
-    changes.push(`${names.get(change.previous) ?? "none"} -> ${names.get(change.current) ?? "?"} in ${pane}`);
+    changes.push(`${names.get(change.previousView) ?? "none"} -> ${names.get(change.focusedView) ?? "?"} in ${pane}`);
   });
   const first = chat("a");
   const second = chat("b");
   const a = tui.panes.split(() => first.view);
   const b = tui.panes.split(() => second.view);
   core.draw();
-  assertEquals(tui.focused, second.composer);
+  assertEquals(tui.focusedView, second.composer);
   tui.focus(first.transcript);
   core.draw();
   b.focus();
@@ -366,7 +366,7 @@ test("a pane starts at its initial focus and each focus change names the view an
     layout: () => [{ view: input, rect: { column: 0, row: 0, width: 5, height: 1 } }],
   }));
   core.draw();
-  // A focus beneath the modal moves the active pane but not `tui.focused`, so it gives no change.
+  // A focus beneath the modal moves the active pane but not `tui.focusedView`, so it gives no change.
   tui.focus(first.composer);
   core.draw();
   modal.close();
@@ -511,19 +511,19 @@ test("a view beside the panes gets the mouse and leaves the focus on the active 
     ]),
   );
   terminal.screen(core);
-  assertEquals(tui.panes.active, right);
+  assertEquals(tui.panes.activePane, right);
   // The view gets the press. The active pane keeps the focus.
   core.event(click(18, 0));
   assertEquals(pressed.includes("press"), true);
-  assertEquals(tui.panes.active, right);
-  assertEquals(tui.focused, right.view);
+  assertEquals(tui.panes.activePane, right);
+  assertEquals(tui.focusedView, right.view);
   // No pane is to the right. The focus stays.
   assertEquals(tui.panes.moveFocus("right"), false);
   assertEquals(tui.panes.moveFocus("left"), true);
-  assertEquals(tui.panes.active, left);
+  assertEquals(tui.panes.activePane, left);
   root.close();
   terminal.screen(core);
-  assertEquals(tui.panes.active, left);
+  assertEquals(tui.panes.activePane, left);
 });
 
 test("the first command with a slash word keeps it, and a later one shows its full name", () => {
@@ -595,7 +595,7 @@ test("a focus change beneath a modal moves the active pane", () => {
   // A focus of the scene beneath the modal, as `tui.focus` gives, moves the active pane too.
   core.scene.focus(a.view);
   terminal.screen(core);
-  assert(panes.active === a, "the focus makes a active");
+  assert(panes.activePane === a, "the focus makes a active");
   assertEquals(atoms(core), ["global", "overlay"]);
 });
 

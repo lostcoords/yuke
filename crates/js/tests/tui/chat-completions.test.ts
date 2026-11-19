@@ -20,10 +20,10 @@ function mountProviders(frame: FrameTest, height: number, providers: readonly Co
       cwd: () => "/w",
       signal: mount.signal,
       enabled: () => true,
-      onChange: () => {
-        changes += 1;
-      },
       onError: (error) => errors.push(error),
+    });
+    list.addChangeListener(() => {
+      changes += 1;
     });
     const view = list.view;
     return {

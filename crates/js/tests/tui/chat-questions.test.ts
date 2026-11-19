@@ -47,7 +47,14 @@ test("a single question takes the place of the composer, enter picks the cursor 
   await waitForSettled();
   frame.draw();
   assertEquals(
-    [shown, off, sessions.responses, sessions.inputs, rows(frame.frame).at(-2), chat.tui.focused === composerOf(chat)],
+    [
+      shown,
+      off,
+      sessions.responses,
+      sessions.inputs,
+      rows(frame.frame).at(-2),
+      chat.tui.focusedView === composerOf(chat),
+    ],
     [
       [" guard · Branch", " Delete branch?", " feat/x", "❯ Yes", "  No", " ↑↓ choose · enter send · esc cancel"],
       [false, false, false],

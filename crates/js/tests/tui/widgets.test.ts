@@ -113,7 +113,7 @@ test("an early handler takes a continuation before the keymap and enter alone re
       pending = event.character === "r";
       return pending;
     }, "beforeKeymap");
-    return () => extension.dispose();
+    return () => extension.close();
   });
   core.draw();
   core.event(key("r"));
@@ -160,7 +160,7 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
       typed.push(`${name} ${event.character}`);
       return false;
     });
-    return () => extension.dispose();
+    return () => extension.close();
   };
   core.widgets.addWatcher("other", (mount) => extend(mount, "other", "bar"));
   const stopVim = core.widgets.addWatcher("vim", (mount) => extend(mount, "vim", "block"));
@@ -191,9 +191,9 @@ test("a contexts change ends a pending sequence", () => {
   extension.setContexts(["vim-insert"]);
   assertEquals(core.keymap.pending(), "");
   assertEquals(atoms(core).at(-1), "vim-insert");
-  extension.dispose();
+  extension.close();
   assertEquals(atoms(core).at(-1), "field");
-  // The abort of its signal removes an extension as its dispose does.
+  // The abort of its signal removes an extension as its close does.
   const controller = new AbortController();
   editor.extend(controller.signal).setContexts(["other-mode"]);
   assertEquals(atoms(core).at(-1), "other-mode");

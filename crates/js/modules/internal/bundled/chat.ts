@@ -327,7 +327,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   // The slash commands are the oldest provider, so a plugin can take their place.
   completionProviders.add({ provider: slashCompletions(tui.commands) });
   const active = (): PaneActions | undefined => {
-    const view = tui.panes.active?.view;
+    const view = tui.panes.activePane?.view;
     return view === undefined ? undefined : chat.panes.get(view);
   };
   // The models of the ready providers. A change of the providers reads them again.

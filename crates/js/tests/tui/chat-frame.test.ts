@@ -150,10 +150,10 @@ test("the composer stays the same widget in a frame, and the last frame wins unt
   assertEquals(rows(frame.frame)[1], "two");
   const composer = chat.tui.widgets.list().find((mount) => mount.widget.role === "composer")?.widget;
   assertEquals(composer instanceof TextEditor, true);
-  assertEquals(chat.tui.focused, composer);
+  assertEquals(chat.tui.focusedView, composer);
   // A press on the frame leaves the focus on the input.
   click(frame, 0, 1);
-  assertEquals(chat.tui.focused, composer);
+  assertEquals(chat.tui.focusedView, composer);
   // The disposer of an earlier frame leaves the current one, and the disposer of the last frame gives the rules back.
   first();
   frame.draw();

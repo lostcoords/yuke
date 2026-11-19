@@ -218,7 +218,7 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
   chat.chat.setPresentation(factory);
   frame.start();
   await waitForSettled();
-  const pane = chat.tui.panes.active?.view as View;
+  const pane = chat.tui.panes.activePane?.view as View;
   await chat.chat.show("s2");
   const afterShow = [options[0]?.signal.aborted, options[1]?.signal.aborted];
   chat.chat.setPresentation((given) => factory(given));

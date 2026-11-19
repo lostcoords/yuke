@@ -210,7 +210,7 @@ test("a widget watcher gets the view, and an extension draws its decoration and 
     const extension = mount.widget.extend(mount.signal);
     extension.setAppearance({ cursorShape: "block" });
     extension.setDecorations([{ range: { anchor: at("i", "s", 1), head: at("i", "s", 3) }, style: { bg: 2 } }]);
-    return () => extension.dispose();
+    return () => extension.close();
   });
   view.caret = at("i", "s", 4);
   const drawn = frame.draw();
@@ -235,7 +235,7 @@ test("a plugin sees a motion with no button and marks the row under the mouse, a
       }
       return false;
     });
-    return () => extension.dispose();
+    return () => extension.close();
   });
   frame.mouse(mouse(3, 0, "press"));
   frame.mouse(mouse(5, 0, "drag"));

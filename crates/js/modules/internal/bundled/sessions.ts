@@ -69,7 +69,7 @@ function rank(query: string, rows: readonly SessionRow[]): readonly PickerMatch<
 async function open(ctx: PluginContext, tui: Tui): Promise<void> {
   const chat = ctx.get("chat");
   const sessions = ctx.get("sessions");
-  const pane = tui.panes.active?.view;
+  const pane = tui.panes.activePane?.view;
   const shown = pane === undefined ? undefined : chat.sessionIdOf(pane);
   // Another client can remove the session of the pane, and the list then starts with the start folder.
   const folder =
