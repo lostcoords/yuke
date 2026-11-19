@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use yuke_js::{Plugin, PluginCode};
 
 use self::lock::Lock;
-use crate::config::{Config, ConfigPlugin, Source, read_json, without_comments};
+use crate::config::{Config, ConfigPlugin, Source, read_json};
 
 /// The name of the manifest in each plugin folder.
 const MANIFEST: &str = "plugin.json";
@@ -209,49 +209,46 @@ fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data
             provides: plugin.provides.iter().map(|&service| service.to_owned()).collect(),
         })
         .collect();
-    let lock = Lock::read_for(config_folder, config)?;
+    let lock = Lock::read(config_folder)?;
     let mut outcomes = Vec::with_capacity(config.plugins.len());
     for ConfigPlugin { source, options } in &config.plugins {
-        let (root, commit) = match source {
-            Source::Folder(folder) => (Some(config_folder.join(folder)), None),
-            Source::Git(git) => {
-                let commit = lock.commits.get(git).cloned();
-                let root = (commit.as_ref())
-                    .map(|commit| git_folder(data, &git.git, commit))
-                    .filter(|installed| installed.is_dir())
-                    .map(|installed| installed.join(git.folder.as_deref().unwrap_or_default()));
-                (root, commit)
-            }
+        let commit = match source {
+            Source::Git(git) => lock.commits.get(git).cloned(),
+            Source::Folder(_) => None,
         };
-        let read = root.map(|root| {
-            let root = root.canonicalize().map_err(|error| error.to_string())?;
-            read_manifest(&root).map(|manifest| (root, manifest))
-        });
-        // A plugin with bad fields still has a name, so the list and a remove can find it.
-        let name = (read.as_ref())
-            .and_then(|read| read.as_ref().ok())
-            .map(|(_, manifest)| manifest.name.clone());
+        let root = match source {
+            Source::Folder(folder) => Some(config_folder.join(folder)),
+            Source::Git(git) => (commit.as_ref())
+                .map(|commit| git_folder(data, &git.git, commit))
+                .filter(|installed| installed.is_dir())
+                .map(|installed| installed.join(git.folder.as_deref().unwrap_or_default())),
+        };
         let mut outcome = Outcome {
             source: source.clone(),
-            name,
+            name: None,
             commit,
-            failure: None,
+            failure: Some(Failure::NotInstalled),
         };
-        let checked = read.map(|read| {
-            read.and_then(|(root, manifest)| plugin_of(&root, manifest, data, options.clone()))
-                .and_then(|plugin| check_conflicts(&plugins, &plugin).map(|()| plugin))
-        });
-        outcome.failure = match checked {
-            None => Some(Failure::NotInstalled),
-            Some(Ok(plugin)) => {
-                plugins.push(plugin);
-                None
-            }
-            Some(Err(error)) => Some(Failure::Invalid(format!(
-                "plugin {} did not load: {error}",
-                outcome.label()
-            ))),
-        };
+        if let Some(root) = root {
+            let checked = (root.canonicalize().map_err(|error| error.to_string()))
+                .and_then(|root| {
+                    let manifest = read_manifest(&root)?;
+                    // A plugin with bad fields still has a name, so the list and a remove can find it.
+                    outcome.name = Some(manifest.name.clone());
+                    plugin_of(&root, manifest, data, options.clone())
+                })
+                .and_then(|plugin| check_conflicts(&plugins, &plugin).map(|()| plugin));
+            outcome.failure = match checked {
+                Ok(plugin) => {
+                    plugins.push(plugin);
+                    None
+                }
+                Err(error) => Some(Failure::Invalid(format!(
+                    "plugin {} did not load: {error}",
+                    outcome.label()
+                ))),
+            };
+        }
         outcomes.push(outcome);
     }
     Ok(PluginList {
@@ -343,13 +340,6 @@ pub(crate) fn load_order(plugins: Vec<Plugin>) -> Vec<Plugin> {
 fn read_manifest(root: &Path) -> Result<Manifest, String> {
     let path = root.join(MANIFEST);
     let manifest: Manifest = read_json(&path)?.ok_or_else(|| format!("{}: the file does not exist", path.display()))?;
-    valid_name(&manifest.name)?;
-    Ok(manifest)
-}
-
-/// The manifest of the text `text` of a `plugin.json`, with its name checked.
-fn parse_manifest(text: &str) -> Result<Manifest, String> {
-    let manifest: Manifest = serde_json::from_str(&without_comments(text)).map_err(|error| error.to_string())?;
     valid_name(&manifest.name)?;
     Ok(manifest)
 }

@@ -37,14 +37,16 @@ fn start_error(program: &str, error: &io::Error) -> String {
     }
 }
 
-/// Run `command`, the `git` call `what`, and give its standard output. A failure gives the standard error of git.
+/// Run `command`, the `git` call `what`, and give its standard output. A failure gives the reason of git.
 async fn run(mut command: Command, what: &str) -> Result<String, String> {
     let output = command.output().await.map_err(|error| start_error("git", &error))?;
     if !output.status.success() {
-        return Err(format!(
-            "git {what}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // git gives its reason on the first `fatal:` line, and hints on the other lines.
+        let reason = (stderr.lines())
+            .find_map(|line| line.strip_prefix("fatal: "))
+            .unwrap_or(stderr.trim());
+        return Err(format!("git {what}: {reason}"));
     }
     String::from_utf8(output.stdout).map_err(|_| format!("git {what}: the output is not UTF-8"))
 }
@@ -79,8 +81,8 @@ pub(crate) async fn resolve(url: &str, reference: Option<&str>) -> Result<String
             })
         })
         .ok_or_else(|| match reference {
-            None => format!("{url} has no default branch"),
-            Some(reference) => format!("{url} has no branch or tag '{reference}': fix \"ref\" in config.json"),
+            None => "no default branch".to_owned(),
+            Some(reference) => format!("no branch or tag '{reference}'"),
         })
 }
 

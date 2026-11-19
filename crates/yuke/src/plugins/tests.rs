@@ -462,16 +462,12 @@ fn a_git_plugin_without_its_commit_in_the_lock_or_on_disk_is_not_installed_and_t
 }
 
 #[test]
-fn a_lock_with_a_short_commit_fails_a_list_with_a_git_plugin() {
+fn a_lock_with_a_short_commit_fails_the_list() {
     let root = place("git_bad_lock");
     let lock = root.join("config/plugins.lock");
-    write_plugin(&root, "config/local", &manifest("local", &json!({})));
-
     write_lock(&root, &json!([{ "git": URL, "commit": "3f9c1a2" }]));
-    let local = load(&root, &["local"]);
+
     let short = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
 
-    // A list of local plugins does not read the lock.
-    assert_eq!(local.map(|list| list.load.len()), Ok(1));
     assert_eq!(short, format!("{}: '3f9c1a2' is not a full commit id", lock.display()));
 }

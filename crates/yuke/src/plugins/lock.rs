@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::git::is_commit;
 use yuke_protocol::PluginSource;
 
-use crate::config::{Config, Source, git_source, read_json, write_text};
+use crate::config::{git_source, read_json, write_text};
 
 /// The name of the lock file in the config folder.
 pub(crate) const LOCK: &str = "plugins.lock";
@@ -27,13 +27,9 @@ struct FileText {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Entry {
-    git: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    folder: Option<String>,
-    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
-    reference: Option<String>,
+    #[serde(flatten)]
+    source: PluginSource,
     commit: String,
 }
 
@@ -55,28 +51,10 @@ impl Lock {
             if !is_commit(&entry.commit) {
                 return Err(fail(format!("'{}' is not a full commit id", entry.commit)));
             }
-            let source = git_source(entry.git, entry.folder.as_deref(), entry.reference);
+            let source = git_source(entry.source.git, entry.source.folder.as_deref(), entry.source.reference);
             commits.insert(source, entry.commit);
         }
         Ok(Self { commits })
-    }
-
-    /// [`Lock::read`] when `config` has a Git plugin, else an empty lock, so a bad lock does not stop a profile of local
-    /// plugins.
-    ///
-    /// # Errors
-    ///
-    /// Returns the errors of [`Lock::read`].
-    pub(crate) fn read_for(config_folder: &Path, config: &Config) -> Result<Self, String> {
-        if config
-            .plugins
-            .iter()
-            .any(|plugin| matches!(plugin.source, Source::Git(_)))
-        {
-            Self::read(config_folder)
-        } else {
-            Ok(Self::default())
-        }
     }
 
     /// Write the lock to `plugins.lock` of `config_folder`, sorted by source, unless the file has this text already. A
@@ -92,9 +70,7 @@ impl Lock {
             plugins: entries
                 .into_iter()
                 .map(|(source, commit)| Entry {
-                    git: source.git.clone(),
-                    folder: source.folder.clone(),
-                    reference: source.reference.clone(),
+                    source: source.clone(),
                     commit: commit.clone(),
                 })
                 .collect(),

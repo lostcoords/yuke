@@ -11,8 +11,12 @@ use yuke_protocol::{
 };
 
 use super::lock::Lock;
-use super::{Failure, MANIFEST, Outcome, PluginList, git, git_folder, manifest_plugin, parse_manifest, repository_key};
-use crate::config::{Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, write_text};
+use super::{
+    Failure, MANIFEST, Manifest, Outcome, PluginList, git, git_folder, manifest_plugin, repository_key, valid_name,
+};
+use crate::config::{
+    Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, without_comments, write_text,
+};
 use crate::paths::Paths;
 
 /// The plugins of `config.json`, with the state of each one on disk. `running` holds the outcomes of the last load, and
@@ -30,7 +34,7 @@ pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlug
                 Source::Folder(folder) => (PluginOrigin::Folder(folder), PluginState::Local),
                 Source::Git(source) => {
                     let state = match outcome.commit {
-                        Some(commit) if outcome.failure != Some(Failure::NotInstalled) => {
+                        Some(commit) if !matches!(outcome.failure, Some(Failure::NotInstalled)) => {
                             PluginState::Installed { commit }
                         }
                         commit => PluginState::NotInstalled { commit },
@@ -76,7 +80,9 @@ async fn found(paths: &Paths, url: &str, reference: Option<&str>) -> Result<(Str
     let mut plugins = Vec::new();
     for path in git::files_named(&cache, &commit, MANIFEST).await.map_err(fail)? {
         let text = git::show(&cache, &commit, &path).await.map_err(fail)?;
-        if let Ok(manifest) = parse_manifest(&text) {
+        if let Ok(manifest) = serde_json::from_str::<Manifest>(&without_comments(&text))
+            && valid_name(&manifest.name).is_ok()
+        {
             let folder = path.strip_suffix(MANIFEST).unwrap_or_default().trim_end_matches('/');
             plugins.push(FoundPlugin {
                 name: manifest.name,
@@ -104,6 +110,13 @@ pub(crate) async fn add(
     let _held = hold(&paths.data).await?;
     let config = read_config(paths)?;
     let known = resolve(paths, &config)?.outcomes;
+    let path = paths.config.join("config.json");
+    let mut text = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    let mut lock = Lock::read(&paths.config)?;
     let (commit, found) = found(paths, url, reference).await?;
     let found_names = || {
         let names: Vec<&str> = found.iter().map(|plugin| plugin.name.as_str()).collect();
@@ -141,29 +154,17 @@ pub(crate) async fn add(
             return Err(fail("config.json has a plugin of this name already".to_owned()));
         }
         install(paths, &source, &commit).await.map_err(fail)?;
+        let item = serde_json::to_string(&source).map_err(|error| error.to_string())?;
+        text = Some(match text {
+            Some(text) => add_plugin_item(&text, &item),
+            None => format!("{{\n  \"plugins\": [\n    {item}\n  ]\n}}\n"),
+        });
+        lock.commits.insert(source.clone(), commit.clone());
         added.push(AddedPlugin {
             name: plugin.name.clone(),
             source,
             commit: commit.clone(),
         });
-    }
-    let path = paths.config.join("config.json");
-    let mut text = match fs::read_to_string(&path) {
-        Ok(text) => Some(text),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("{}: {error}", path.display())),
-    };
-    for plugin in &added {
-        let item = serde_json::to_string(&plugin.source).map_err(|error| error.to_string())?;
-        text = Some(match text {
-            Some(text) => add_plugin_item(&text, &item),
-            None => format!("{{\n  \"plugins\": [\n    {item}\n  ]\n}}\n"),
-        });
-    }
-    // Read the lock before the config write, so a bad lock changes no file.
-    let mut lock = Lock::read(&paths.config)?;
-    for plugin in &added {
-        lock.commits.insert(plugin.source.clone(), plugin.commit.clone());
     }
     write_text(&path, text.as_deref().unwrap_or_default())?;
     lock.write(&paths.config)?;
@@ -179,7 +180,7 @@ pub(crate) async fn add(
 pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
     let _held = hold(&paths.data).await?;
     let config = read_config(paths)?;
-    let mut lock = Lock::read_for(&paths.config, &config)?;
+    let mut lock = Lock::read(&paths.config)?;
     let index = resolve(paths, &config)?
         .outcomes
         .iter()
@@ -221,14 +222,14 @@ fn resolve(paths: &Paths, config: &Config) -> Result<PluginList, String> {
 pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResult, String> {
     let _held = hold(&paths.data).await?;
     let config = read_config(paths)?;
-    let lock = Lock::read_for(&paths.config, &config)?;
+    let lock = Lock::read(&paths.config)?;
     let sources = git_sources(&config);
     if locked
         && (lock.commits.len() != sources.len() || sources.iter().any(|source| !lock.commits.contains_key(*source)))
     {
         return Err("plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`".to_owned());
     }
-    let mut commits = Lock::default();
+    let mut fresh = Lock::default();
     let mut plugins = Vec::with_capacity(sources.len());
     for source in sources {
         let fail = |message: String| format!("plugin {source}: {message}");
@@ -239,13 +240,13 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
                 .map_err(fail)?,
         };
         install(paths, source, &commit).await.map_err(fail)?;
-        commits.commits.insert(source.clone(), commit.clone());
+        fresh.commits.insert(source.clone(), commit.clone());
         plugins.push(LockedPlugin {
             source: source.clone(),
             commit,
         });
     }
-    let written = !locked && commits.write(&paths.config)?;
+    let written = !locked && fresh.write(&paths.config)?;
     Ok(SyncPluginsResult { plugins, written })
 }
 
@@ -317,18 +318,14 @@ pub(crate) async fn apply(paths: &Paths, plugins: &[LockedPlugin]) -> Result<(),
     let _held = hold(&paths.data).await?;
     let mut lock = Lock::read(&paths.config)?;
     for plugin in plugins {
-        // A plugin can come from a client, so its source takes the form of the lock, and its commit the check of an entry.
-        let source = git_source(
-            plugin.source.git.clone(),
-            plugin.source.folder.as_deref(),
-            plugin.source.reference.clone(),
-        );
+        let source = &plugin.source;
+        // A commit can come from a client, so it gets the check of a lock entry.
         if !git::is_commit(&plugin.commit) {
             return Err(format!("plugin {source}: '{}' is not a full commit id", plugin.commit));
         }
         let commit = lock
             .commits
-            .get_mut(&source)
+            .get_mut(source)
             .ok_or_else(|| format!("plugin {source} is not in plugins.lock"))?;
         commit.clone_from(&plugin.commit);
     }
