@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use yuke_http::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, HeaderName, MaxSizeReached};
+use yuke_http::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, HeaderName};
 use yuke_http::http::{HeaderMap, HeaderValue, Method};
 use yuke_http::{Client, Error};
 
@@ -91,27 +91,18 @@ async fn round_trip(
 
 /// The headers of `plan`: the type, the accept, no compression, then the caller headers in order.
 fn headers(plan: &Plan<'_>) -> Result<HeaderMap, Fault> {
-    // A `HeaderMap` has a size limit, so too many headers fail the request before it leaves.
-    let full = |result: Result<(), MaxSizeReached>| result.map_err(|_| Fault::InvalidRequest);
     let mut headers = HeaderMap::new();
     // A caller gives the type of an exchange, so a bad value fails the request instead of a panic.
     let content_type = HeaderValue::from_str(plan.content_type).map_err(|_| Fault::InvalidRequest)?;
-    full(headers.try_insert(CONTENT_TYPE, content_type).map(drop))?;
-    full(
-        headers
-            .try_insert(ACCEPT, HeaderValue::from_static(plan.accept))
-            .map(drop),
-    )?;
+    headers.insert(CONTENT_TYPE, content_type);
+    headers.insert(ACCEPT, HeaderValue::from_static(plan.accept));
     // Without this field, RFC 9110 lets the server choose any compression. The SSE parser reads plain bytes only.
-    full(
-        headers
-            .try_insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"))
-            .map(drop),
-    )?;
+    headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
     for header in plan.headers {
         let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
         let value = HeaderValue::from_bytes(header.value.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
-        full(headers.try_append(name, value).map(drop))?;
+        // A `HeaderMap` has a size limit, so too many headers fail the request before it leaves.
+        headers.try_append(name, value).map_err(|_| Fault::InvalidRequest)?;
     }
     Ok(headers)
 }
