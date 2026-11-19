@@ -360,23 +360,7 @@ fn plugin_of(root: &Path, manifest: Manifest, data: &Path, options: Map<String, 
             .map_err(|error| format!("{}: extensions.\"{EXTENSION}\": {error}", path.display()))?,
         None => YukeFields::default(),
     };
-    let entry = match fields.entry {
-        None => None,
-        Some(entry) => {
-            let path = Path::new(&entry);
-            // The loader reads a module by these two extensions.
-            if !path
-                .extension()
-                .is_some_and(|extension| extension == "ts" || extension == "js")
-            {
-                return Err(format!("entry: '{entry}' is not a .ts or a .js file"));
-            }
-            Some(root.join(path))
-        }
-    };
-    if entry.is_none() && !fields.provides.is_empty() {
-        return Err("provides: a plugin without an entry cannot provide a service".to_owned());
-    }
+    let entry = fields.entry.map(|entry| root.join(entry));
     Ok(Plugin {
         data_dir: data.join("plugins").join(&manifest.name),
         name: manifest.name,

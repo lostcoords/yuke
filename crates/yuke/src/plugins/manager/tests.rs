@@ -415,12 +415,12 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
-    let (_, paths) = place("invalid_entry");
+async fn a_plugin_with_an_invalid_manifest_field_keeps_its_name_for_list_and_remove() {
+    let (_, paths) = place("invalid_field");
     fs::create_dir_all(paths.config.join("clock")).unwrap();
     fs::write(
         paths.config.join("clock/plugin.json"),
-        json!({ "name": "clock", "extensions": { "sh.yuke": { "entry": "main.txt" } } }).to_string(),
+        json!({ "name": "clock", "extensions": { "sh.yuke": { "activation": {} } } }).to_string(),
     )
     .unwrap();
     write_config(&paths, &json!(["./clock"]));
@@ -428,16 +428,24 @@ async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
     let listed = list(&paths, &[]).unwrap();
     remove(&paths, "clock").await.unwrap();
 
+    let [plugin] = listed.as_slice() else {
+        panic!("{listed:?}")
+    };
     assert_eq!(
-        listed,
-        [ManagedPlugin {
-            source: PluginOrigin::Folder("./clock".to_owned()),
-            name: Some("clock".to_owned()),
-            state: PluginState::Local,
-            load: PluginLoad::Failed {
-                error: "Plugin clock did not load: entry: 'main.txt' is not a .ts or a .js file".to_owned(),
-            },
-        }]
+        (&plugin.source, plugin.name.as_deref(), &plugin.state),
+        (
+            &PluginOrigin::Folder("./clock".to_owned()),
+            Some("clock"),
+            &PluginState::Local
+        )
+    );
+    let PluginLoad::Failed { error } = &plugin.load else {
+        panic!("{listed:?}")
+    };
+    assert!(
+        error.starts_with("Plugin clock did not load: ")
+            && error.ends_with("unknown field `activation`, expected one of `entry`, `uses`, `provides`"),
+        "{error}"
     );
     assert_eq!(
         fs::read_to_string(paths.config.join("config.json")).unwrap(),

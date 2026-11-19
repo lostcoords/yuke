@@ -136,14 +136,6 @@ fn a_bad_folder_or_manifest_skips_its_plugin_names_the_problem_and_the_others_lo
             &fields(json!({ "activation": { "workspaceContains": "Cargo.toml" } })),
             "unknown field `activation`",
         ),
-        (
-            &fields(json!({ "entry": "main.py" })),
-            "entry: 'main.py' is not a .ts or a .js file",
-        ),
-        (
-            &fields(json!({ "provides": ["a"] })),
-            "provides: a plugin without an entry cannot provide a service",
-        ),
     ];
 
     for (index, (text, expected)) in cases.into_iter().enumerate() {
