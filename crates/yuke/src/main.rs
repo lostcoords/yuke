@@ -1,8 +1,8 @@
 //! The `yuke` program. It has three modes: the terminal interface (no mode flag), the protocol server (`--rpc`), and
-//! one task with no view (`-p`). `--rpc` serves stdin and stdout.
-//! `--rpc --listen` serves a Unix socket. `--rpc --connect` joins stdin and stdout to such a socket. `-p` writes the
-//! answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider, and
-//! `yuke logout` removes its stored login or API key.
+//! one task with no view (`-p`). `--rpc` serves stdin and stdout. `--rpc --listen` serves a Unix socket. `--rpc
+//! --connect` joins stdin and stdout to such a socket. `-p` writes the answer to stdout, and the end of the turn picks
+//! the exit status. `yuke login` logs in to a provider, and `yuke logout` removes its stored login or API key.
+//! `yuke test` runs the plugin tests, and `yuke plugin` manages the plugins of `config.json`.
 
 mod app;
 mod auth;
