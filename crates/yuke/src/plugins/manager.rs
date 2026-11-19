@@ -223,9 +223,7 @@ pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), Error> {
         })?;
     let path = paths.config.join("config.json");
     let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let text = remove_plugin_item(&text, index)
-        .ok_or_else(|| format!("{}: the edit did not find the plugin", path.display()))?;
-    write_text(&path, &text)?;
+    write_text(&path, &remove_plugin_item(&text, index))?;
     if let PluginOrigin::Git(source) = &outcomes[index].source {
         lock.commits.remove(source);
         lock.write(&paths.config)?;

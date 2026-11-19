@@ -348,11 +348,14 @@ pub(crate) fn add_plugin_item(text: &str, item: &str) -> String {
 
 /// `text`, the text of `config.json`, without the item `index` of `plugins` and one comma beside it. An item on lines of
 /// its own goes with those lines and with a comment after it on its last line. The other comments and the layout stay.
-/// `None` when `plugins` has no such item.
-pub(crate) fn remove_plugin_item(text: &str, index: usize) -> Option<String> {
+///
+/// # Panics
+///
+/// Panics when `plugins` has no item `index`.
+pub(crate) fn remove_plugin_item(text: &str, index: usize) -> String {
     let blank = without_comments(text);
-    let (_, items) = places(&blank).plugins?;
-    let item = items.get(index)?.clone();
+    let (_, items) = places(&blank).plugins.unwrap_or_default();
+    let item = items[index].clone();
     // The comma after the item, else the comma before the last item.
     let comma = match items.get(index + 1) {
         Some(next) => blank[item.end..next.start].find(',').map(|at| item.end + at),
@@ -373,7 +376,7 @@ pub(crate) fn remove_plugin_item(text: &str, index: usize) -> Option<String> {
     for cut in cuts {
         text.replace_range(cut, "");
     }
-    Some(text)
+    text
 }
 
 #[cfg(test)]
@@ -497,12 +500,12 @@ mod tests {
             "{ \"plugins\": [\n    \"./a\", // the a plugin\n    // the b plugin\n    \"./b\", // last\n    {\"git\":\"https://h/r\"}\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(text, 0).as_deref(),
-            Some("{ \"plugins\": [\n    // the b plugin\n    \"./b\" // last\n  ] }")
+            remove_plugin_item(text, 0),
+            "{ \"plugins\": [\n    // the b plugin\n    \"./b\" // last\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(text, 1).as_deref(),
-            Some("{ \"plugins\": [\n    \"./a\" // the a plugin\n    // the b plugin\n  ] }")
+            remove_plugin_item(text, 1),
+            "{ \"plugins\": [\n    \"./a\" // the a plugin\n    // the b plugin\n  ] }"
         );
     }
 
@@ -511,19 +514,17 @@ mod tests {
         let text = "{ \"plugins\": [\n    \"./a\", // first\n    \"./b\",\n    \"./c\"\n  ] }";
 
         assert_eq!(
-            remove_plugin_item(text, 1).as_deref(),
-            Some("{ \"plugins\": [\n    \"./a\", // first\n    \"./c\"\n  ] }")
+            remove_plugin_item(text, 1),
+            "{ \"plugins\": [\n    \"./a\", // first\n    \"./c\"\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(text, 2).as_deref(),
-            Some("{ \"plugins\": [\n    \"./a\", // first\n    \"./b\"\n  ] }")
+            remove_plugin_item(text, 2),
+            "{ \"plugins\": [\n    \"./a\", // first\n    \"./b\"\n  ] }"
         );
         assert_eq!(
-            remove_plugin_item(r#"{ "plugins": ["./a"] }"#, 0).as_deref(),
-            Some(r#"{ "plugins": [] }"#)
+            remove_plugin_item(r#"{ "plugins": ["./a"] }"#, 0),
+            r#"{ "plugins": [] }"#
         );
-        assert_eq!(remove_plugin_item(text, 3), None);
-        assert_eq!(remove_plugin_item("{}", 0), None);
     }
 
     #[test]
