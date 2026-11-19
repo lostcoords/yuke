@@ -474,14 +474,14 @@ impl Shared {
 
     /// Install the locked commits and lock the new Git plugins, for `plugin/sync`.
     pub(crate) async fn sync_plugins(&self) -> Result<SyncPluginsResult, AppError> {
-        plugins::manager::sync(&self.machine.paths, false)
+        plugins::manager::sync(&self.machine.paths, false, &|_| {})
             .await
             .map_err(AppError::Invalid)
     }
 
     /// The new commits of the Git plugins of the target, for `plugin/check`.
     pub(crate) async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
-        let changes = plugins::manager::check(&self.machine.paths, &params.target)
+        let changes = plugins::manager::check(&self.machine.paths, &params.target, &|_| {})
             .await
             .map_err(AppError::Invalid)?;
         Ok(CheckPluginsResult { changes })
@@ -509,6 +509,7 @@ impl Shared {
             &params.git,
             &params.names,
             params.reference.as_deref(),
+            &|_| {},
         )
         .await
         .map_err(AppError::Invalid)?;

@@ -61,20 +61,20 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
     let SyncPluginsResult {
         plugins: synced,
         written,
-    } = sync(&paths, false).await.unwrap();
+    } = sync(&paths, false, &|_| {}).await.unwrap();
     let second = commit(&root, "feat: seconds");
     let SyncPluginsResult {
         plugins: again,
         written: written_again,
-    } = sync(&paths, false).await.unwrap();
+    } = sync(&paths, false, &|_| {}).await.unwrap();
     let config: Config = read_json(&paths.config.join("config.json")).unwrap().unwrap();
     let loaded = super::super::plugins(&paths.config, &config, &paths.data).unwrap();
-    let changes = check(&paths, &PluginTarget::All).await.unwrap();
+    let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
     let before_apply = Lock::read(&paths.config).unwrap();
     apply(&paths, &[at(changes[0].source.clone(), &changes[0].new)])
         .await
         .unwrap();
-    let after_apply = check(&paths, &PluginTarget::All).await.unwrap();
+    let after_apply = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
 
     assert_eq!(synced, [at(clock(&root, Some("main")), &first)]);
     assert!(written);
@@ -116,7 +116,7 @@ async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
         &paths,
         &json!([{ "git": url, "folder": "plugins/clock", "ref": "main" }]),
     );
-    sync(&paths, false).await.unwrap();
+    sync(&paths, false, &|_| {}).await.unwrap();
     let second = commit(&root, "second");
     write_config(
         &paths,
@@ -129,7 +129,7 @@ async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
     let SyncPluginsResult {
         plugins: synced,
         written,
-    } = sync(&paths, false).await.unwrap();
+    } = sync(&paths, false, &|_| {}).await.unwrap();
 
     assert_eq!(
         synced,
@@ -145,13 +145,13 @@ async fn a_check_gives_only_the_plugins_whose_folder_changed_with_the_commits_of
     commit(&root, "first clock");
     let first = commit_plugin(&remote, "weather", "first weather");
     let url = clock(&root, None).git;
-    add(&paths, &url, &["clock".to_owned(), "weather".to_owned()], None)
+    add(&paths, &url, &["clock".to_owned(), "weather".to_owned()], None, &|_| {})
         .await
         .unwrap();
     let last = commit_plugin(&remote, "weather", "feat: wind");
     commit_plugin(&remote, "weather", "fix: gusts");
 
-    let changes = check(&paths, &PluginTarget::All).await.unwrap();
+    let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
 
     let moves: Vec<(&str, &str, &PluginLog)> = changes
         .iter()
@@ -178,13 +178,14 @@ async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
         &paths,
         &json!([{ "git": clock(&root, None).git, "folder": "plugins/clock" }]),
     );
-    sync(&paths, false).await.unwrap();
+    sync(&paths, false, &|_| {}).await.unwrap();
 
     let error = check(
         &paths,
         &PluginTarget::Names {
             names: vec!["nope".to_owned()],
         },
+        &|_| {},
     )
     .await
     .unwrap_err();
@@ -196,13 +197,40 @@ async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_sync_installs_and_locks_the_plugins_that_install_and_names_the_others() {
+    let (root, paths) = place("sync_failures");
+    let first = commit(&root, "first");
+    let url = clock(&root, None).git;
+    write_config(
+        &paths,
+        &json!([
+            { "git": url, "folder": "plugins/sun", "ref": "v9" },
+            { "git": url, "folder": "plugins/moon" },
+            { "git": url, "folder": "plugins/clock" },
+        ]),
+    );
+
+    let error = sync(&paths, false, &|_| {}).await.unwrap_err();
+
+    assert_eq!(
+        error,
+        "plugin sun: no branch or tag 'v9'; plugin moon: the commit has no plugins/moon/plugin.json"
+    );
+    assert_eq!(
+        Lock::read(&paths.config).unwrap().commits,
+        [(clock(&root, None), first.clone())].into()
+    );
+    assert!(git_folder(&paths.data, &url, &first).is_dir());
+}
+
+#[tokio::test(flavor = "local")]
 async fn a_locked_sync_fails_and_changes_nothing_when_the_lock_misses_a_plugin() {
     let (root, paths) = place("locked");
     commit(&root, "first");
     let url = clock(&root, None).git;
     write_config(&paths, &json!([{ "git": url, "folder": "plugins/clock" }]));
 
-    let error = sync(&paths, true).await.unwrap_err();
+    let error = sync(&paths, true, &|_| {}).await.unwrap_err();
 
     assert_eq!(
         error,
@@ -225,7 +253,7 @@ async fn a_locked_sync_installs_the_locked_commit_and_keeps_the_lock_text() {
     let SyncPluginsResult {
         plugins: synced,
         written,
-    } = sync(&paths, true).await.unwrap();
+    } = sync(&paths, true, &|_| {}).await.unwrap();
 
     assert_eq!(synced, [at(clock(&root, None), &first)]);
     assert!(!written);
@@ -245,7 +273,7 @@ async fn a_linked_lock_stays_a_link_and_its_target_gets_the_commits() {
         &json!([{ "git": clock(&root, None).git, "folder": "plugins/clock" }]),
     );
 
-    let written = sync(&paths, false).await.unwrap().written;
+    let written = sync(&paths, false, &|_| {}).await.unwrap().written;
 
     assert!(written);
     assert!(paths.config.join("plugins.lock").is_symlink());
@@ -261,7 +289,7 @@ async fn an_apply_with_a_short_commit_or_a_plugin_out_of_the_lock_fails_and_keep
         &paths,
         &json!([{ "git": clock(&root, None).git, "folder": "plugins/clock" }]),
     );
-    sync(&paths, false).await.unwrap();
+    sync(&paths, false, &|_| {}).await.unwrap();
 
     let short = apply(&paths, &[at(clock(&root, None), "3f9c1a2")]).await.unwrap_err();
     let removed = apply(&paths, &[at(clock(&root, Some("v2")), &"b".repeat(40))])
@@ -282,11 +310,18 @@ async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
     let url = clock(&root, None).git;
 
     let found = find(&paths, &url, None).await.unwrap();
-    let unnamed = add(&paths, &url, &[], None).await.unwrap_err();
-    let unknown = add(&paths, &url, &["sun".to_owned()], None).await.unwrap_err();
-    let added = add(&paths, &url, &["weather".to_owned(), "clock".to_owned()], None)
-        .await
-        .unwrap();
+    let unnamed = add(&paths, &url, &[], None, &|_| {}).await.unwrap_err();
+    let unknown = add(&paths, &url, &["sun".to_owned()], None, &|_| {}).await.unwrap_err();
+    let steps = std::cell::RefCell::new(Vec::new());
+    let added = add(
+        &paths,
+        &url,
+        &["weather".to_owned(), "clock".to_owned()],
+        None,
+        &|step| steps.borrow_mut().push(step.to_owned()),
+    )
+    .await
+    .unwrap();
     let listed = list(&paths, &[]).unwrap();
 
     let at_folder = |name: &str| FoundPlugin {
@@ -310,6 +345,8 @@ async fn find_lists_the_plugins_of_a_repository_and_add_takes_them_by_name() {
         .collect();
     assert_eq!(names, [("weather", "plugins/weather"), ("clock", "plugins/clock")]);
     assert!(added.iter().all(|plugin| plugin.commit == last));
+    // The second plugin of the commit has its files already.
+    assert_eq!(steps.into_inner(), ["Installing weather"]);
     let states: Vec<(Option<&str>, &PluginState, &PluginLoad)> = listed
         .iter()
         .map(|plugin| (plugin.name.as_deref(), &plugin.state, &plugin.load))
@@ -331,10 +368,10 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     let url = clock(&root, None).git;
     let original = "{\n  // mine\n  \"plugins\": [\n    \"./notes\"\n  ]\n}\n";
     fs::write(paths.config.join("config.json"), original).unwrap();
-    let added = add(&paths, &url, &[], Some("main")).await.unwrap();
+    let added = add(&paths, &url, &[], Some("main"), &|_| {}).await.unwrap();
     let text = fs::read_to_string(paths.config.join("config.json")).unwrap();
     let locked = Lock::read(&paths.config).unwrap();
-    let again = add(&paths, &url, &[], None).await.unwrap_err();
+    let again = add(&paths, &url, &[], None, &|_| {}).await.unwrap_err();
     remove(&paths, "clock").await.unwrap();
     let after = fs::read_to_string(paths.config.join("config.json")).unwrap();
     let unlocked = Lock::read(&paths.config).unwrap();
@@ -342,7 +379,7 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     fs::create_dir_all(paths.config.join("clock")).unwrap();
     fs::write(paths.config.join("clock/plugin.json"), r#"{ "name": "clock" }"#).unwrap();
     fs::write(paths.config.join("config.json"), r#"{ "plugins": ["./clock"] }"#).unwrap();
-    let clash = add(&paths, &url, &[], None).await.unwrap_err();
+    let clash = add(&paths, &url, &[], None, &|_| {}).await.unwrap_err();
 
     let main = clock(&root, Some("main"));
     assert_eq!(

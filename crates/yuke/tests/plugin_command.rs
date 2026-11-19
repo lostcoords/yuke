@@ -82,11 +82,12 @@ fn add_takes_the_plugins_of_a_repository_by_name_and_list_and_remove_show_them()
         texts(&unnamed).1,
         format!("yuke: {url} has 2 plugins: clock, weather: name the ones to add\n")
     );
+    // The two plugins share one commit, so one download serves both.
     assert_eq!(
         texts(&added),
         (
             format!("Added weather at {short}\nAdded clock at {short}\nRun /reload in open sessions.\n"),
-            String::new()
+            "Installing weather…\n".to_owned()
         )
     );
     assert_eq!(

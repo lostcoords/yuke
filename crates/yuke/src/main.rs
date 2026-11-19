@@ -328,17 +328,20 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
     let (paths, _) = environment_paths()?;
     let say =
         |text: &str| writeln!(io::stdout(), "{text}").map_err(|error| format!("the output did not write: {error}"));
+    // The steps of the work go to stderr, so stdout keeps only the result.
+    let progress = |text: &str| {
+        if writeln!(io::stderr(), "{text}…").is_err() {
+            // A step that does not show changes nothing of the work.
+        }
+    };
     match command {
         PluginCommand::List => say(&plugin_list(&paths)?)?,
         PluginCommand::Sync { locked } => {
-            let synced = manager::sync(&paths, locked).await?;
-            for plugin in &synced.plugins {
-                say(&format!("{}  {}", plugin.source, short(&plugin.commit)))?;
-            }
+            let synced = manager::sync(&paths, locked, &progress).await?;
             say(if synced.written {
-                "plugins.lock written: run /reload in open sessions"
+                "Each Git plugin is installed, and plugins.lock is written. Run /reload in open sessions."
             } else {
-                "plugins.lock unchanged"
+                "Each Git plugin is installed at its locked commit."
             })?;
         }
         PluginCommand::Update { all, names, yes } => {
@@ -353,7 +356,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             } else {
                 PluginTarget::Names { names }
             };
-            let changes = manager::check(&paths, &target).await?;
+            let changes = manager::check(&paths, &target, &progress).await?;
             if changes.is_empty() {
                 say("Each plugin is at the newest commit of its ref.")?;
                 return Ok(ExitCode::SUCCESS);
@@ -387,7 +390,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             say(&format!("Updated {names}. Run /reload in open sessions."))?;
         }
         PluginCommand::Add { url, names, reference } => {
-            for added in manager::add(&paths, &url, &names, reference.as_deref()).await? {
+            for added in manager::add(&paths, &url, &names, reference.as_deref(), &progress).await? {
                 say(&format!("Added {} at {}", added.name, short(&added.commit)))?;
             }
             say("Run /reload in open sessions.")?;

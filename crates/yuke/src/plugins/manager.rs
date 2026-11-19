@@ -12,7 +12,8 @@ use yuke_protocol::{
 
 use super::lock::Lock;
 use super::{
-    Failure, MANIFEST, Manifest, Outcome, PluginList, git, git_folder, manifest_plugin, repository_key, valid_name,
+    Failure, MANIFEST, Manifest, Outcome, PluginList, git, git_folder, git_label, manifest_plugin, repository_key,
+    valid_name,
 };
 use crate::config::{
     Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, without_comments, write_text,
@@ -94,7 +95,7 @@ async fn found(paths: &Paths, url: &str, reference: Option<&str>) -> Result<(Str
 
 /// Add the plugins `names` of the repository `url` to `config.json`, install them, and lock them at the commit of
 /// `reference`. Without `names`, the repository must have one plugin. The comments and the layout of `config.json`
-/// stay.
+/// stay. `progress` gets each install.
 ///
 /// # Errors
 ///
@@ -105,6 +106,7 @@ pub(crate) async fn add(
     url: &str,
     names: &[String],
     reference: Option<&str>,
+    progress: &dyn Fn(&str),
 ) -> Result<Vec<AddedPlugin>, String> {
     let _held = hold(&paths.data).await?;
     let known = outcomes(paths)?;
@@ -155,7 +157,7 @@ pub(crate) async fn add(
         {
             return Err(fail("config.json has a plugin of this name already".to_owned()));
         }
-        install(paths, &source, &commit).await.map_err(fail)?;
+        install(paths, &source, &commit, progress).await.map_err(fail)?;
         let item = serde_json::to_string(&source).map_err(|error| error.to_string())?;
         text = Some(match text {
             Some(text) => add_plugin_item(&text, &item),
@@ -216,12 +218,13 @@ fn resolve(paths: &Paths, config: &Config) -> Result<PluginList, String> {
 
 /// Install the commit of `plugins.lock` of each Git plugin, and lock each new Git plugin at the commit of its ref. The
 /// lock keeps only the plugins of `config.json`. With `locked`, the lock must match `config.json`, and it stays as it
-/// is.
+/// is. A plugin that does not install keeps its locked commit, and the others install. `progress` gets each install.
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file, a lock that does not match with `locked`, or a failed fetch or install.
-pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResult, String> {
+/// Returns a text for a bad file or a lock that does not match with `locked`. After the write of the lock, it returns a
+/// text that names each plugin that did not install.
+pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -> Result<SyncPluginsResult, String> {
     let _held = hold(&paths.data).await?;
     let config = read_config(paths)?;
     let lock = Lock::read(&paths.config)?;
@@ -232,19 +235,30 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
         return Err("plugins.lock does not match the Git plugins of config.json: run `yuke plugin sync`".to_owned());
     }
     let mut plugins = Vec::with_capacity(sources.len());
+    let mut failures = Vec::new();
     for source in sources {
-        let fail = |message: String| format!("plugin {source}: {message}");
-        let commit = match lock.commits.get(source) {
-            Some(commit) => commit.clone(),
-            None => git::resolve(&source.git, source.reference.as_deref())
-                .await
-                .map_err(fail)?,
+        let locked_commit = lock.commits.get(source);
+        let commit = match locked_commit {
+            Some(commit) => Ok(commit.clone()),
+            None => git::resolve(&source.git, source.reference.as_deref()).await,
         };
-        install(paths, source, &commit).await.map_err(fail)?;
-        plugins.push(LockedPlugin {
-            source: source.clone(),
-            commit,
-        });
+        let installed = match commit {
+            Ok(commit) => install(paths, source, &commit, progress).await.map(|()| commit),
+            Err(error) => Err(error),
+        };
+        match (installed, locked_commit) {
+            (Ok(commit), _) => plugins.push(LockedPlugin {
+                source: source.clone(),
+                commit,
+            }),
+            (Err(error), commit) => {
+                failures.push(format!("plugin {}: {error}", git_label(source)));
+                plugins.extend(commit.map(|commit| LockedPlugin {
+                    source: source.clone(),
+                    commit: commit.clone(),
+                }));
+            }
+        }
     }
     let fresh = Lock {
         commits: (plugins.iter())
@@ -252,16 +266,23 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
             .collect(),
     };
     let written = !locked && fresh.write(&paths.config)?;
+    if !failures.is_empty() {
+        return Err(failures.join("; "));
+    }
     Ok(SyncPluginsResult { plugins, written })
 }
 
 /// The new commit of each installed Git plugin of `target` whose ref moved, with the log of the move. Each new commit is
-/// installed, and `plugins.lock` stays as it is until [`apply`].
+/// installed, and `plugins.lock` stays as it is until [`apply`]. `progress` gets the check of each plugin.
 ///
 /// # Errors
 ///
 /// Returns a text for a bad file, a name that no installed Git plugin has, or a failed fetch or install.
-pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<PluginChange>, String> {
+pub(crate) async fn check(
+    paths: &Paths,
+    target: &PluginTarget,
+    progress: &dyn Fn(&str),
+) -> Result<Vec<PluginChange>, String> {
     let _held = hold(&paths.data).await?;
     // A plugin that is not installed has no name, so a sync comes before its update.
     let mut targets: Vec<(PluginSource, String, String)> = resolve(paths, &read_config(paths)?)?
@@ -285,6 +306,7 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
     }
     let mut changes = Vec::new();
     for (source, old, name) in targets {
+        progress(&format!("Checking {name}"));
         let fail = |message: String| format!("plugin {name}: {message}");
         let new = git::resolve(&source.git, source.reference.as_deref())
             .await
@@ -303,7 +325,7 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
         if matches!(&log, Ok(commits) if commits.is_empty()) {
             continue;
         }
-        install(paths, &source, &new).await.map_err(fail)?;
+        install(paths, &source, &new, progress).await.map_err(fail)?;
         changes.push(PluginChange {
             name,
             source,
@@ -343,11 +365,12 @@ pub(crate) async fn apply(paths: &Paths, plugins: &[LockedPlugin]) -> Result<(),
 }
 
 /// Install the commit `commit` of `source` in `<data>/git`, unless it is there, and check the manifest of its folder. The
-/// install becomes visible whole, with one rename.
-async fn install(paths: &Paths, source: &PluginSource, commit: &str) -> Result<(), String> {
+/// install becomes visible whole, with one rename. `progress` gets the start of a download.
+async fn install(paths: &Paths, source: &PluginSource, commit: &str, progress: &dyn Fn(&str)) -> Result<(), String> {
     let installed = git_folder(&paths.data, &source.git, commit);
     let folder = source.folder.as_deref().unwrap_or_default();
     if !installed.is_dir() {
+        progress(&format!("Installing {}", git_label(source)));
         let cache = cache(paths, &source.git);
         git::fetch(&cache, &source.git, commit).await?;
         let staging = installed.with_file_name(format!(".staging-{commit}"));
@@ -360,6 +383,11 @@ async fn install(paths: &Paths, source: &PluginSource, commit: &str) -> Result<(
         }
         fs::create_dir_all(&staging).map_err(fail)?;
         git::export(&cache, commit, &staging).await?;
+        // A wrong folder is the usual fault, so its text names the file in the repository, not in the staging folder.
+        let manifest = Path::new(folder).join(MANIFEST);
+        if !staging.join(&manifest).is_file() {
+            return Err(format!("the commit has no {}", manifest.display()));
+        }
         // An install checks the whole manifest, so a plugin that cannot load fails here and not at the next reload.
         manifest_plugin(&staging.join(folder), &paths.data, Map::new())?;
         return fs::rename(&staging, &installed).map_err(fail);

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use yuke_js::{Plugin, PluginCode};
+use yuke_protocol::PluginSource;
 
 use self::lock::Lock;
 use crate::config::{Config, ConfigPlugin, Source, read_json};
@@ -146,7 +147,7 @@ impl Outcome {
         }
         match &self.source {
             Source::Folder(folder) => last_part(folder),
-            Source::Git(source) => last_part(source.folder.as_deref().unwrap_or(&source.git)),
+            Source::Git(source) => git_label(source),
         }
     }
 
@@ -160,6 +161,11 @@ impl Outcome {
             Failure::Invalid(text) => text.clone(),
         })
     }
+}
+
+/// The label of the Git plugin `source` before its manifest reads: the last part of its folder, else of its URL.
+pub(crate) fn git_label(source: &PluginSource) -> &str {
+    last_part(source.folder.as_deref().unwrap_or(&source.git))
 }
 
 /// The last part of the folder or the URL `text`, without a `.git` end.
