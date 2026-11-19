@@ -12,7 +12,7 @@ The installed release keeps its guides and its API in `~/.local/lib/yuke/`. They
 - `docs/guide/index.md` lists the guides. Read the guide of the task before you edit a file.
 - `docs/guide/first-plugin.md` has a complete plugin: the manifest, the `config.json` entry, and the step "Check the types".
 - `modules/plugins.ts`, `modules/tools.ts`, and `types/*.d.ts` hold the exact API with doc comments. Search them for each name before you use it. The section "Find the API" of `docs/guide/plugins.md` tells which file holds which `yuke:*` module.
-- `protocol/README.md` is the reference of `yuke --rpc`.
+- `docs/guide/rpc.md` is the reference of `yuke --rpc`, and `protocol/bindings/` holds its TypeScript types.
 - A guide line such as `<<< @/snippets/engine/approve.ts` includes the file `docs/snippets/engine/approve.ts`.
 
 ## Profile
