@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::Path;
 
-use serde::de::{DeserializeOwned, Error as _};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use yuke_protocol::{PluginOrigin, PluginSource};
 
@@ -29,7 +29,8 @@ pub(crate) struct Config {
 }
 
 /// One item of `plugins`: a folder path, or an object with `path` or `git` and optional `options`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(from = "ConfigPluginForm")]
 pub(crate) struct ConfigPlugin {
     /// Where the plugin comes from.
     pub(crate) source: PluginOrigin,
@@ -51,46 +52,52 @@ pub(crate) fn git_source(url: String, folder: Option<&str>, reference: Option<St
     }
 }
 
-impl<'de> Deserialize<'de> for ConfigPlugin {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Full {
-            path: Option<String>,
-            git: Option<String>,
-            folder: Option<String>,
-            #[serde(rename = "ref")]
-            reference: Option<String>,
-            #[serde(default)]
-            options: Map<String, Value>,
-        }
-        match Value::deserialize(deserializer)? {
-            Value::String(path) => Ok(Self {
+/// The forms of one item of `plugins` in `config.json`. Serde cannot say which field of an object broke the rules, so
+/// the error lists the forms.
+#[derive(Deserialize)]
+#[serde(
+    untagged,
+    deny_unknown_fields,
+    expecting = "a plugin is a folder path or an object. An object has \"path\" or \"git\", and \"options\". A Git \
+                 object also takes \"folder\" and \"ref\""
+)]
+enum ConfigPluginForm {
+    Folder(String),
+    Path {
+        path: String,
+        #[serde(default)]
+        options: Map<String, Value>,
+    },
+    Git {
+        git: String,
+        folder: Option<String>,
+        #[serde(rename = "ref")]
+        reference: Option<String>,
+        #[serde(default)]
+        options: Map<String, Value>,
+    },
+}
+
+impl From<ConfigPluginForm> for ConfigPlugin {
+    fn from(form: ConfigPluginForm) -> ConfigPlugin {
+        match form {
+            ConfigPluginForm::Folder(path) => ConfigPlugin {
                 source: PluginOrigin::Folder(path),
                 options: Map::new(),
-            }),
-            // The error of serde names the bad field or the unknown field.
-            value @ Value::Object(_) => {
-                let full = Full::deserialize(value).map_err(D::Error::custom)?;
-                let source = match (full.path, full.git) {
-                    (Some(_), Some(_)) => return Err(D::Error::custom("a plugin has \"path\" or \"git\", not both")),
-                    (None, None) => return Err(D::Error::custom("a plugin needs \"path\" or \"git\"")),
-                    (Some(_), None) if full.folder.is_some() || full.reference.is_some() => {
-                        return Err(D::Error::custom(
-                            "\"folder\" and \"ref\" go with \"git\", not with \"path\"",
-                        ));
-                    }
-                    (Some(path), None) => PluginOrigin::Folder(path),
-                    (None, Some(url)) => PluginOrigin::Git(git_source(url, full.folder.as_deref(), full.reference)),
-                };
-                Ok(Self {
-                    source,
-                    options: full.options,
-                })
-            }
-            _ => Err(D::Error::custom(
-                "a plugin is a folder path or an object with \"path\" or \"git\"",
-            )),
+            },
+            ConfigPluginForm::Path { path, options } => ConfigPlugin {
+                source: PluginOrigin::Folder(path),
+                options,
+            },
+            ConfigPluginForm::Git {
+                git,
+                folder,
+                reference,
+                options,
+            } => ConfigPlugin {
+                source: PluginOrigin::Git(git_source(git, folder.as_deref(), reference)),
+                options,
+            },
         }
     }
 }
@@ -420,19 +427,17 @@ mod tests {
                 .to_string()
         };
 
-        assert_eq!(
-            error(json!(1)),
-            "a plugin is a folder path or an object with \"path\" or \"git\""
-        );
-        assert_eq!(error(json!({ "options": {} })), "a plugin needs \"path\" or \"git\"");
-        assert_eq!(
-            error(json!({ "path": "./a", "git": "https://host/repo" })),
-            "a plugin has \"path\" or \"git\", not both"
-        );
-        assert_eq!(
-            error(json!({ "path": "./a", "ref": "main" })),
-            "\"folder\" and \"ref\" go with \"git\", not with \"path\""
-        );
+        let forms = "a plugin is a folder path or an object. An object has \"path\" or \"git\", and \"options\". A Git \
+                     object also takes \"folder\" and \"ref\"";
+        for plugin in [
+            json!(1),
+            json!({ "options": {} }),
+            json!({ "path": "./a", "git": "https://host/repo" }),
+            json!({ "path": "./a", "ref": "main" }),
+            json!({ "git": "https://host/repo", "fold": "a" }),
+        ] {
+            assert_eq!(error(plugin.clone()), forms, "{plugin}");
+        }
     }
 
     #[test]
