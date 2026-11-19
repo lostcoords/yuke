@@ -62,7 +62,6 @@ class BuilderTests(unittest.TestCase):
         for name in ("crates/js/modules", "crates/js/types", "crates/protocol/bindings", "docs", "skills"):
             shutil.copytree(ROOT / name, self.root / name)
         shutil.copy2(ROOT / "crates/js/tsconfig.json", self.root / "crates/js/tsconfig.json")
-        shutil.copy2(ROOT / "crates/protocol/README.md", self.root / "crates/protocol/README.md")
         self.environment = dict(os.environ, PATH=str(self.commands) + os.pathsep + os.environ["PATH"])
         self.output = self.root / "target/packages"
 
