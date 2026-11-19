@@ -196,9 +196,9 @@ if os.environ["CORRUPT_DOWNLOAD"] == "1":
         (plugin / "index.ts").write_text('import type { PluginApply, PluginSession } from "yuke:plugins";\n'
                                          'import { readTextFile } from "yuke:fs";\n'
                                          'export const apply: PluginApply = async (ctx) => {\n'
-                                         '  await readTextFile("state.json", { cwd: ctx.dataDir, signal: ctx.signal });\n'
+                                         '  await readTextFile("state.json", { folder: ctx.dataDir, signal: ctx.signal });\n'
                                          '};\n'
-                                         'export const session: PluginSession = (s) => () => s.notify("info", s.cwd);\n')
+                                         'export const session: PluginSession = (s) => () => s.notify("info", s.folder);\n')
         accepted = subprocess.run([self.compiler, "-p", str(configuration), "--pretty", "false"],
                                   text=True, capture_output=True, cwd=self.scratch, timeout=30)
         self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
