@@ -71,7 +71,7 @@ export function createFrame(
     return frame;
   };
   draw();
-  return Object.freeze({
+  return {
     quits,
     get frame(): Frame {
       return frame;
@@ -85,11 +85,11 @@ export function createFrame(
     },
     surface(name: string): TestSurface {
       const mount = createMount(() => surfaces.delete(surface));
-      const surface: TestSurface = Object.freeze({
+      const surface: TestSurface = {
         close: mount.close,
         signal: mount.signal,
         tui: createSurface(core, name, mount.signal),
-      });
+      };
       surfaces.add(surface);
       return surface;
     },
@@ -134,7 +134,7 @@ export function createFrame(
       // The layout after the root closes ends the mounts of the widgets that left.
       core.scene.layout();
     },
-  });
+  };
 }
 
 /** The key event of one stroke of `parseKeys`, without the kitty fields `shifted` and `baseLayout`. */

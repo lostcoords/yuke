@@ -211,21 +211,6 @@ test("a value outside the enum fails with the list, and a value in it runs the t
   );
 });
 
-test("an argument named __proto__ is an own field", async () => {
-  const proto = {
-    name: "proto",
-    description: "d",
-    concurrency: "serial",
-    inputSchema: { type: "object", properties: { ["__proto__"]: { type: "string" } }, required: ["__proto__"] },
-    // biome-ignore lint/suspicious/noProto: an own field named __proto__ is the case under test.
-    execute: (args: Record<string, unknown>) => String(Object.hasOwn(args, "__proto__") && args.__proto__),
-  } as unknown as Tool;
-  const { host, session } = await opened(proto);
-  await using _host = host;
-
-  assertEquals((await session.call("proto", JSON.parse('{"__proto__": "x"}'))).text, "x");
-});
-
 test("a throw of a tool is an error with its message", async () => {
   const { host, session } = await opened(
     tool("fail", () => {

@@ -127,7 +127,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     return mount;
   };
 
-  const panes: Panes = Object.freeze({
+  const panes: Panes = {
     view: core.panes.view,
     get activePane(): Pane | undefined {
       scope.check();
@@ -141,7 +141,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     setDefault: live((create: DefaultPaneFactory): (() => void) => {
       return scope.own(core.setDefaultPane({ owner, create, adopt: (mount) => scope.ownMount(mount), signal }));
     }),
-  });
+  };
 
   const setTitle = live((title: () => string): (() => void) => scope.own(core.setTitle({ title, signal })));
 
@@ -294,7 +294,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       }),
   );
 
-  return Object.freeze({
+  return {
     get size(): Size {
       scope.check();
       return Object.freeze({ width: core.driver.width(), height: core.driver.height() });
@@ -344,21 +344,21 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     select,
     prompt,
     confirm,
-    commands: Object.freeze({
+    commands: {
       add: live((command: Command): (() => void) => {
         return scope.own(core.commands.add(command, own(command.name)));
       }),
       run: live((name: string, args?: unknown): boolean => core.commands.run(lookup(name), args)),
       list: live((): readonly CommandItem[] => core.commands.list()),
-    }),
-    keys: Object.freeze({
+    },
+    keys: {
       add: live((spec: string, command: string, options?: { readonly in?: string | undefined }): (() => void) =>
         scope.own(core.keymap.add(spec, lookup(command), options?.in === undefined ? {} : { in: options.in })),
       ),
       pending: live((): string => core.keymap.pending()),
       list: live((command: string): readonly string[] => core.keymap.list(lookup(command))),
-    }),
-    styles: Object.freeze({
+    },
+    styles: {
       add: live((groups: Readonly<Record<string, StylePatch>>): (() => void) => scope.own(core.styles.add(groups))),
       addTheme: live((name: string, theme: Theme): (() => void) => scope.own(core.styles.addTheme(name, theme))),
       themes: live((): readonly string[] => core.styles.themes()),
@@ -367,35 +367,35 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         return core.styles.theme;
       },
       setTheme: live((name: string): (() => void) => scope.own(core.styles.setTheme(name))),
-    }),
-    status: Object.freeze({
+    },
+    status: {
       set: live((id: string, entry: StatusEntry): (() => void) => core.status.set(own(id), entry)),
       list: live((): readonly StatusItem[] => core.status.list()),
       addChangeListener: live((listener: () => void): (() => void) =>
         scope.own(core.status.addChangeListener(listener)),
       ),
-    }),
-    notices: Object.freeze({
+    },
+    notices: {
       list: live((): readonly Notice[] => core.notices.list()),
       addListener: live((listener: (notice: Notice) => void): (() => void) =>
         scope.own(core.notices.addListener(listener)),
       ),
-    }),
-    widgets: Object.freeze({
+    },
+    widgets: {
       list: live((): readonly PlacedWidget[] => core.widgets.list()),
       addWatcher: live((attach: (mount: PlacedWidget) => (() => void) | undefined): (() => void) =>
         scope.own(core.widgets.addWatcher(owner, attach)),
       ),
-    }),
-    views: Object.freeze({
+    },
+    views: {
       add: live((type: string, restore: RestoreView): (() => void) => {
         return scope.own(core.views.add(own(type), { owner, restore, adopt: (mount) => scope.ownMount(mount) }));
       }),
-    }),
+    },
     requestFrame: live((delay?: number): void => core.driver.requestFrame(delay)),
-    clipboard: Object.freeze({
+    clipboard: {
       writeText: live((text: string): void => core.driver.copy(text)),
       readImage: live((): Promise<ClipboardImage | undefined> => core.driver.readImage()),
-    }),
-  });
+    },
+  };
 }

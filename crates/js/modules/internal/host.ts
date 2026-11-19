@@ -38,7 +38,7 @@ import { Transcript } from "yuke:transcript";
 /** The model of a session when the test names none. The fake model answers each model of a provider with an API key. */
 const TEST_MODEL = { provider: "minimax", model: "MiniMax-M3" } as const;
 
-export const reply = Object.freeze({
+export const reply = {
   text: (text: string, options?: ReplyOptions): Reply => ({
     kind: "text",
     text,
@@ -55,7 +55,7 @@ export const reply = Object.freeze({
   overflow: (): Reply => ({ kind: "overflow" }),
   failed: (text: string): Reply => ({ kind: "failed", text }),
   stall: (text = ""): Reply => ({ kind: "stall", text }),
-});
+};
 
 /**
  * The operation of a plugin request that `onClientRequest` answers. It gives a JSON copy of the result, or a failure record as
@@ -164,7 +164,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       },
     });
     await testWaitForSettled();
-    return Object.freeze({
+    return {
       id,
       transcript,
       async sendMessage(text: string, operation?: OperationOptions): Promise<void> {
@@ -212,7 +212,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         await sessions.closeForAll(id);
         await testWaitForSettled();
       },
-    } satisfies TestSession);
+    } satisfies TestSession;
   };
 
   const close = (): Promise<void> => {
@@ -225,7 +225,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
     return closing;
   };
 
-  return Object.freeze({
+  return {
     get notices() {
       return testHostRecord().notices;
     },
@@ -239,5 +239,5 @@ export async function createHost(options: HostOptions): Promise<Host> {
     openSession,
     close,
     [Symbol.asyncDispose]: close,
-  } satisfies Host);
+  } satisfies Host;
 }

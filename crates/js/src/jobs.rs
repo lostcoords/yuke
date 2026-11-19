@@ -317,10 +317,9 @@ impl Drop for Jobs {
         for job in &mut list.running {
             job.silenced = true;
             job.stop.cancel();
-            if let Work::Process { group: Some(group), .. } = job.work
-                && signal_group(group, Signal::KILL).is_err()
-            {
+            if let Work::Process { group: Some(group), .. } = job.work {
                 // The system refused the kill, and the consumer has nothing left to tell.
+                _ = signal_group(group, Signal::KILL);
             }
         }
     }

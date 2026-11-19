@@ -72,8 +72,8 @@ impl TestScreen {
         Ok(())
     }
 
-    fn cursor<'js>(&self, ctx: Ctx<'js>, cursor: Opt<Value<'js>>) -> rquickjs::Result<()> {
-        let cursor = cursor_of(&ctx, cursor.0)?;
+    fn cursor(&self, cursor: Opt<Value<'_>>) -> rquickjs::Result<()> {
+        let cursor = cursor_of(cursor.0)?;
         self.screen.borrow_mut().cursor(cursor);
         Ok(())
     }

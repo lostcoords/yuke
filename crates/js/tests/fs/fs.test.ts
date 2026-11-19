@@ -50,15 +50,24 @@ test("a bad path or option throws a type error", async () => {
     assertRejects(() => fs.readTextFile("relative.txt")),
     assertRejects(() => fs.readTextFile("relative.txt", { folder: "not/absolute" })),
     assertRejects(() => fs.readTextFile("")),
-    assertRejects(() => fs.readTextFile("a\0b", { folder: base })),
     assertRejects(() => fs.readFile("x", { folder: base, position: -1 })),
     // @ts-expect-error: the data is an array, not bytes.
     assertRejects(() => fs.writeFile("x", [1], { folder: base })),
   ]);
   assertEquals(
     errors.map((error) => (error instanceof Error ? error.name : error)),
-    Array(6).fill("TypeError"),
+    Array(5).fill("TypeError"),
   );
+});
+
+test("an empty path names the folder, and a NUL in a path is a file system error that says so", async () => {
+  const base = folder();
+  const empty = await assertRejects(() => fs.readTextFile("", { folder: base }));
+  const nul = await assertRejects(() => fs.readTextFile("a\0b", { folder: base }));
+  assert(empty instanceof fs.FileSystemError, String(empty));
+  assert(nul instanceof fs.FileSystemError, String(nul));
+  assertEquals([empty.code, empty.message], ["EISDIR", `the path is a directory: ${base}/`]);
+  assert(nul.message.includes("NUL"), nul.message);
 });
 
 // Failures.

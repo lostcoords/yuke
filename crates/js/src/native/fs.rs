@@ -262,15 +262,9 @@ impl<'js> IntoJs<'js> for Bytes {
     }
 }
 
-/// The absolute path of `path`. A relative path needs the absolute `folder` option. A bad path throws a `TypeError`.
+/// The absolute path of `path`. A relative path needs the absolute `folder` option, else it throws a `TypeError`.
 fn resolve(ctx: &Ctx<'_>, path: &str, folder: Option<&str>) -> rquickjs::Result<PathBuf> {
     let refuse = |message: &str| throw(ctx, ErrorClass::TypeError, message);
-    if path.is_empty() {
-        return Err(refuse("the path is empty"));
-    }
-    if path.contains('\0') || folder.is_some_and(|folder| folder.contains('\0')) {
-        return Err(refuse("a path holds a NUL character"));
-    }
     if Path::new(path).is_absolute() {
         return Ok(PathBuf::from(path));
     }
@@ -511,8 +505,9 @@ fn write(
         check(stop)?;
         fs::rename(&temporary, path).map_err(|error| Failure::new(error, path))
     })();
-    if written.is_err() && fs::remove_file(&temporary).is_err() {
+    if written.is_err() {
         // The temporary file stays. Its name says that it is one, and the failure still reaches the caller.
+        _ = fs::remove_file(&temporary);
     }
     written
 }

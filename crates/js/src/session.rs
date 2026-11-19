@@ -988,9 +988,8 @@ where
                     }
                 }
             };
-            if reply.send(answer.await).is_err() {
-                // The caller has left, and the run has ended.
-            }
+            // The caller has left, and the run has ended.
+            _ = reply.send(answer.await);
         })
         .await?;
     answer.await.map_err(|_| Error::Stopped)?
@@ -1012,9 +1011,8 @@ pub(crate) fn close_dropped(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Re
     let promise = start_close(ctx, registry, open)?;
     let ctx = ctx.clone();
     ctx.clone().spawn(async move {
-        if caught(&ctx, promise.into_future::<()>().await).is_err() {
-            // Only the end of the engine fails the close, and that end drops the plugins too.
-        }
+        // Only the end of the engine fails the close, and that end drops the plugins too.
+        _ = caught(&ctx, promise.into_future::<()>().await);
     });
     Ok(())
 }

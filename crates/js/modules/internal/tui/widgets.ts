@@ -131,7 +131,7 @@ export class TextSupport<P, E> {
       list.push(handler);
       return () => removeWhere(list, (entry) => entry === handler);
     };
-    return Object.freeze({
+    return {
       setContexts: (atoms: readonly string[]): (() => void) => {
         if (part.disposed) return () => {};
         const remove = part.contexts.set(Object.freeze([...atoms]));
@@ -168,7 +168,7 @@ export class TextSupport<P, E> {
       addPasteHandler: (handler: (event: PasteEvent) => boolean): (() => void) => add(this.#pastes, handler),
       addChangeListener: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener),
       close: part.dispose,
-    });
+    };
   }
 
   /** Ask the core for a frame after a change of the widget. Before the widget is placed, do nothing. */
@@ -323,12 +323,12 @@ export class PlacedWidgets {
       const found = registered.get(entry.view);
       if (found === undefined || this.#mounted.has(entry.view)) continue;
       const controller = new AbortController();
-      const mount = Object.freeze({
+      const mount = {
         widget: found.widget,
         pane: entry.pane,
         group: found.support.group,
         signal: controller.signal,
-      });
+      };
       this.#mounted.set(entry.view, { mount, controller, layer: entry.layer });
       added.push(mount);
     }

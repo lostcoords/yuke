@@ -21,9 +21,8 @@ pub(super) fn add<'js>(
                     &format!("'{level}' is not a console level"),
                 ));
             };
-            if reports.send(Report::Console { level, text }).is_err() {
-                // The owner dropped the receiver, so it ignores the console.
-            }
+            // The owner dropped the receiver, so it ignores the console.
+            _ = reports.send(Report::Console { level, text });
             Ok(())
         })?,
     )

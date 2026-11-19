@@ -148,9 +148,8 @@ impl Display {
     }
 
     pub(crate) fn ask(&self, request: DisplayRequest) {
-        if self.requests.send(request).is_err() {
-            // The host dropped the receiver, so it answers no request.
-        }
+        // The host dropped the receiver, so it answers no request.
+        _ = self.requests.send(request);
     }
 
     pub(crate) fn take_inputs(&self) -> VecDeque<DisplayInput> {

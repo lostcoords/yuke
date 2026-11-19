@@ -7,13 +7,13 @@ import { aiComplete } from "yuke:internal/native";
 import type { FinishReason, Usage } from "yuke:protocol";
 import type { Infer, ObjectSchema, Schema } from "yuke:tools";
 
-export const Output = Object.freeze({
+export const Output = {
   object<const S extends ObjectSchema>(options: { schema: S; name?: string }): ObjectOutput<Infer<S>> {
     const output = Object.freeze({ schema: options.schema, name: options.name ?? "response" });
     // The brand of the type exists only for TypeScript.
     return output as unknown as ObjectOutput<Infer<S>>;
   },
-});
+};
 
 /**
  * `schema` in the form that each provider takes. Anthropic refuses a bound and an object without

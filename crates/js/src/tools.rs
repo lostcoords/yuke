@@ -401,9 +401,8 @@ impl ScriptTool {
                 let output = caught(
                     &ctx,
                     Function::new(ctx.clone(), move |text: String| {
-                        if output.send(text).is_err() {
-                            // The call has answered, so a late text has no reader.
-                        }
+                        // The call has answered, so a late text has no reader.
+                        _ = output.send(text);
                     }),
                 )?;
                 // A cancel of the call stops its commands. The guard also stops them when the call ends or drops.

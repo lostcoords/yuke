@@ -207,7 +207,6 @@ export class TextEditor implements TextWidget<number, EditorChange> {
   }
 
   heightFor(width: number): number {
-    if (!Number.isInteger(width) || width < 0) throw new RangeError("a width is a whole number of cells");
     if (width === 0) return 0;
     return this.#rowCount(this.#layoutAt(this.#textWidth(width)));
   }
