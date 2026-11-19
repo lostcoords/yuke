@@ -504,14 +504,14 @@ pub struct LoadSessionParams {
 pub struct ListSessionsParams {
     /// Only the sessions whose newest settings name this folder. Without it, the list has the sessions of every folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<PathBuf>,
+    pub folder: Option<PathBuf>,
     /// Only the children of this session. Without it, the list has the sessions without a parent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
     /// The most rows of the page, from 1 to 100. The default is 50.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-    /// The `nextCursor` of the page before, with the same `cwd` and `parent`. Without it, the page starts at the newest
+    /// The `nextCursor` of the page before, with the same `folder` and `parent`. Without it, the page starts at the newest
     /// session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,

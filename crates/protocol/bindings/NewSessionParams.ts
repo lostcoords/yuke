@@ -22,4 +22,4 @@ settings: RequestSettings,
 /**
  * The folder that the tools of the session work in.
  */
-cwd: string, };
+folder: string, };

@@ -343,7 +343,7 @@ test("the folder of a session stays while a call reads the folder of its start",
   const session = await host.openSession();
   await mkdir(`${folder()}/moved`);
 
-  await session.setSettings({ ...session.settings, cwd: `${folder()}/moved` });
+  await session.setSettings({ ...session.settings, folder: `${folder()}/moved` });
 
   assertEquals((await session.call("where", {})).text, `${folder()} ${folder()}/moved`);
 });

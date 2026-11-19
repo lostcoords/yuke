@@ -376,7 +376,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
             choice.settings.effort === effort && JSON.stringify(choice.settings.thinking) === JSON.stringify(thinking),
         )?.level;
       const model = level === undefined ? settings.model.model : `${settings.model.model} ${level}`;
-      return { model, folder: shownFolder(settings.cwd) };
+      return { model, folder: shownFolder(settings.folder) };
     }
     const pick = chat.choice.current;
     const level = models

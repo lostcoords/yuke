@@ -30,7 +30,7 @@ fn settings(place: &Place) -> Value {
             model: "MiniMax-M3".to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: place.work.clone(),
+        folder: place.work.clone(),
     })
     .unwrap()
 }

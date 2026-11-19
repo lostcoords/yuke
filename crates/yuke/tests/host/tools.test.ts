@@ -289,7 +289,7 @@ test("a call gets the id of its session, its call id, and its folder", async () 
   );
   await using _host = host;
   await mkdir(`${folder()}/other`);
-  const other = await host.openSession({ cwd: `${folder()}/other` });
+  const other = await host.openSession({ folder: `${folder()}/other` });
 
   await session.call("facts", {});
   await other.call("facts", {});
@@ -375,7 +375,7 @@ test("a call in a turn shows the hints of its tool, the folder of the session, a
   await session.sendMessage("show it");
 
   const entry = session.transcript.entries.find((item) => item.kind === "tool");
-  assertEquals(entry?.kind === "tool" && [entry.hints, entry.cwd, entry.result?.content, entry.display], [
+  assertEquals(entry?.kind === "tool" && [entry.hints, entry.folder, entry.result?.content, entry.display], [
     { title: "Show", subject: { argument: "path", kind: "file" }, preview: "tail" },
     folder(),
     "ok",
@@ -399,11 +399,11 @@ test("a media path starts in the folder of the start of the call", async () => {
     ),
   );
   await using _host = host;
-  await session.setSettings({ ...session.settings, cwd: `${folder()}/first` });
+  await session.setSettings({ ...session.settings, folder: `${folder()}/first` });
 
   const pending = session.call("later", {});
   await waitForSettled();
-  await session.setSettings({ ...session.settings, cwd: `${folder()}/second` });
+  await session.setSettings({ ...session.settings, folder: `${folder()}/second` });
   release();
 
   assertEquals(plain((await pending).media), [["image/png", [...new TextEncoder().encode("first")]]]);

@@ -69,7 +69,7 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
     assert_eq!(finished.end, completed());
     assert_eq!(finished.text, "Hello.");
     let opened = place.store().await.open(finished.session, Access::Read).await.unwrap();
-    assert_eq!(opened.settings.cwd, place.work);
+    assert_eq!(opened.settings.folder, place.work);
     assert_eq!(
         opened.settings.model,
         ModelReference {

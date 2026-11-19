@@ -85,7 +85,7 @@ test("the next message after /new creates a session in the folder of the old ses
   await waitForSettled();
 
   assertEquals(
-    [sessions.created.map((settings) => settings.cwd), chat.opened.map((open) => open.id), sessions.inputs],
+    [sessions.created.map((settings) => settings.folder), chat.opened.map((open) => open.id), sessions.inputs],
     [["/w"], ["s1", "s-new"], [[{ kind: "userText", text: "hi" }]]],
   );
 });
@@ -196,7 +196,7 @@ test("a reload after /new keeps the folder of the old session", async () => {
   after.key("h i enter");
   await waitForSettled();
 
-  assertEquals([shown, sessions.created.map((settings) => settings.cwd)], [["chat:folder", "/w"], ["/w"]]);
+  assertEquals([shown, sessions.created.map((settings) => settings.folder)], [["chat:folder", "/w"], ["/w"]]);
 });
 
 test("a draft that a pane left before /new does not come back after a later return", async () => {

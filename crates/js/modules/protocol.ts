@@ -158,7 +158,7 @@ hints: ToolHints,
 /**
  * The working folder of the call. A relative path of the call starts there.
  */
-cwd?: string, };
+folder?: string, };
 
 /**
  * The params of `plugin/check`.
@@ -640,7 +640,7 @@ export type ListSessionsParams = {
 /**
  * Only the sessions whose newest settings name this folder. Without it, the list has the sessions of every folder.
  */
-cwd?: string, 
+folder?: string, 
 /**
  * Only the children of this session. Without it, the list has the sessions without a parent.
  */
@@ -650,7 +650,7 @@ parent?: SessionId,
  */
 limit?: number, 
 /**
- * The `nextCursor` of the page before, with the same `cwd` and `parent`. Without it, the page starts at the newest
+ * The `nextCursor` of the page before, with the same `folder` and `parent`. Without it, the page starts at the newest
  * session.
  */
 cursor?: string, };
@@ -1385,7 +1385,7 @@ model: ModelReference,
 /**
  * The working folder of the newest settings.
  */
-cwd: string, 
+folder: string, 
 /**
  * The display title from a message, an explicit rename, or a fork of a titled session.
  */
@@ -1423,7 +1423,7 @@ settings: RequestSettings,
 /**
  * The folder that the tools of the session work in.
  */
-cwd: string, };
+folder: string, };
 
 /**
  * A session for a new viewer: its settings, and the updates that show it. The updates are its last saved events, its

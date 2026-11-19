@@ -926,8 +926,8 @@ async fn save_settings(
     mut settings: SessionSettings,
     shared: &Shared,
 ) -> Result<StoredEvent, AppError> {
-    if settings.cwd != session.settings().cwd {
-        settings.cwd = canonical(settings.cwd).await?;
+    if settings.folder != session.settings().folder {
+        settings.folder = canonical(settings.folder).await?;
     }
     model_of(&settings.model, shared)?;
     let event_number = session

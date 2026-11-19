@@ -54,7 +54,7 @@ function reads(...paths: string[]): StoredEvent[] {
   for (const [at, path] of paths.entries()) {
     const callId = `c${at}`;
     const call: Block = { kind: "toolCall", callId, name: "read", arguments: JSON.stringify({ path }) };
-    const display = { calls: [{ blockIndex: 0, hints, cwd: "/w" }], results: [] };
+    const display = { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] };
     saved.push(commit(saved.length + 1, [call], { display }));
     const result: Block = { kind: "toolResult", callId, content: "text", isError: false };
     saved.push(commit(saved.length + 1, [result], { display: { calls: [], results: [] } }));

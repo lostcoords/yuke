@@ -44,7 +44,7 @@ test("a saved choice skips the picker on the first send and sends the draft", as
         reasoning: { effort: "high" },
         toolChoice: "auto",
       },
-      cwd: "/launch",
+      folder: "/launch",
     },
   ]);
   assertEquals(
@@ -453,7 +453,10 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
   frame.key("enter");
   await waitForSettled();
   assertEquals(
-    [sessions.created.map((settings) => [settings.model, settings.settings.reasoning, settings.cwd]), sessions.inputs],
+    [
+      sessions.created.map((settings) => [settings.model, settings.settings.reasoning, settings.folder]),
+      sessions.inputs,
+    ],
     [[[{ provider: "p", model: "n" }, { effort: "low" }, "/launch"]], [[{ kind: "userText", text: "hi" }]]],
   );
 });
@@ -468,7 +471,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   const own = {
     model: { provider: "q", model: "n" },
     settings: { ...SETTINGS.settings, maxOutputTokens: 1000 },
-    cwd: "/session",
+    folder: "/session",
   };
   sessions.push({ seq: 2, kind: "settings", ...own });
   frame.key("ctrl+k m");
@@ -481,7 +484,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
     {
       model: { provider: "p", model: "m" },
       settings: { ...own.settings, reasoning: {} },
-      cwd: "/session",
+      folder: "/session",
     },
   ]);
   // A refused change gives one notice.

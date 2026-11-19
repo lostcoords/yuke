@@ -6,14 +6,14 @@ import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from 
 import { fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
-/** A saved session `id` of the folder `cwd` with the title `title`, `minutes` old. */
-function row(id: string, cwd: string, title: string | undefined, state: SessionState, minutes: number): SessionRow {
+/** A saved session `id` of the folder `folder` with the title `title`, `minutes` old. */
+function row(id: string, folder: string, title: string | undefined, state: SessionState, minutes: number): SessionRow {
   const updatedAt = Date.now() - minutes * 60_000;
   const model = { provider: "p", model: "m" };
   return {
     sessionId: id,
     model,
-    cwd,
+    folder,
     ...(title === undefined ? {} : { title }),
     createdAt: updatedAt,
     updatedAt,
@@ -59,7 +59,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
   /** Whether one row of `all` holds every text of `texts`, in any column. */
   const shows = (all: string[], ...texts: string[]) => all.some((line) => texts.every((text) => line.includes(text)));
   assertEquals(
-    loaded.sessions.lists.map((list) => list.cwd),
+    loaded.sessions.lists.map((list) => list.folder),
     ["/w", undefined],
   );
   assertEquals(
@@ -160,6 +160,6 @@ test("the list of a pane whose session is gone starts with the start folder", as
   const drawn = await openList(frame, loaded.chat);
   assertEquals(
     [drawn.some((line) => line.trim() === "/start"), loaded.sessions.lists],
-    [true, [{ cwd: "/start", limit: 100 }]],
+    [true, [{ folder: "/start", limit: 100 }]],
   );
 });

@@ -56,7 +56,7 @@ fn test_server(env: &[(&str, &str)]) -> ServerConfig {
             .iter()
             .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
             .collect(),
-        cwd: None,
+        folder: None,
         url: None,
         enabled: true,
     }

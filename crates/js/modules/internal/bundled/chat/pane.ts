@@ -274,7 +274,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       // A relative target starts in the folder of its tool call, else in the folder of the session, else at the start.
       const entry = transcript.entries.find((candidate) => candidate.id === position.item);
-      const folder = (entry?.kind === "tool" ? entry.cwd : undefined) ?? transcript.settings?.cwd ?? tui.startup.cwd;
+      const folder =
+        (entry?.kind === "tool" ? entry.folder : undefined) ?? transcript.settings?.folder ?? tui.startup.cwd;
       const absolute = /^[a-z][a-z0-9+.-]*:/i.test(link) || link.startsWith("/");
       const target = absolute ? link : `${folder.replace(/\/$/, "")}/${link}`;
       tui.clipboard.writeText(target);
@@ -291,7 +292,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // A question takes the place of the list, and a pane without a row above the frame shows no list.
   const completions = new ChatCompletions(composer, {
     providers: () => chat.completionProviders(),
-    cwd: () => chatSession.transcript.settings?.cwd ?? nextFolder ?? tui.startup.cwd,
+    cwd: () => chatSession.transcript.settings?.folder ?? nextFolder ?? tui.startup.cwd,
     signal: mount.signal,
     enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
     onChange: () => tui.requestFrame(),
@@ -353,7 +354,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     return {
       model: { provider: chosen.provider, model: chosen.model.id },
       settings: { reasoning: reasoning.settings, toolChoice: "auto" },
-      cwd: nextFolder ?? tui.startup.cwd,
+      folder: nextFolder ?? tui.startup.cwd,
     };
   };
 
@@ -794,7 +795,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (occupied()) return;
     // The server keeps a session with a turn or a job open after the pane lets go of it.
     const running = working.active || (chatSession.handle?.jobs().length ?? 0) > 0;
-    nextFolder = chatSession.transcript.settings?.cwd ?? nextFolder;
+    nextFolder = chatSession.transcript.settings?.folder ?? nextFolder;
     chatComposer.setDraft(EMPTY);
     chatSession.leave();
     if (running) ctx.notify("info", "The session is still running: use /sessions to check it");

@@ -11,7 +11,7 @@ function session(title: string | undefined): SessionRow {
   return {
     sessionId: "s1",
     model: { provider: "p", model: "m" },
-    cwd: "/w",
+    folder: "/w",
     ...(title === undefined ? {} : { title }),
     createdAt: 0,
     updatedAt: 0,

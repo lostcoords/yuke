@@ -148,7 +148,7 @@ test("setSettings changes the folder and the model of an open session", async ()
 
   await session.setSettings({
     ...session.settings,
-    cwd: `${folder()}/other`,
+    folder: `${folder()}/other`,
     model: { provider: "openai", model: "gpt-4.1" },
   });
   await session.sendMessage("Hi.");
@@ -174,7 +174,7 @@ test("a setSettings that fails during a turn changes nothing", async () => {
   );
   stop.abort(new Error("stop"));
   await sending;
-  await session.setSettings({ ...session.settings, cwd: folder() });
+  await session.setSettings({ ...session.settings, folder: folder() });
   await session.sendMessage("Hi.");
 
   assertEquals(

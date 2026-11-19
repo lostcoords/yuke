@@ -697,7 +697,7 @@ impl TurnParts<'_> {
                 Block::ToolCall(call) => Some(CallDisplay {
                     block_index,
                     hints: toolset.hints_of(&self.driver.resolve(block_index, call).call.name),
-                    cwd: toolset.cwd().map(str::to_owned),
+                    folder: toolset.folder().map(str::to_owned),
                 }),
                 _ => None,
             })

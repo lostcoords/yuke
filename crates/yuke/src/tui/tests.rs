@@ -276,7 +276,7 @@ async fn saved_session(place: &Place) -> SessionId {
                     model: "MiniMax-M3".to_owned(),
                 },
                 settings: yuke_ai::RequestSettings::new(),
-                cwd: place.work.clone(),
+                folder: place.work.clone(),
             },
             None,
         )

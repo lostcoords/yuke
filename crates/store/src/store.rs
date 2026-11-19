@@ -283,7 +283,7 @@ impl Store for FileStore {
         let line = log::line(1, &log::settings_body(settings, Some(prompt)).map_err(failed)?);
         let meta = Meta {
             model: settings.model.clone(),
-            cwd: settings.cwd.clone(),
+            folder: settings.folder.clone(),
             title: None,
             fork_of: None,
             parent,
@@ -328,7 +328,7 @@ impl Store for FileStore {
                 let settings = settings_of(&source_log, cut)?;
                 let meta = Meta {
                     model: settings.model.clone(),
-                    cwd: settings.cwd.clone(),
+                    folder: settings.folder.clone(),
                     title,
                     fork_of: Some(source),
                     parent: None,
@@ -379,7 +379,7 @@ impl Store for FileStore {
             state.locked(|index| {
                 let mut meta = meta_of(index, id)?;
                 meta.model = settings.model;
-                meta.cwd = settings.cwd;
+                meta.folder = settings.folder;
                 let line = Line {
                     meta: Some(meta),
                     ..Line::new(id)
@@ -453,12 +453,12 @@ impl Store for FileStore {
 
     async fn list_sessions(
         &self,
-        cwd: Option<&Path>,
+        folder: Option<&Path>,
         parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
-        let cwd = cwd.map(Path::to_path_buf);
+        let folder = folder.map(Path::to_path_buf);
         let before = after.map_or(u64::MAX, |ListPosition(position)| position);
 
         self.call(move |state| {
@@ -469,7 +469,7 @@ impl Store for FileStore {
                 .iter()
                 .map(|(id, entry)| (id, &entry.meta))
                 .filter(|(_, meta)| meta.parent == parent && meta.position < before)
-                .filter(|(_, meta)| cwd.as_ref().is_none_or(|cwd| meta.cwd == *cwd))
+                .filter(|(_, meta)| folder.as_ref().is_none_or(|folder| meta.folder == *folder))
                 .collect();
             listed.sort_unstable_by_key(|(_, meta)| std::cmp::Reverse(meta.position));
             let next = if listed.len() > limit {
@@ -678,7 +678,7 @@ fn summary_of(id: SessionId, meta: &Meta) -> Result<SessionSummary, StoreError> 
     Ok(SessionSummary {
         session_id: id,
         model: meta.model.clone(),
-        cwd: meta.cwd.clone(),
+        folder: meta.folder.clone(),
         title: meta
             .title
             .as_deref()

@@ -16,4 +16,4 @@ hints: ToolHints,
 /**
  * The working folder of the call. A relative path of the call starts there.
  */
-cwd?: string, };
+folder?: string, };

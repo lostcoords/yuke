@@ -35,14 +35,14 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   answers the blob `{ digest, len }` for a media block of an input. `blob/get { sessionId, blob }` answers the bytes
   as base64 `{ data }`, also for a closed session. It reads the blob by its digest, and fails with -32007 when the
   session has no such blob. `session/remove` deletes the blobs.
-- A session row holds the facts of the session (`sessionId`, `model`, `cwd`, `title?`, `createdAt`, `updatedAt`,
+- A session row holds the facts of the session (`sessionId`, `model`, `folder`, `title?`, `createdAt`, `updatedAt`,
   `forkOf?`, `parent?`) and its `state` side by side.
 - `session/new` can name a `parent`, and each row of the session then holds that `parent`. A `session/list` without `parent`
   shows only the sessions without a parent. A `session/list` with `parent` shows the children of that session. A
   `session/remove` removes the children and their children too, and it fails while one of these sessions is open. A fork has
   no parent. A fork starts with the title `Fork — <source title>` when the source has a title, bounded to 200 Unicode
   scalar values. A fork without a source title has no title until its first message.
-- `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `cwd`. A page has
+- `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `folder`. A page has
   50 rows, or `limit` from 1 to 100. Its `nextCursor` is an opaque text that continues the same list. The pages are no snapshot: a session
   that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.
 - `session/remove` deletes a saved session with its events, pending inputs, and blobs. Its forks stay. It fails for an

@@ -80,7 +80,7 @@ impl LiveSession {
             .open_session(Rc::clone(&host) as Rc<dyn SessionHost>)
             .await
             .map_err(|error| AppError::Internal(chain_text(&error)))?;
-        let servers = start_servers(&host, &session.settings().cwd);
+        let servers = start_servers(&host, &session.settings().folder);
         let parts = Rc::new(Parts {
             session: tokio::sync::Mutex::new(session),
             turn: RefCell::default(),
@@ -896,7 +896,7 @@ fn toolset_of(
     folder: &Path,
 ) -> Result<Toolset, String> {
     let mut toolset = Toolset::new();
-    toolset.set_cwd(folder.to_string_lossy());
+    toolset.set_folder(folder.to_string_lossy());
     for (definition, tool) in tools.map_err(|error| chain_text(&error))? {
         toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
     }
@@ -1088,7 +1088,7 @@ impl SessionHost for Host {
     }
 
     fn cwd(&self) -> PathBuf {
-        self.settings.borrow().cwd.clone()
+        self.settings.borrow().folder.clone()
     }
 
     fn is_closed(&self) -> bool {
@@ -1205,7 +1205,7 @@ mod tests {
                 model: "MiniMax-M3".to_owned(),
             },
             settings: yuke_ai::RequestSettings::new(),
-            cwd: PathBuf::from("/"),
+            folder: PathBuf::from("/"),
         }
     }
 
@@ -1646,7 +1646,7 @@ mod tests {
                 model: "MiniMax-M3".to_owned(),
             },
             settings: yuke_ai::RequestSettings::new(),
-            cwd: place.work.clone(),
+            folder: place.work.clone(),
         };
         let id = app.sessions().create(first.clone(), None).await.unwrap();
         let other = place.work.join("other");
@@ -1656,7 +1656,7 @@ mod tests {
                 provider: "minimax".to_owned(),
                 model: "MiniMax-M3.1-Flash".to_owned(),
             },
-            cwd: other.clone(),
+            folder: other.clone(),
             ..first
         };
         changed.settings.reasoning.effort = Some(yuke_ai::Effort::High);

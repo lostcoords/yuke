@@ -112,7 +112,7 @@ pub fn settings(model: &str) -> SessionSettings {
             model: model.to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: PathBuf::from("/work"),
+        folder: PathBuf::from("/work"),
     }
 }
 
@@ -150,7 +150,7 @@ pub fn display() -> CommitDisplay {
                 }),
                 preview: Preview::None,
             },
-            cwd: Some("/repo".to_owned()),
+            folder: Some("/repo".to_owned()),
         }],
         results: vec![ResultDisplay {
             block_index: 0,
@@ -1465,10 +1465,10 @@ pub async fn the_context_holds_only_commit_blocks_across_pending_inputs_and_sett
     );
 }
 
-/// Settings that work in the folder `cwd`.
-fn settings_in(cwd: &str) -> SessionSettings {
+/// Settings that work in the folder `folder`.
+fn settings_in(folder: &str) -> SessionSettings {
     SessionSettings {
-        cwd: PathBuf::from(cwd),
+        folder: PathBuf::from(folder),
         ..settings("")
     }
 }
@@ -1611,7 +1611,7 @@ pub async fn a_session_lists_in_the_folder_of_its_newest_settings(store: &dyn St
         .unwrap();
     assert_eq!(listed(&work), []);
     assert_eq!(listed(&other)[0], id);
-    assert_eq!(store.session_summary(id).await.unwrap().cwd, Path::new("/other"));
+    assert_eq!(store.session_summary(id).await.unwrap().folder, Path::new("/other"));
 }
 
 /// The default list holds the sessions without a parent, and a list with a parent holds only its children.
@@ -1694,7 +1694,7 @@ pub async fn a_fork_is_the_newest_session_and_names_its_source(store: &dyn Store
     assert_eq!(listed(&store.list_sessions(None, None, None, 1).await.unwrap()), [fork]);
     assert_eq!(summary.fork_of, Some(source));
     assert_eq!(summary.title.as_deref(), Some("Fork — first task"));
-    assert_eq!(summary.cwd, Path::new("/work"));
+    assert_eq!(summary.folder, Path::new("/work"));
     assert_eq!(store.session_summary(source).await.unwrap().fork_of, None);
 }
 
@@ -1805,7 +1805,7 @@ pub async fn a_rename_changes_no_conversation_event_or_activity_time(store: &dyn
     assert_eq!(renamed.created_at, summary.created_at);
     assert_eq!(renamed.updated_at, summary.updated_at);
     assert_eq!(renamed.model, summary.model);
-    assert_eq!(renamed.cwd, summary.cwd);
+    assert_eq!(renamed.folder, summary.folder);
     let after = store.load(id, EventPage::After(None)).await.unwrap();
     assert_eq!(after.events, before.events);
     assert_eq!(after.pending, before.pending);

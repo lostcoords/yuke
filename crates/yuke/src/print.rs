@@ -188,7 +188,7 @@ fn new_settings(
             reasoning,
             ..yuke_ai::RequestSettings::new()
         },
-        cwd: cwd.to_owned(),
+        folder: cwd.to_owned(),
     })
 }
 

@@ -17,7 +17,7 @@ pub struct SessionSettings {
     /// The request settings of the next turn.
     pub settings: yuke_ai::RequestSettings,
     /// The folder that the tools of the session work in.
-    pub cwd: PathBuf,
+    pub folder: PathBuf,
 }
 
 /// A model of a provider, by the ids of the config.
@@ -114,7 +114,7 @@ pub struct SessionSummary {
     /// The model of the newest settings.
     pub model: ModelReference,
     /// The working folder of the newest settings.
-    pub cwd: PathBuf,
+    pub folder: PathBuf,
     /// The display title from a message, an explicit rename, or a fork of a titled session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<SessionTitle>,

@@ -98,7 +98,7 @@ impl Saved {
         SessionSummary {
             session_id: id,
             model: settings.model.clone(),
-            cwd: settings.cwd.clone(),
+            folder: settings.folder.clone(),
             title: self.title.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -298,7 +298,7 @@ impl Store for MemoryStore {
 
     async fn list_sessions(
         &self,
-        cwd: Option<&Path>,
+        folder: Option<&Path>,
         parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
@@ -309,7 +309,9 @@ impl Store for MemoryStore {
             .iter()
             .filter(|(_, saved)| saved.parent == parent)
             .filter(|(_, saved)| after.is_none_or(|ListPosition(before)| saved.newest_write < before))
-            .filter(|(_, saved)| cwd.is_none_or(|cwd| saved.settings().is_some_and(|settings| settings.cwd == cwd)))
+            .filter(|(_, saved)| {
+                folder.is_none_or(|folder| saved.settings().is_some_and(|settings| settings.folder == folder))
+            })
             .collect();
         listed.sort_by_key(|(_, saved)| std::cmp::Reverse(saved.newest_write));
         let next = (listed.len() > limit)

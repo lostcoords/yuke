@@ -31,7 +31,7 @@ fn settings_json() -> Value {
         "settings": {
             "reasoning": {}, "toolChoice": "auto"
         },
-        "cwd": "/work"
+        "folder": "/work"
     })
 }
 
@@ -42,7 +42,7 @@ fn settings() -> SessionSettings {
             model: "test-model".to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: "/work".into(),
+        folder: "/work".into(),
     }
 }
 

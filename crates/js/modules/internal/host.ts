@@ -150,7 +150,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         reasoning: {},
         toolChoice: "auto",
       },
-      cwd: settings?.cwd ?? folder(),
+      folder: settings?.folder ?? folder(),
     };
     const id = await sessions.create(current);
     const transcript = new Transcript();

@@ -28,7 +28,7 @@ interface Call {
   readonly result: ToolResult;
   readonly display?: DisplayBlock[];
   /** The working folder of the call, or `null` for none. The default is /tools. */
-  readonly cwd?: string | null;
+  readonly folder?: string | null;
   readonly durationMs?: number;
 }
 
@@ -44,7 +44,7 @@ function calls(...called: Call[]): StoredEvent[] {
         {
           blockIndex: 0,
           hints: call.hints,
-          ...(call.cwd === undefined ? { cwd: "/tools" } : call.cwd === null ? {} : { cwd: call.cwd }),
+          ...(call.folder === undefined ? { folder: "/tools" } : call.folder === null ? {} : { folder: call.folder }),
         },
       ],
       results: [],
@@ -274,7 +274,7 @@ test("a call without a subject hint shows its incomplete raw arguments", async (
   const saved: StoredEvent[] = [
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints: PROBE, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: PROBE, folder: "/w" }], results: [] },
     }),
   ];
   await loadChat(frame, fakeSessions(saved));
@@ -302,7 +302,7 @@ test("a call shows only its name until its answer saves, and then its subject", 
   const stopped = head();
   sessions.push(
     commit(2, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
     }),
   );
   sessions.push({ kind: "draftCommitted", draftId: "d1", eventNumber: 2, blocks: [0] });
@@ -389,7 +389,7 @@ test("the live output of a call gives way to its result at once", async () => {
   const saved: StoredEvent[] = [
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
@@ -430,7 +430,7 @@ test("a silent running call counts up on its own, and its end shows the measured
   const saved: StoredEvent[] = [
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
@@ -459,7 +459,7 @@ test("a copy of live output gives its lines", async () => {
   const saved: StoredEvent[] = [
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
@@ -481,7 +481,7 @@ test("a folded call gives no count of the lines that its live output leaves out,
   const saved: StoredEvent[] = [
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
@@ -741,7 +741,7 @@ test("a call that opens in a view away from the tail leaves the rows above it in
 test("a relative link of a call without a folder starts in the folder of the session, and one in a result in the call folder", async () => {
   using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/start", session: "s1" });
   const saved = calls(
-    { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("A"), cwd: null },
+    { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("A"), folder: null },
     { name: "note", args: {}, hints: PROBE, result: ok("x"), display: [{ kind: "markdown", text: "[b](b.rs)" }] },
   );
   await loadChat(frame, fakeSessions(saved));
@@ -847,7 +847,7 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   const saved: StoredEvent[] = [
     { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);

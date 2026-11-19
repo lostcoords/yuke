@@ -23,7 +23,7 @@ model: ModelReference,
 /**
  * The working folder of the newest settings.
  */
-cwd: string, 
+folder: string, 
 /**
  * The display title from a message, an explicit rename, or a fork of a titled session.
  */

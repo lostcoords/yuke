@@ -162,8 +162,8 @@ test("apply runs once with its context, and session runs for each session", asyn
   await mkdir(`${folder()}/b`);
   await using host = await createHost({ plugins: [{ folder: root }] });
 
-  const first = await host.openSession({ cwd: `${folder()}/a` });
-  const second = await host.openSession({ cwd: `${folder()}/b` });
+  const first = await host.openSession({ folder: `${folder()}/a` });
+  const second = await host.openSession({ folder: `${folder()}/b` });
 
   assertEquals([(await first.call("hello", {})).text, (await second.call("hello", {})).text], ["hello", "hello"]);
   assertEquals(seen, ["one", false, true, [false, true, false], false, "undefined"]);

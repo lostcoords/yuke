@@ -152,7 +152,7 @@ async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old
     std::fs::create_dir(&other).unwrap();
     let mut settings = settings(&place);
     settings["sessionId"] = session.clone();
-    settings["cwd"] = json!(other);
+    settings["folder"] = json!(other);
     client.call("session/setSettings", settings).await.unwrap();
     transport.push(tool_reply(&[("c2", "stop", &json!({ "id": job }).to_string())]));
     transport.push(tool_reply(&[("c3", "exec", r#"{"command":"pwd"}"#)]));

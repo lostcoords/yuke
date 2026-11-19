@@ -63,8 +63,8 @@ pub(super) fn question(folder: &Path, config: &yuke_mcp::Config) -> InteractionR
                 (None, Some(url)) => vec![url.clone()],
                 (None, None) => Vec::new(),
             };
-            if let Some(cwd) = &server.cwd {
-                parts.push(format!("in {}", cwd.display()));
+            if let Some(folder) = &server.folder {
+                parts.push(format!("in {}", folder.display()));
             }
             parts.extend(server.env.iter().map(|(name, value)| format!("{name}={value}")));
             format!("- {name}: {}", parts.join(", "))

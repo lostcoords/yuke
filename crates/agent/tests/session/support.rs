@@ -29,7 +29,7 @@ pub(crate) fn settings() -> SessionSettings {
             model: "test-model".to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: std::path::PathBuf::from("/work"),
+        folder: std::path::PathBuf::from("/work"),
     }
 }
 
@@ -144,12 +144,12 @@ impl Store for FailingStore {
 
     async fn list_sessions(
         &self,
-        cwd: Option<&Path>,
+        folder: Option<&Path>,
         parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
-        self.store.list_sessions(cwd, parent, after, limit).await
+        self.store.list_sessions(folder, parent, after, limit).await
     }
 
     async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {

@@ -145,7 +145,7 @@ fn settings() -> SessionSettings {
             model: "MiniMax-M3".to_owned(),
         },
         settings: yuke_ai::RequestSettings::new(),
-        cwd: PathBuf::from("/work"),
+        folder: PathBuf::from("/work"),
     }
 }
 

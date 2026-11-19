@@ -354,9 +354,9 @@ impl SessionService {
         if let Some(parent) = parent {
             self.shared.store.session_summary(parent).await?;
         }
-        settings.cwd = canonical(settings.cwd).await?;
+        settings.folder = canonical(settings.folder).await?;
         let prompt = system_prompt(
-            settings.cwd.clone(),
+            settings.folder.clone(),
             self.shared.machine.home.clone(),
             self.shared.plugin_folders().to_vec(),
         )
@@ -387,7 +387,7 @@ impl SessionService {
     }
 
     /// A page of the saved sessions, newest first, with the state of each one. `params.cursor` continues the list
-    /// with the same `params.cwd` and `params.parent`.
+    /// with the same `params.folder` and `params.parent`.
     ///
     /// # Errors
     ///
@@ -395,7 +395,7 @@ impl SessionService {
     /// the store fails.
     pub(crate) async fn list(&self, params: ListSessionsParams) -> Result<ListSessionsResult, AppError> {
         let ListSessionsParams {
-            cwd,
+            folder,
             parent,
             limit,
             cursor,
@@ -418,7 +418,7 @@ impl SessionService {
         let page = self
             .shared
             .store
-            .list_sessions(cwd.as_deref(), parent, after, limit as usize)
+            .list_sessions(folder.as_deref(), parent, after, limit as usize)
             .await?;
         Ok(ListSessionsResult {
             sessions: page.sessions.into_iter().map(|session| self.row(session)).collect(),

@@ -49,7 +49,7 @@ export const SETTINGS: SessionSettings = {
     reasoning: {},
     toolChoice: "auto",
   },
-  cwd: "/w",
+  folder: "/w",
 };
 
 /** The saved event `seq` with `blocks` and the other commit fields of `fields`. */
@@ -141,11 +141,11 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     rows,
     lists,
     renames,
-    /** The rows of the folder `params.cwd`, or of each folder. A list gives at most `params.limit` rows, else 50. */
+    /** The rows of the folder `params.folder`, or of each folder. A list gives at most `params.limit` rows, else 50. */
     async list(params: ListSessionsParams = {}): Promise<{ sessions: SessionRow[] }> {
       lists.push(params);
-      const cwd = params.cwd;
-      const shown = rows.filter((row) => cwd === undefined || cwd === null || row.cwd === cwd);
+      const folder = params.folder;
+      const shown = rows.filter((row) => folder === undefined || folder === null || row.folder === folder);
       return { sessions: shown.slice(0, params.limit ?? 50) };
     },
     async get(id: string): Promise<SessionRow> {

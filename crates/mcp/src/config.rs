@@ -27,9 +27,10 @@ pub struct ServerConfig {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     /// The folder of the program. A relative folder starts in the session folder.
-    #[serde(default)]
-    pub cwd: Option<PathBuf>,
-    /// The URL of an HTTP server.
+    // The file key stays `cwd`: other tools share the format of `mcp.json`.
+    #[serde(default, rename = "cwd")]
+    pub folder: Option<PathBuf>,
+    /// The URL of an HTTP server. The parse keeps it, so one remote server does not reject the file of other tools.
     #[serde(default)]
     pub url: Option<String>,
     /// `false` keeps the server off.
@@ -42,11 +43,15 @@ fn enabled() -> bool {
 }
 
 impl ServerConfig {
-    /// The command that starts the server, or why the entry gives none. The command runs in `folder`, in a relative
-    /// `cwd` under `folder`, or in an absolute `cwd`.
+    /// The command that starts the server, or why the entry gives none. The command runs in `session_folder`, in a
+    /// relative `folder` of the entry under `session_folder`, or in an absolute `folder` of the entry.
     /// `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values, and the folder take the
     /// value of the variable `NAME` from `variable`.
-    pub(crate) fn command(&self, variable: &dyn Fn(&str) -> Option<String>, folder: &Path) -> Result<Command, String> {
+    pub(crate) fn command(
+        &self,
+        variable: &dyn Fn(&str) -> Option<String>,
+        session_folder: &Path,
+    ) -> Result<Command, String> {
         let expand = |text: &str| expand(text, variable);
         let program = match (&self.command, &self.url) {
             (Some(program), None) => program,
@@ -60,11 +65,11 @@ impl ServerConfig {
         for (name, value) in &self.env {
             command.env(name, expand(value)?);
         }
-        let cwd = match &self.cwd {
-            Some(cwd) => PathBuf::from(expand(&cwd.to_string_lossy())?),
+        let folder = match &self.folder {
+            Some(folder) => PathBuf::from(expand(&folder.to_string_lossy())?),
             None => PathBuf::new(),
         };
-        command.current_dir(folder.join(cwd));
+        command.current_dir(session_folder.join(folder));
         Ok(command)
     }
 }

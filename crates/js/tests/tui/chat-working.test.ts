@@ -30,7 +30,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   const call = { callId: "c1", name: "exec", arguments: '{"command":"cargo test"}' };
   sessions.push(
     commit(3, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] },
     }),
   );
   const tool = phase();
@@ -202,7 +202,7 @@ async function runningExec(width: number, command: string) {
   const call = { callId: "c1", name: "exec", arguments: JSON.stringify({ command }) };
   sessions.push(
     commit(3, [{ kind: "toolCall", ...call }], {
-      display: { calls: [{ blockIndex: 0, hints, cwd: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] },
     }),
   );
   const before = workingRow(frame);

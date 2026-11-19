@@ -21,7 +21,7 @@ pub(crate) struct Meta {
     /// The model of the newest settings event.
     pub(crate) model: ModelReference,
     /// The folder of the newest settings event.
-    pub(crate) cwd: PathBuf,
+    pub(crate) folder: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

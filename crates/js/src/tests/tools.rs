@@ -74,7 +74,7 @@ impl TestHost {
                     model: "test-model".to_owned(),
                 },
                 settings: yuke_ai::RequestSettings::new(),
-                cwd: folder.to_owned(),
+                folder: folder.to_owned(),
             }),
             failure: None,
         }

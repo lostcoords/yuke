@@ -328,7 +328,7 @@ mod tests {
         let settings = yuke_protocol::SessionSettings {
             model: reference.clone(),
             settings: yuke_ai::RequestSettings::new(),
-            cwd: std::env::temp_dir(),
+            folder: std::env::temp_dir(),
         };
         let session = app.shared.store.create_session(&settings, &[], None).await.unwrap();
         let blob = app
