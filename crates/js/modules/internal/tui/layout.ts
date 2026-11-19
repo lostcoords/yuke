@@ -17,7 +17,8 @@ export function stack(direction: Direction, children: readonly StackChild[]): Vi
     layout(size: Size): readonly Placement[] {
       const along = direction === "row" ? size.width : size.height;
       let left = along;
-      const cells = items.map(({ size: wanted }) => {
+      const cells = items.map((item) => {
+        const wanted = item.size;
         if (wanted === "fill") return undefined;
         const asked = typeof wanted === "function" ? wanted(size) : wanted;
         const taken = Math.min(left, Math.max(0, Number.isFinite(asked) ? Math.floor(asked) : 0));

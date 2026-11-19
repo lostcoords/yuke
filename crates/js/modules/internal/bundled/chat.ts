@@ -289,14 +289,14 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     const jobs = new Set(data.jobs.map((job) => job.id));
     work.set(data.sessionId, { parent: data.parent, turn: data.state === "running", jobs });
   });
-  ctx.addListener("session.update", ({ sessionId, update }) => {
-    const entry = work.get(sessionId);
+  ctx.addListener("session.update", (data) => {
+    const entry = work.get(data.sessionId);
     if (entry === undefined) return;
-    if (update.kind === "state") entry.turn = update.state === "running";
-    else if (update.kind === "job" && update.job.state === "running") entry.jobs.add(update.job.id);
-    else if (update.kind === "job") entry.jobs.delete(update.job.id);
+    if (data.update.kind === "state") entry.turn = data.update.state === "running";
+    else if (data.update.kind === "job" && data.update.job.state === "running") entry.jobs.add(data.update.job.id);
+    else if (data.update.kind === "job") entry.jobs.delete(data.update.job.id);
   });
-  ctx.addListener("session.closed", ({ sessionId }) => work.delete(sessionId));
+  ctx.addListener("session.closed", (data) => work.delete(data.sessionId));
   const chat: Chat = {
     ctx,
     tui,

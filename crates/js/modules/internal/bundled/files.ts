@@ -106,15 +106,15 @@ function listOf(entries: readonly Entry[], query: string, from: number): Complet
           .slice(0, MOST_ITEMS);
   return {
     from,
-    items: ranked.map(({ entry, ranges }): CompletionItem => {
-      const quoted = /\s/.test(entry.path);
-      const label = quoted ? `@"${entry.path}"` : `@${entry.path}`;
+    items: ranked.map((match): CompletionItem => {
+      const quoted = /\s/.test(match.entry.path);
+      const label = quoted ? `@"${match.entry.path}"` : `@${match.entry.path}`;
       const shift = quoted ? 2 : 1;
       return {
         label,
-        ranges: ranges?.map((range) => ({ from: range.from + shift, to: range.to + shift })),
+        ranges: match.ranges?.map((range) => ({ from: range.from + shift, to: range.to + shift })),
         // A folder takes no space and keeps its quote open, so the list goes on into it.
-        insert: entry.folder ? (quoted ? label.slice(0, -1) : label) : `${label} `,
+        insert: match.entry.folder ? (quoted ? label.slice(0, -1) : label) : `${label} `,
       };
     }),
   };

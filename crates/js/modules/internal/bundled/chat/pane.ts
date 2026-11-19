@@ -611,10 +611,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     width: number,
   ) => {
     let at = row;
-    return views.map(({ view: shown, height }) => {
-      const rect = { column: 0, row: at, width, height };
-      at += height;
-      return { view: shown, rect };
+    return views.map((entry) => {
+      const rect = { column: 0, row: at, width, height: entry.height };
+      at += entry.height;
+      return { view: entry.view, rect };
     });
   };
   /** The frame around the input: its view places the input, so a click and the cursor stay local to the input. */

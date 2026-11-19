@@ -254,8 +254,8 @@ export interface PluginContext<O = Record<string, never>> {
    * - A throw gives a notice, and the listener stays. The abort of `ctx.signal` removes it.
    *
    * ```ts
-   * ctx.addListener("session.update", ({ sessionId, update }) => {
-   *   if (update.kind === "state") report(sessionId, update.state);
+   * ctx.addListener("session.update", (data) => {
+   *   if (data.update.kind === "state") report(data.sessionId, data.update.state);
    * });
    * ```
    */

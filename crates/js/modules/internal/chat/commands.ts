@@ -49,15 +49,15 @@ export function slashCompletions(commands: SlashCommands): CompletionProvider {
       return {
         from: 0,
         to: word.length,
-        items: ranked.map(({ item, ranges }): CompletionItem => {
-          const name = `/${item.slash}`;
+        items: ranked.map((match): CompletionItem => {
+          const name = `/${match.item.slash}`;
           return {
-            label: item.argumentHint === undefined ? name : `${name} ${item.argumentHint}`,
-            detail: item.description,
-            ranges,
+            label: match.item.argumentHint === undefined ? name : `${name} ${match.item.argumentHint}`,
+            detail: match.item.description,
+            ranges: match.ranges,
             // The text after the word stays, so Tab writes only the word then.
-            insert: text !== undefined || item.argumentHint === undefined ? name : `${name} `,
-            run: () => commands.run(item.name, args),
+            insert: text !== undefined || match.item.argumentHint === undefined ? name : `${name} `,
+            run: () => commands.run(match.item.name, args),
           };
         }),
       };
