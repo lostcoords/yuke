@@ -1,10 +1,9 @@
 //! The trust of project MCP servers: an empty file in the data folder for each folder and list of servers that the
 //! user confirmed. A changed list has another key, so the user confirms it again.
 
-use std::fs::{DirBuilder, OpenOptions};
+use std::fs::{self, File};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 
 use yuke_protocol::{InteractionRequest, InteractionResponse, Question, QuestionOption};
@@ -19,7 +18,7 @@ const START: &str = "Start";
 /// the JSON of the servers.
 pub(super) fn key(folder: &Path, config: &yuke_mcp::Config) -> Result<String, serde_json::Error> {
     // A link to the folder is the same folder, so the key uses the real path.
-    let real = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_owned());
+    let real = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_owned());
     let mut bytes = real.as_os_str().as_bytes().to_vec();
     bytes.push(0);
     bytes.extend(serde_json::to_vec(config)?);
@@ -31,17 +30,11 @@ pub(super) fn trusted(data: &Path, key: &str) -> bool {
     data.join(FOLDER).join(key).is_file()
 }
 
-/// Keep the confirm of the servers of `key`. Only the user can read the folder.
+/// Keep the confirm of the servers of `key`.
 pub(super) fn trust(data: &Path, key: &str) -> io::Result<()> {
     let folder = data.join(FOLDER);
-    DirBuilder::new().recursive(true).mode(0o700).create(&folder)?;
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(folder.join(key))
-        .map(drop)
+    fs::create_dir_all(&folder)?;
+    File::create(folder.join(key)).map(drop)
 }
 
 /// The question that asks the user to start the servers `config` of `folder`: for each enabled server, its name, its
