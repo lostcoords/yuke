@@ -27,7 +27,7 @@ Use `/login` in yuke to store an API key or an account login in `auth.json` in t
 | `openai-codex` | ChatGPT account login |
 | `xai-grok` | xAI (Grok) account login |
 
-An account login uses a device code: open the page that yuke shows, enter the code, and confirm. You can also run `yuke login openai-codex` or `yuke login xai-grok` from the shell.
+An account login uses a device code: open the page that yuke shows, enter the code, and confirm. You can also run `yuke login openai-codex` or `yuke login xai-grok` from the shell. See [Command line](cli.md).
 
 Run `/logout` or `yuke logout <provider>` to remove a stored login or API key. A variable stays: to stop using it, unset it.
 
@@ -53,6 +53,8 @@ This example adds a gateway:
 yuke reads the key from `GATEWAY_API_KEY` or from `/login`.
 
 Use `/reload` to reload the profile after an edit. The reload fails while a turn runs. A failed reload keeps the previous providers and plugins.
+
+To use a model of this provider, pass `--model gateway/big` to `yuke -p`, or choose it with `/model`.
 
 ### Local server
 
@@ -83,7 +85,9 @@ For example, this entry sends OpenAI requests through a proxy:
 
 ## Fields
 
-The file accepts JSON with `//` and `/* */` comments. Unknown fields and bad routes stop startup. An entry with an ID that an earlier entry has changes the result of that entry, so the last value wins.
+The file accepts JSON with `//` and `/* */` comments. Unknown fields and bad routes stop startup. A `null` value is an error: omit a field to keep its built-in value.
+
+yuke applies the entries in file order. A provider ID that an earlier entry has changes the result of that entry, and a model ID that an earlier model of the provider has replaces that model. In both cases the last value wins.
 
 ### Provider fields
 
@@ -91,8 +95,8 @@ The file accepts JSON with `//` and `/* */` comments. Unknown fields and bad rou
 |---|---|
 | `id` | Required. It is not empty and has no `/`. |
 | `name` | Display name. Defaults to the ID. |
-| `baseUrl` | An `http` or `https` URL. Required for a new provider. |
-| `apiKeyEnv` | The environment variable for an API key. Omit it for a provider that needs no credential. |
+| `baseUrl` | A URL that starts with `http://` or `https://`. yuke checks only this scheme. Required for a new provider. |
+| `apiKeyEnv` | The environment variable for an API key. It is not empty and has no `=`. Omit it for a provider that needs no credential. On `openai-codex` and `xai-grok`, it is an error: these providers use an account login. |
 | `endpoints` | Protocol endpoints. Required for a new provider. Each protocol appears at most once. |
 | `headers` | Extra headers as `[{ "name": "x-team", "value": "core" }]`. A header must not replace a header that yuke writes. |
 | `sessionHeader` | `none` (default), `session_id`, or `x_opencode_session`. |
@@ -118,8 +122,10 @@ The file accepts JSON with `//` and `/* */` comments. Unknown fields and bad rou
 | `protocol` | Required when the provider has more than one endpoint. |
 | `limits` | `contextWindow` and `maxOutputTokens`. Omitted values are unknown. |
 | `cost` | Price bands in USD per million tokens. See [Cost](#cost). |
-| `reasoningLevels` | The efforts that the model takes, from `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. |
+| `reasoningLevels` | The efforts that the model takes, from `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. A `null` item means no effort. An empty list, the default, accepts any effort. See below. |
 | `flags` | Capability facts. Omitted facts are unknown. See below. |
+
+A list that is not empty limits the efforts: yuke rejects an effort that the list does not name. A `null` item adds no choice to `/model`. An empty list lets `--reasoning` take any effort, but `/model` then offers only `default` and `off`.
 
 `/model` offers `default`, each effort of `reasoningLevels`, and `off` when the model can turn reasoning off.
 
@@ -138,7 +144,7 @@ The file accepts JSON with `//` and `/* */` comments. Unknown fields and bad rou
 
 ### Cost
 
-`cost` is a list of price bands. The first band starts at `0`, so it can omit `minPromptTokens`. Each later band sets a higher `minPromptTokens`. The last band that the prompt size reaches prices the whole request. Prices are `input`, `output`, `reasoning`, `cacheRead`, and `cacheWrite`. A missing price is unknown, not zero. For example:
+`cost` is a list of price bands. The first band starts at `0`, so it can omit `minPromptTokens`. Each later band sets a higher `minPromptTokens`. A price is not negative. The last band that the prompt size reaches prices the whole request. Prices are `input`, `output`, `reasoning`, `cacheRead`, and `cacheWrite`. A missing price is unknown, not zero. For example:
 
 ```json
 "cost": [
@@ -146,3 +152,14 @@ The file accepts JSON with `//` and `/* */` comments. Unknown fields and bad rou
   { "minPromptTokens": 272001, "input": 8, "output": 30, "cacheRead": 0.8 }
 ]
 ```
+
+## Network
+
+yuke checks the certificate of an `https` host against root certificates:
+
+- On macOS, yuke reads the roots from the file in `SSL_CERT_FILE`. Without this variable, it reads `/etc/ssl/cert.pem`.
+- On Linux, `SSL_CERT_FILE` or `SSL_CERT_DIR` names the exact roots. Without them, yuke reads the system bundle file. It reads the certificate folders of the system only when no bundle file exists. A root that only a folder holds needs `SSL_CERT_DIR`.
+
+This applies to model requests, logins, and the `fetch` of plugins. Set one of these variables when a private gateway or a network that inspects TLS signs with its own root.
+
+yuke does not read `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, or `NO_PROXY`. To send the requests of a provider through a proxy or a gateway, set its `baseUrl`. The `git` program that installs plugins uses its own proxy settings.
