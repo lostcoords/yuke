@@ -6,7 +6,7 @@
 
 import { plugins as manager, type PluginManager } from "yuke:internal/sessions";
 import type { PluginContext } from "yuke:plugins";
-import type { FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
+import type { CheckPluginsResult, FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import {
   type Canvas,
   type KeyEvent,
@@ -369,20 +369,29 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
   };
 }
 
-/** The review of `changes`: each plugin with its move and the log of the move, or one line without a change. */
-function reviewOf(changes: readonly PluginChange[] | undefined): TextDocument {
+/**
+ * The review of `checked`: each plugin with its move and the log of the move, then each plugin that the check could
+ * not check with the reason. Without a move, one line says that the others are at their newest commit.
+ */
+function reviewOf(checked: CheckPluginsResult | undefined): TextDocument {
+  const others =
+    checked?.failed.length === 0
+      ? "Each Git plugin is at the newest commit of its ref"
+      : "The other Git plugins are at the newest commit of their ref";
   const items: readonly { readonly label: string; readonly log?: string }[] =
-    changes === undefined
+    checked === undefined
       ? [{ label: "Checking each Git plugin for a new commit" }]
-      : changes.length === 0
-        ? [{ label: "Each Git plugin is at the newest commit of its ref" }]
-        : changes.map((change) => ({
+      : [
+          ...checked.changes.map((change) => ({
             label: `${change.name}  ${short(change.old)} → ${short(change.new)}`,
             log:
               change.log.kind === "commits"
                 ? change.log.commits.map((line) => `  ${line}`).join("\n")
                 : `  no log: ${change.log.error}`,
-          }));
+          })),
+          ...(checked.changes.length === 0 ? [{ label: others }] : []),
+          ...checked.failed.map((plugin) => ({ label: `${plugin.name}  not checked`, log: `  ${plugin.error}` })),
+        ];
   return {
     id: "plugins-review",
     items: items.map((item, index) => ({
@@ -405,12 +414,16 @@ async function review(
   target: PluginTarget,
   signal: AbortSignal,
 ): Promise<readonly PluginChange[] | undefined> {
-  let changes: readonly PluginChange[] | undefined;
+  let checked: CheckPluginsResult | undefined;
   let chosen: readonly PluginChange[] | undefined;
   const text = new TextView({ document: reviewOf(undefined) });
   const checking = startSpinner(tui);
+  const changes = () => checked?.changes ?? [];
   const dialog = tui.dialog({
-    title: () => (changes === undefined ? `Updates · ${checking.frame()} checking…` : `Updates · ${namesOf(changes)}`),
+    title: () => {
+      if (checked === undefined) return `Updates · ${checking.frame()} checking…`;
+      return changes().length === 0 ? "Updates" : `Updates · ${namesOf(changes())}`;
+    },
     body: text,
     scroll: text.scroll,
     signal,
@@ -418,9 +431,9 @@ async function review(
       {
         key: "enter",
         label: "update",
-        when: () => changes !== undefined && changes.length > 0,
+        when: () => changes().length > 0,
         run: () => {
-          chosen = changes;
+          chosen = changes();
           dialog.close();
         },
       },
@@ -430,7 +443,7 @@ async function review(
     dialog.signal.addEventListener("abort", () => resolve(), { once: true }),
   );
   try {
-    changes = (await plugins.check(target, { signal: dialog.signal })).changes;
+    checked = await plugins.check(target, { signal: dialog.signal });
   } catch (error) {
     // A close of the dialog stops the check, and the user saw it close.
     if (dialog.signal.aborted) return undefined;
@@ -439,7 +452,7 @@ async function review(
   } finally {
     checking.stop();
   }
-  text.setDocument(reviewOf(changes));
+  text.setDocument(reviewOf(checked));
   tui.requestFrame();
   await closed;
   return chosen;

@@ -30,7 +30,7 @@ use clap::{Parser, Subcommand};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, TurnEnd, chain_text};
-use yuke_protocol::{LockedPlugin, PluginLog, PluginTarget, ReasoningLevel, SessionId};
+use yuke_protocol::{CheckPluginsResult, LockedPlugin, PluginLog, PluginTarget, ReasoningLevel, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
@@ -356,10 +356,23 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             } else {
                 PluginTarget::Names { names }
             };
-            let changes = manager::check(&paths, &target, &progress).await?;
+            let CheckPluginsResult { changes, failed } = manager::check(&paths, &target, &progress).await?;
+            for plugin in &failed {
+                warn(&format!("plugin {} was not checked: {}", plugin.name, plugin.error));
+            }
+            // A plugin that was not checked fails the command, also when the update of the others goes on.
+            let code = if failed.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
             if changes.is_empty() {
-                say("Each plugin is at the newest commit of its ref.")?;
-                return Ok(ExitCode::SUCCESS);
+                say(if failed.is_empty() {
+                    "Each plugin is at the newest commit of its ref."
+                } else {
+                    "The other plugins are at the newest commit of their ref."
+                })?;
+                return Ok(code);
             }
             for change in &changes {
                 say(&format!(
@@ -377,7 +390,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             let names = names.join(", ");
             if !yes && !confirm(&format!("Write the new commits of {names} to plugins.lock? [y/N] "))? {
                 say("plugins.lock is unchanged.")?;
-                return Ok(ExitCode::SUCCESS);
+                return Ok(code);
             }
             let locked: Vec<LockedPlugin> = changes
                 .into_iter()
@@ -388,6 +401,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                 .collect();
             manager::apply(&paths, &locked).await?;
             say(&format!("Updated {names}. Run /reload in open sessions."))?;
+            return Ok(code);
         }
         PluginCommand::Add { url, names, reference } => {
             for added in manager::add(&paths, &url, &names, reference.as_deref(), &progress).await? {

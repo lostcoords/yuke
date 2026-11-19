@@ -40,7 +40,7 @@ A plugin that does not load does not stop the others. This covers a plugin that 
 | `yuke plugin remove NAME` | Remove a plugin from `config.json` and `plugins.lock`. Its files stay on disk. |
 | `yuke plugin list` | Show each plugin and its state: local, installed at a commit, not installed, or failed with the reason. |
 | `yuke plugin sync` | Install the locked commits, and lock each new Git plugin. If a plugin does not install, sync installs the others and then fails with the reason of each one. With `--locked`, fail instead when `plugins.lock` does not match `config.json`. |
-| `yuke plugin update NAME...` | Show the new commits of each plugin's ref that change its folder, and ask before it moves the lock. `--all` updates every Git plugin, and `--yes` skips the question. |
+| `yuke plugin update NAME...` | Show the new commits of each plugin's ref that change its folder, and ask before it moves the lock. A plugin that it cannot check gives an error, and the update of the others goes on. `--all` updates every Git plugin, and `--yes` skips the question. |
 
 In the terminal UI, `/plugins` shows your plugins in three sections. **Needs attention** shows each plugin that is not installed or does not load, with the reason. **Git** and **Local** show the others. The state of a plugin is `loaded`, `reload loads it`, `failed`, or `not installed`.
 

@@ -198,8 +198,21 @@ pub struct PluginChange {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CheckPluginsResult {
-    /// Each checked plugin whose ref moved. An empty list means that each one is at the newest commit of its ref.
+    /// Each checked plugin whose ref moved. A plugin out of `changes` and `failed` is at the newest commit of its ref.
     pub changes: Vec<PluginChange>,
+    /// Each plugin that the server could not check. The others have their check.
+    pub failed: Vec<FailedPlugin>,
+}
+
+/// A plugin that a request could not handle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct FailedPlugin {
+    /// The name of its `plugin.json`.
+    pub name: String,
+    /// Why.
+    pub error: String,
 }
 
 /// The params of `plugin/apply`.

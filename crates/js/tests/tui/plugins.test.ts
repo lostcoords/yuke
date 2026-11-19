@@ -3,7 +3,7 @@
 
 import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:internal/sessions";
-import type { FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
+import type { FailedPlugin, FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
 
@@ -46,6 +46,8 @@ const CHANGE: PluginChange = {
 interface Fake {
   /** What `check` gives. */
   readonly changes?: readonly PluginChange[];
+  /** The plugins that `check` could not check. */
+  readonly failed?: readonly FailedPlugin[];
   /** `check` waits until its signal aborts. */
   readonly hold?: boolean;
   /** `check` and `sync` reject with this text. */
@@ -76,7 +78,8 @@ function manager(fake: Fake = {}) {
     check: (target: PluginTarget, options) => {
       calls.push(`check ${JSON.stringify(target)}`);
       if (fake.fail !== undefined) return Promise.reject(new Error(fake.fail));
-      if (fake.hold !== true) return Promise.resolve({ changes: [...(fake.changes ?? [])] });
+      if (fake.hold !== true)
+        return Promise.resolve({ changes: [...(fake.changes ?? [])], failed: [...(fake.failed ?? [])] });
       return new Promise((_, reject) => {
         options?.signal?.addEventListener("abort", () => {
           calls.push("check stopped");
@@ -341,6 +344,35 @@ test("a check without a change says so, and enter writes nothing", async () => {
     ["Each Git plugin is at the newest commit of its ref", " esc: close"],
   );
   assertEquals(fake.calls, ["list", 'check {"kind":"all"}']);
+});
+
+test("a check shows the plugins that it could not check below the others, and enter writes the others", async () => {
+  using frame = createFrame({ width: 100, height: 20 });
+  const fake = manager({ changes: [CHANGE], failed: [{ name: "tools", error: "git ls-remote: no such host" }] });
+  load(frame, fake.plugins);
+
+  await open(frame);
+  const reviewed = await press(frame, "c");
+  await press(frame, "enter");
+
+  assertEquals(
+    [rowOf(reviewed, "Updates"), rowOf(reviewed, "→"), rowOf(reviewed, "not checked"), rowOf(reviewed, "no such host")],
+    [" Updates · clock", "clock  3f9c1a2 → 8d02e77", "tools  not checked", "  git ls-remote: no such host"],
+  );
+  assertEquals(fake.calls, ["list", 'check {"kind":"all"}', "apply https://h/r 8d02e77", "list"]);
+});
+
+test("a check without a change and with a plugin that it could not check says so for the others", async () => {
+  using frame = createFrame({ width: 100, height: 20 });
+  load(frame, manager({ failed: [{ name: "tools", error: "no default branch" }] }).plugins);
+
+  await open(frame);
+  const reviewed = await press(frame, "c");
+
+  assertEquals(
+    [rowOf(reviewed, "Updates"), rowOf(reviewed, "The other"), rowOf(reviewed, "esc:")],
+    [" Updates", "The other Git plugins are at the newest commit of their ref", " esc: close"],
+  );
 });
 
 test("a check that fails closes the review and gives one error notice", async () => {

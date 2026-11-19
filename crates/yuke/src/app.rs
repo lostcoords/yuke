@@ -481,10 +481,9 @@ impl Shared {
 
     /// The new commits of the Git plugins of the target, for `plugin/check`.
     pub(crate) async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
-        let changes = plugins::manager::check(&self.machine.paths, &params.target, &|_| {})
+        plugins::manager::check(&self.machine.paths, &params.target, &|_| {})
             .await
-            .map_err(AppError::Invalid)?;
-        Ok(CheckPluginsResult { changes })
+            .map_err(AppError::Invalid)
     }
 
     /// Write the new commits of changes into `plugins.lock`, for `plugin/apply`.

@@ -63,11 +63,11 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
     } = sync(&paths, false, &|_| {}).await.unwrap();
     let second = commit(&root, "feat: seconds");
     let written_again = sync(&paths, false, &|_| {}).await.unwrap().written;
-    let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
+    let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap().changes;
     apply(&paths, &[at(changes[0].source.clone(), &changes[0].new)])
         .await
         .unwrap();
-    let after_apply = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
+    let after_apply = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap().changes;
 
     assert_eq!(synced, [at(clock(&root, Some("main")), &first)]);
     assert!(written);
@@ -134,7 +134,7 @@ async fn a_check_gives_only_the_plugins_whose_folder_changed_with_the_commits_of
     let wind = commit_plugin(&remote, "weather", "feat: wind");
     let gusts = commit_plugin(&remote, "weather", "fix: gusts");
 
-    let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
+    let changes = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap().changes;
 
     assert_eq!(changes.len(), 1, "{changes:?}");
     assert_eq!(
@@ -153,6 +153,32 @@ async fn a_check_gives_only_the_plugins_whose_folder_changed_with_the_commits_of
                 format!("{} feat: wind", &wind[..7])
             ]
         }
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_check_names_a_plugin_that_it_cannot_check_and_checks_the_others() {
+    let (root, paths) = place("check_failures");
+    let first = commit(&root, "first");
+    let other = root.join("other");
+    commit_plugin(&other, "weather", "first weather");
+    add(&paths, &clock(&root, None).git, &[], None, &|_| {}).await.unwrap();
+    add(&paths, &other.to_string_lossy(), &[], None, &|_| {}).await.unwrap();
+    let second = commit(&root, "feat: seconds");
+    fs::remove_dir_all(&other).unwrap();
+
+    let checked = check(&paths, &PluginTarget::All, &|_| {}).await.unwrap();
+
+    let moves: Vec<(&str, &str, &str)> = (checked.changes.iter())
+        .map(|change| (change.name.as_str(), change.old.as_str(), change.new.as_str()))
+        .collect();
+    assert_eq!(moves, [("clock", first.as_str(), second.as_str())]);
+    assert_eq!(checked.failed.len(), 1);
+    assert_eq!(checked.failed[0].name, "weather");
+    assert!(
+        checked.failed[0].error.starts_with("git ls-remote: "),
+        "{:?}",
+        checked.failed
     );
 }
 

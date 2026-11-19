@@ -178,9 +178,13 @@ target: PluginTarget, };
  */
 export type CheckPluginsResult = { 
 /**
- * Each checked plugin whose ref moved. An empty list means that each one is at the newest commit of its ref.
+ * Each checked plugin whose ref moved. A plugin out of `changes` and `failed` is at the newest commit of its ref.
  */
-changes: Array<PluginChange>, };
+changes: Array<PluginChange>, 
+/**
+ * Each plugin that the server could not check. The others have their check.
+ */
+failed: Array<FailedPlugin>, };
 
 /**
  * The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
@@ -394,6 +398,19 @@ request: string,
  * The data of the request. The plugin chooses its shape.
  */
 data: unknown, };
+
+/**
+ * A plugin that a request could not handle.
+ */
+export type FailedPlugin = { 
+/**
+ * The name of its `plugin.json`.
+ */
+name: string, 
+/**
+ * Why.
+ */
+error: string, };
 
 /**
  * The params of `plugin/find`.

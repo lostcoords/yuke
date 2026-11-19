@@ -41,8 +41,8 @@ pub use message::{
 };
 pub use plugin::{
     AddPluginsParams, AddPluginsResult, AddedPlugin, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult,
-    FindPluginsParams, FindPluginsResult, FoundPlugin, ListPluginsResult, LockedPlugin, ManagedPlugin, PluginChange,
-    PluginLoad, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget, RemovePluginParams,
+    FailedPlugin, FindPluginsParams, FindPluginsResult, FoundPlugin, ListPluginsResult, LockedPlugin, ManagedPlugin,
+    PluginChange, PluginLoad, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget, RemovePluginParams,
     SyncPluginsResult,
 };
 pub use session::{InvalidSessionTitle, ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle};

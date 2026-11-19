@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Map;
 use yuke_protocol::{
-    AddedPlugin, FoundPlugin, LockedPlugin, ManagedPlugin, PluginChange, PluginLoad, PluginLog, PluginOrigin,
-    PluginSource, PluginState, PluginTarget, SyncPluginsResult,
+    AddedPlugin, CheckPluginsResult, FailedPlugin, FoundPlugin, LockedPlugin, ManagedPlugin, PluginChange, PluginLoad,
+    PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget, SyncPluginsResult,
 };
 
 use super::lock::Lock;
@@ -274,16 +274,17 @@ pub(crate) async fn sync(paths: &Paths, locked: bool, progress: &dyn Fn(&str)) -
 }
 
 /// The new commit of each installed Git plugin of `target` whose ref moved, with the log of the move. Each new commit is
-/// installed, and `plugins.lock` stays as it is until [`apply`]. `progress` gets the check of each plugin.
+/// installed, and `plugins.lock` stays as it is until [`apply`]. A plugin that does not check goes into `failed`, and
+/// the others have their check. `progress` gets the check of each plugin.
 ///
 /// # Errors
 ///
-/// Returns a text for a bad file, a name that no installed Git plugin has, or a failed fetch or install.
+/// Returns a text for a bad file, or a name that no installed Git plugin has.
 pub(crate) async fn check(
     paths: &Paths,
     target: &PluginTarget,
     progress: &dyn Fn(&str),
-) -> Result<Vec<PluginChange>, String> {
+) -> Result<CheckPluginsResult, String> {
     let _held = hold(&paths.data).await?;
     // A plugin that is not installed has no name, so a sync comes before its update.
     let mut targets: Vec<(PluginSource, String, String)> = outcomes(paths)?
@@ -304,41 +305,49 @@ pub(crate) async fn check(
         }
         targets.retain(|(_, _, name)| names.contains(name));
     }
-    let mut changes = Vec::new();
+    let mut result = CheckPluginsResult {
+        changes: Vec::new(),
+        failed: Vec::new(),
+    };
     for (source, old, name) in targets {
         progress(&format!("Checking {name}"));
-        let fail = |message: String| format!("plugin {name}: {message}");
-        let new = git::resolve(&source.git, source.reference.as_deref())
-            .await
-            .map_err(fail)?;
-        if new == old {
-            continue;
-        }
-        let cache = cache(paths, &source.git);
-        git::fetch(&cache, &source.git, &new).await.map_err(fail)?;
-        // A new cache does not have the old commit yet.
-        let log = async {
-            git::fetch(&cache, &source.git, &old).await?;
-            git::log(&cache, &old, &new, source.folder.as_deref()).await
+        let checked = async {
+            let new = git::resolve(&source.git, source.reference.as_deref()).await?;
+            if new == old {
+                return Ok(None);
+            }
+            let cache = cache(paths, &source.git);
+            git::fetch(&cache, &source.git, &new).await?;
+            // A new cache does not have the old commit yet.
+            let log = async {
+                git::fetch(&cache, &source.git, &old).await?;
+                git::log(&cache, &old, &new, source.folder.as_deref()).await
+            }
+            .await;
+            // The new commits of other folders of the repository change nothing of the plugin.
+            if matches!(&log, Ok(commits) if commits.is_empty()) {
+                return Ok(None);
+            }
+            install(paths, &source, &new, progress).await?;
+            Ok::<_, String>(Some((new, log)))
         }
         .await;
-        // The new commits of other folders of the repository change nothing of the plugin.
-        if matches!(&log, Ok(commits) if commits.is_empty()) {
-            continue;
+        match checked {
+            Ok(None) => {}
+            Ok(Some((new, log))) => result.changes.push(PluginChange {
+                name,
+                source,
+                old,
+                new,
+                log: match log {
+                    Ok(commits) => PluginLog::Commits { commits },
+                    Err(error) => PluginLog::Failed { error },
+                },
+            }),
+            Err(error) => result.failed.push(FailedPlugin { name, error }),
         }
-        install(paths, &source, &new, progress).await.map_err(fail)?;
-        changes.push(PluginChange {
-            name,
-            source,
-            old,
-            new,
-            log: match log {
-                Ok(commits) => PluginLog::Commits { commits },
-                Err(error) => PluginLog::Failed { error },
-            },
-        });
     }
-    Ok(changes)
+    Ok(result)
 }
 
 /// Write the commit of each plugin of `plugins` into `plugins.lock`.

@@ -21,7 +21,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   `pending` until the next `profile/reload`, or `failed` with its `error`. It uses no network.
 - `plugin/sync` installs the commits of `plugins.lock` and locks each new Git plugin at the commit of its ref.
 - `plugin/check { target }` takes `{ "kind": "all" }` or `{ "kind": "names", "names": [...] }`. It installs each new
-  commit of an installed Git plugin, and answers the `changes` with their `log`.
+  commit of an installed Git plugin, and answers the `changes` with their `log`. It answers each plugin that it cannot
+  check in `failed`, with its `error`, and checks the others.
 - `plugin/apply { plugins }` writes the `{ source, commit }` of each plugin into `plugins.lock`. It fails for a plugin
   that the lock does not have.
 - `plugin/find { git, ref? }` answers the `plugins` of a repository: the `name` and the `folder?` of each `plugin.json`.
