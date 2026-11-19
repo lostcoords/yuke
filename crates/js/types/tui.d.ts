@@ -3,7 +3,10 @@
 /**
  * The types of the terminal interface and its stateless helpers. An import of this module starts nothing, so a plugin
  * can import it in each mode. Coordinates are local cells from 0. Text offsets are UTF-16 units, as in JavaScript
- * strings. A registration gives a remover, `() => void`. A second call of a remover does nothing.
+ * strings. An `add*` or `set*` method that registers something returns a remover, `() => void`. A second call of a
+ * remover does nothing. `wrapRoot`, `overlay`, and `dialog` return a `Mount`, and `panes.split` returns a `Pane`: its
+ * `close` removes the view. `setDocument`, `setText`, and `setItems` change the content of a widget, so they return
+ * nothing.
  */
 declare module "yuke:tui" {
   import type { Media, NoticeLevel, SessionId } from "yuke:protocol";
@@ -352,15 +355,18 @@ declare module "yuke:tui" {
   }
 
   /**
-   * The part of one plugin in a text widget: key contexts, an appearance, decorations, and handlers. Each setter
-   * replaces only this part. A later extension wins per appearance field and per decoration style field. `dispose()`
-   * and the abort of the signal of `extend` remove the part. After that, each call does nothing.
+   * The part of one plugin in a text widget: key contexts, an appearance, decorations, and handlers. Each `set` method
+   * replaces only this part, and its remover brings back the value before it, unless a later call replaced it. A later
+   * extension wins per appearance field and per decoration style field. `close()` and the abort of the signal of
+   * `extend` remove the whole part. After that, each call does nothing.
    */
   export interface TextExtension<P, E> {
     /** Add context atoms of the keymap while the widget is on the focus path. */
-    setContexts: (atoms: readonly string[]) => void;
-    setAppearance: (appearance: TextAppearance) => void;
-    setDecorations: (decorations: readonly Decoration<P>[]) => void;
+    setContexts: (atoms: readonly string[]) => () => void;
+    /** Set how the widget looks while it has this extension. */
+    setAppearance: (appearance: TextAppearance) => () => void;
+    /** Set the styles over ranges of the widget. */
+    setDecorations: (decorations: readonly Decoration<P>[]) => () => void;
     /**
      * Take a key of the focused widget: `true` stops it. A `beforeKeymap` handler runs before the keymap. A key that it
      * takes ends a pending key sequence. A `beforeDefault` handler (the default) runs after the keymap and before the
@@ -1112,8 +1118,11 @@ declare module "yuke:tui" {
       readonly themes: () => readonly string[];
       /** The name of the active theme. `ctx.addListener("theme.changed")` tells each change. */
       readonly theme: string;
-      /** Make `name` the active theme, also before that theme comes. */
-      readonly setTheme: (name: string) => void;
+      /**
+       * Make `name` the active theme, also before that theme comes. The last call wins, and the remover brings back the
+       * theme before it. The stop of the plugin removes its calls.
+       */
+      readonly setTheme: (name: string) => () => void;
     };
     /**
      * The notice history of the terminal interface: the last 100 notices with their repeat counts, also the notices from
@@ -1136,7 +1145,6 @@ declare module "yuke:tui" {
        * the newest one of `id`.
        */
       readonly set: (id: string, entry: StatusEntry) => () => void;
-      readonly delete: (id: string) => void;
       /** Each item of each plugin. */
       readonly list: () => readonly StatusItem[];
       /** Call `listener` after each later change of the items. A throw of `listener` goes to the call that changed them. */

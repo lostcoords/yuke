@@ -367,11 +367,10 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         scope.check();
         return core.styles.theme;
       },
-      setTheme: live((name: string): void => core.styles.setTheme(name)),
+      setTheme: live((name: string): (() => void) => scope.own(core.styles.setTheme(name))),
     }),
     status: Object.freeze({
       set: live((id: string, entry: StatusEntry): (() => void) => core.status.set(own(id), entry)),
-      delete: live((id: string): void => core.status.delete(own(id))),
       list: live((): readonly StatusItem[] => core.status.list()),
       addChangeListener: live((listener: () => void): (() => void) =>
         scope.own(core.status.addChangeListener(listener)),

@@ -38,7 +38,7 @@ test("an item gets the prefix of its plugin, a repeat changes nothing, and the s
   vim.tui.status.set("mode", { ...item("NORMAL", "left", 0), style: ["bar"] });
   vim.tui.status.set("mode", { ...item("NORMAL", "left", 0), style: ["bar"] });
   assertEquals(assertThrows(() => vim.tui.status.set("chat:model", item("m", "right", 0)))?.constructor, TypeError);
-  vim.tui.status.set("vim:count", item("3", "left", 1));
+  const removeCount = vim.tui.status.set("vim:count", item("3", "left", 1));
   assertEquals(
     watcher.tui.status.list().map((entry) => [entry.id, entry.text, entry.priority]),
     [
@@ -46,7 +46,7 @@ test("an item gets the prefix of its plugin, a repeat changes nothing, and the s
       ["vim:count", "3", 0],
     ],
   );
-  vim.tui.status.delete("count");
+  removeCount();
   vim.close();
   assertEquals([watcher.tui.status.list(), changes], [[], 4]);
 });
@@ -97,7 +97,7 @@ test("a narrow bar drops the lowest priority first, the later item of a tie firs
   tui.status.set("mode", item("NORMAL", "left", 0, 5));
   tui.status.set("jobs", item("jobs 2", "right", 1));
   tui.status.set("model", item("luna high", "right", 10));
-  tui.status.set("keys", item("g", "right", -1, 9));
+  const removeKeys = tui.status.set("keys", item("g", "right", -1, 9));
   frame.draw();
   const row = (): string => rows(frame.frame).at(-1) ?? "";
   const twenty = row();
@@ -105,7 +105,7 @@ test("a narrow bar drops the lowest priority first, the later item of a tie firs
   const twelve = row();
   frame.resize({ width: 6, height: 2 });
   const six = row();
-  tui.status.delete("keys");
+  removeKeys();
   frame.resize({ width: 5, height: 2 });
   assertEquals([twenty, twelve, six, row()], ["NORMAL    g · jobs 2", "NORMAL     g", "     g", "NORM…"]);
 });

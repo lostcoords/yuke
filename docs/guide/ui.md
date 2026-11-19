@@ -46,7 +46,7 @@ Call `tui.status.set(id, entry)` to add or replace an item. It returns a remover
 
 `tui.styles.add(groups)` changes style groups and returns a remover. A later call wins per field. A `null` field removes that field. A style can use palette names such as `accent` and `danger`.
 
-Register a theme with `tui.styles.addTheme(name, theme)`. Activate it with `tui.styles.setTheme(name)`. `tui.styles.theme` reads the active name. The active theme wins per field over `styles.add`. `tui.background` reads `"dark"` or `"light"`.
+Register a theme with `tui.styles.addTheme(name, theme)`. Activate it with `tui.styles.setTheme(name)`. The last call wins, and the remover that it returns brings back the theme before it. `tui.styles.theme` reads the active name. The active theme wins per field over `styles.add`. `tui.background` reads `"dark"` or `"light"`.
 
 Use `ctx.addListener("theme.changed", listener)` for later changes. The listener gets `{ name, background }`. The event does not replay the initial state, so read it directly.
 

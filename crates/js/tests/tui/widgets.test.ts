@@ -201,6 +201,24 @@ test("a contexts change ends a pending sequence", () => {
   assertEquals(atoms(core).at(-1), "field");
 });
 
+test("the remover of a set method brings back the value before it, also when a later call still holds", () => {
+  const core = new Core(fakeTerminal().driver);
+  const tui = createSurface(core, "chat", new AbortController().signal);
+  const editor = new TextEditor();
+  tui.panes.split(() => holder(editor));
+  core.draw();
+  const extension = editor.extend(new AbortController().signal);
+  const removeFirst = extension.setContexts(["first"]);
+  const removeSecond = extension.setContexts(["second"]);
+  const seen = [atoms(core).at(-1)];
+  removeFirst();
+  removeFirst();
+  seen.push(atoms(core).at(-1));
+  removeSecond();
+  seen.push(atoms(core).at(-1));
+  assertEquals(seen, ["second", "second", "field"]);
+});
+
 test("a change of a placed editor by code asks for a frame", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);

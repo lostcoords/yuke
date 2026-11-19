@@ -34,7 +34,8 @@ export class Styles {
   readonly #changed: () => void;
   readonly #themeChanged: () => void;
   readonly #themes: NamedTheme[] = [];
-  #active: string = DEFAULT;
+  /** The choices of the active theme, the oldest first. The newest one is active, and none means the default theme. */
+  readonly #choices: { readonly name: string }[] = [];
   readonly #layers: ReadonlyMap<string, StylePatch>[] = [];
   readonly #cache = new Map<string, TermStyle>();
   /** The cell of each group name and of no style, and of each style list or style object by identity. */
@@ -62,7 +63,7 @@ export class Styles {
 
   /** The name of the active theme. A name without a theme gives the default look until that theme comes. */
   get theme(): string {
-    return this.#active;
+    return this.#choices.at(-1)?.name ?? DEFAULT;
   }
 
   /** The names of the themes, each one once, the default theme first, then in the order they came. */
@@ -70,11 +71,19 @@ export class Styles {
     return [DEFAULT, ...new Set(this.#themes.map((entry) => entry.name))];
   }
 
-  /** Make `name` the active theme. */
-  setTheme(name: string): void {
-    if (name === this.#active) return;
-    this.#active = name;
-    this.#lookChanged();
+  /** Make `name` the active theme. The newest call wins, and the remover brings back the theme before it. */
+  setTheme(name: string): () => void {
+    const choice = { name };
+    const before = this.theme;
+    this.#choices.push(choice);
+    if (this.theme !== before) this.#lookChanged();
+    return () => {
+      const at = this.#choices.indexOf(choice);
+      if (at < 0) return;
+      const active = this.theme;
+      this.#choices.splice(at, 1);
+      if (this.theme !== active) this.#lookChanged();
+    };
   }
 
   /** Add `theme` as `name`, and return its remover. The newest theme of a name wins. */
@@ -110,7 +119,7 @@ export class Styles {
   #chain(): readonly NamedTheme[] {
     const chain: NamedTheme[] = [];
     const seen = new Set<string>();
-    for (let name: string | undefined = this.#active; name !== undefined && !seen.has(name); ) {
+    for (let name: string | undefined = this.theme; name !== undefined && !seen.has(name); ) {
       seen.add(name);
       const entry = this.#themes.findLast((candidate) => candidate.name === name);
       if (entry === undefined) break;
