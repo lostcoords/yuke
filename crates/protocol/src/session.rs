@@ -45,11 +45,11 @@ impl SessionTitle {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidSessionTitle`] when the normalized title is empty or exceeds 200 Unicode scalar values.
-    pub fn new(text: &str) -> Result<Self, InvalidSessionTitle> {
+    /// Returns [`SessionTitleError`] when the normalized title is empty or exceeds 200 Unicode scalar values.
+    pub fn new(text: &str) -> Result<Self, SessionTitleError> {
         let text = normalize_title(text);
         if text.is_empty() || text.chars().count() > Self::MAX_CHARACTERS {
-            return Err(InvalidSessionTitle);
+            return Err(SessionTitleError);
         }
         Ok(Self(text))
     }
@@ -90,15 +90,15 @@ impl fmt::Display for SessionTitle {
 
 /// The title is empty or too long.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidSessionTitle;
+pub struct SessionTitleError;
 
-impl fmt::Display for InvalidSessionTitle {
+impl fmt::Display for SessionTitleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("a session title must contain 1 to 200 characters")
     }
 }
 
-impl std::error::Error for InvalidSessionTitle {}
+impl std::error::Error for SessionTitleError {}
 
 fn normalize_title(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -144,7 +144,7 @@ pub struct SessionRow {
 
 #[cfg(test)]
 mod tests {
-    use super::{InvalidSessionTitle, SessionTitle};
+    use super::{SessionTitle, SessionTitleError};
 
     #[test]
     fn a_session_title_normalizes_whitespace_and_counts_unicode_characters() {
@@ -156,8 +156,8 @@ mod tests {
 
     #[test]
     fn an_explicit_session_title_rejects_empty_or_long_text() {
-        assert_eq!(SessionTitle::new(" \n\t"), Err(InvalidSessionTitle));
-        assert_eq!(SessionTitle::new(&"界".repeat(201)), Err(InvalidSessionTitle));
+        assert_eq!(SessionTitle::new(" \n\t"), Err(SessionTitleError));
+        assert_eq!(SessionTitle::new(&"界".repeat(201)), Err(SessionTitleError));
         let error = serde_json::from_value::<SessionTitle>(serde_json::json!(" ")).unwrap_err();
         assert_eq!(error.to_string(), "a session title must contain 1 to 200 characters");
         assert_eq!(SessionTitle::new(&"界".repeat(200)).unwrap().as_str(), "界".repeat(200));

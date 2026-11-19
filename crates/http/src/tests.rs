@@ -558,7 +558,7 @@ async fn ssl_cert_file_decides_whether_a_handshake_succeeds() {
 #[test]
 fn invalid_user_agent_is_rejected() {
     let options = ClientOptions::new("bad\r\n");
-    assert!(matches!(Client::new(options), Err(InvalidUserAgent)));
+    assert!(matches!(Client::new(options), Err(UserAgentError)));
 }
 
 #[test]

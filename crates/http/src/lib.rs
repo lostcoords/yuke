@@ -51,15 +51,15 @@ impl ClientOptions {
 
 /// The error that [`Client::new`] returns when the user agent is not a valid header value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InvalidUserAgent;
+pub struct UserAgentError;
 
-impl fmt::Display for InvalidUserAgent {
+impl fmt::Display for UserAgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the user agent is not a valid header value")
     }
 }
 
-impl std::error::Error for InvalidUserAgent {}
+impl std::error::Error for UserAgentError {}
 
 /// One request. The client owns the framing headers:
 /// - It sets `host` and `connection: close`.
@@ -192,9 +192,9 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidUserAgent`] if the user agent is not a valid header value.
-    pub fn new(options: ClientOptions) -> Result<Self, InvalidUserAgent> {
-        let user_agent = HeaderValue::try_from(options.user_agent).map_err(|_| InvalidUserAgent)?;
+    /// Returns [`UserAgentError`] if the user agent is not a valid header value.
+    pub fn new(options: ClientOptions) -> Result<Self, UserAgentError> {
+        let user_agent = HeaderValue::try_from(options.user_agent).map_err(|_| UserAgentError)?;
         Ok(Client {
             idle_timeout: options.idle_timeout,
             user_agent,

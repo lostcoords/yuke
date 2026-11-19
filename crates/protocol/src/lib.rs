@@ -45,7 +45,7 @@ pub use plugin::{
     PluginChange, PluginLoad, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget, RemovePluginParams,
     SyncPluginsResult,
 };
-pub use session::{InvalidSessionTitle, ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle};
+pub use session::{ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle, SessionTitleError};
 pub use update::{
     BlockPosition, BlockStarted, BlockStopped, DraftCommitted, DraftDiscardReason, DraftDiscarded, DraftModelUpdate,
     DraftStarted, InputAccepted, InputRemoved, InteractionClosed, InteractionRequested, JobUpdate, LiveUpdate,
