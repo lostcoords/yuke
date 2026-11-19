@@ -332,10 +332,7 @@ impl std::error::Error for Error {}
 
 /// Split `provider/model` on the first slash, because a model id may hold further slashes.
 fn split(selector: &str) -> Result<(&str, &str), Error> {
-    match selector.split_once('/') {
-        Some((provider, model)) if !provider.is_empty() && !model.is_empty() => Ok((provider, model)),
-        _ => Err(Error::MalformedSelector),
-    }
+    selector.split_once('/').ok_or(Error::MalformedSelector)
 }
 
 /// One catalog model and its provider, borrowed from a provider table.
@@ -552,13 +549,10 @@ mod tests {
         assert_eq!(lookup_in(&table, "host/nope").err(), Some(Error::UnknownModel));
         // A model id may hold its own slash, so only the first one divides the selector.
         assert_eq!(lookup_in(&table, "host/amazon/nova").unwrap().model.id, "amazon/nova");
-        for malformed in ["host", "/claude", "host/"] {
-            assert_eq!(
-                lookup_in(&table, malformed).err(),
-                Some(Error::MalformedSelector),
-                "{malformed}"
-            );
-        }
+        assert_eq!(lookup_in(&table, "host").err(), Some(Error::MalformedSelector));
+        // An empty part names nothing.
+        assert_eq!(lookup_in(&table, "/claude").err(), Some(Error::UnknownProvider));
+        assert_eq!(lookup_in(&table, "host/").err(), Some(Error::UnknownModel));
     }
 
     #[test]
