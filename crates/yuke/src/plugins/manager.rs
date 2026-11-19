@@ -4,7 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::Map;
 use yuke_protocol::{
     AddedPlugin, FoundPlugin, LockedPlugin, ManagedPlugin, PluginChange, PluginLoad, PluginLog, PluginOrigin,
     PluginSource, PluginState, PluginTarget, SyncPluginsResult,
@@ -22,17 +22,15 @@ use crate::paths::Paths;
 ///
 /// Returns a text for a bad `config.json` or `plugins.lock`.
 pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlugin>, String> {
-    let config = read_config(paths)?;
-    let lock = Lock::read_for(&paths.config, &config)?;
-    Ok(resolve(paths, &config)?
+    Ok(resolve(paths, &read_config(paths)?)?
         .outcomes
         .into_iter()
         .map(|outcome| {
+            let last = running.iter().find(|running| running.source == outcome.source);
             let (source, state) = match outcome.source {
                 Source::Folder(folder) => (PluginOrigin::Folder(folder), PluginState::Local),
                 Source::Git(source) => {
-                    let commit = lock.commits.get(&source).cloned();
-                    let state = match commit {
+                    let state = match outcome.commit {
                         Some(commit) if outcome.failure != Some(Failure::NotInstalled) => {
                             PluginState::Installed { commit }
                         }
@@ -41,10 +39,6 @@ pub(crate) fn list(paths: &Paths, running: &[Outcome]) -> Result<Vec<ManagedPlug
                     (PluginOrigin::Git(source), state)
                 }
             };
-            let last = running.iter().find(|running| match &running.source {
-                Source::Folder(folder) => source == PluginOrigin::Folder(folder.clone()),
-                Source::Git(git) => source == PluginOrigin::Git(git.clone()),
-            });
             // A problem on disk shows first, and a failure of the code shows until the next load.
             let load = match (&outcome.failure, last.map(|last| &last.failure)) {
                 (Some(Failure::Invalid(error)), _) | (_, Some(Some(Failure::Invalid(error)))) => {
@@ -161,15 +155,7 @@ pub(crate) async fn add(
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
     for plugin in &added {
-        let source = &plugin.source;
-        let mut fields = vec![format!("\"git\": {}", Value::from(source.git.as_str()))];
-        if let Some(folder) = &source.folder {
-            fields.push(format!("\"folder\": {}", Value::from(folder.as_str())));
-        }
-        if let Some(reference) = &source.reference {
-            fields.push(format!("\"ref\": {}", Value::from(reference.as_str())));
-        }
-        let item = format!("{{ {} }}", fields.join(", "));
+        let item = serde_json::to_string(&plugin.source).map_err(|error| error.to_string())?;
         text = Some(match text {
             Some(text) => add_plugin_item(&text, &item),
             None => format!("{{\n  \"plugins\": [\n    {item}\n  ]\n}}\n"),
@@ -177,8 +163,6 @@ pub(crate) async fn add(
     }
     // Read the lock before the config write, so a bad lock changes no file.
     let mut lock = Lock::read(&paths.config)?;
-    let sources = git_sources(&config);
-    lock.commits.retain(|locked, _| sources.contains(&locked));
     for plugin in &added {
         lock.commits.insert(plugin.source.clone(), plugin.commit.clone());
     }
@@ -265,17 +249,12 @@ pub(crate) async fn sync(paths: &Paths, locked: bool) -> Result<SyncPluginsResul
 /// Returns a text for a bad file, a name that no installed Git plugin has, or a failed fetch or install.
 pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<PluginChange>, String> {
     let _held = hold(&paths.data).await?;
-    let config = read_config(paths)?;
-    let lock = Lock::read_for(&paths.config, &config)?;
     // A plugin that is not installed has no name, so a sync comes before its update.
-    let mut targets: Vec<(PluginSource, String, String)> = resolve(paths, &config)?
+    let mut targets: Vec<(PluginSource, String, String)> = resolve(paths, &read_config(paths)?)?
         .outcomes
         .into_iter()
-        .filter_map(|outcome| match (outcome.source, outcome.name) {
-            (Source::Git(source), Some(name)) => {
-                let commit = lock.commits.get(&source)?.clone();
-                Some((source, commit, name))
-            }
+        .filter_map(|outcome| match (outcome.source, outcome.commit, outcome.name) {
+            (Source::Git(source), Some(commit), Some(name)) => Some((source, commit, name)),
             _ => None,
         })
         .collect();
@@ -352,6 +331,7 @@ pub(crate) async fn apply(paths: &Paths, plugins: &[LockedPlugin]) -> Result<(),
 /// install becomes visible whole, with one rename.
 async fn install(paths: &Paths, source: &PluginSource, commit: &str) -> Result<(), String> {
     let installed = git_folder(&paths.data, &source.git, commit);
+    let folder = source.folder.as_deref().unwrap_or_default();
     if !installed.is_dir() {
         let cache = cache(paths, &source.git);
         git::fetch(&cache, &source.git, commit).await?;
@@ -366,19 +346,10 @@ async fn install(paths: &Paths, source: &PluginSource, commit: &str) -> Result<(
         fs::create_dir_all(&staging).map_err(fail)?;
         git::export(&cache, commit, &staging).await?;
         // An install checks the whole manifest, so a plugin that cannot load fails here and not at the next reload.
-        manifest_plugin(
-            &staging.join(source.folder.as_deref().unwrap_or_default()),
-            &paths.data,
-            Map::new(),
-        )?;
+        manifest_plugin(&staging.join(folder), &paths.data, Map::new())?;
         return fs::rename(&staging, &installed).map_err(fail);
     }
-    manifest_plugin(&root(paths, source, commit), &paths.data, Map::new()).map(|_| ())
-}
-
-/// The plugin folder of `source` at the commit `commit`.
-fn root(paths: &Paths, source: &PluginSource, commit: &str) -> PathBuf {
-    git_folder(&paths.data, &source.git, commit).join(source.folder.as_deref().unwrap_or_default())
+    manifest_plugin(&installed.join(folder), &paths.data, Map::new()).map(|_| ())
 }
 
 /// The cache repository of `url`: `<cache>/git/<key>.git`.

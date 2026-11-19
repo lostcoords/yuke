@@ -93,18 +93,14 @@ impl PluginFailure {
 
 impl fmt::Display for PluginFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "plugin {} did not load: ", self.name)?;
         match &self.reason {
-            PluginError::Load(error) => write!(f, "plugin {} did not load: {error}", self.name),
+            PluginError::Load(error) => write!(f, "{error}"),
             PluginError::Provider { service, provider } => write!(
                 f,
-                "plugin {} did not load: it uses '{service}', and plugin {provider} that provides it did not load",
-                self.name
+                "it uses '{service}', and plugin {provider} that provides it did not load"
             ),
-            PluginError::Missing { service } => write!(
-                f,
-                "plugin {} did not load: it uses '{service}', and no plugin before it provides it",
-                self.name
-            ),
+            PluginError::Missing { service } => write!(f, "it uses '{service}', and no plugin before it provides it"),
         }
     }
 }

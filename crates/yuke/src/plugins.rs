@@ -32,13 +32,10 @@ struct Manifest {
 
 /// The fields of yuke in `extensions["sh.yuke"]`. Another field, such as `activation`, is an error.
 #[derive(Deserialize, Default)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 struct YukeFields {
-    #[serde(default)]
     entry: Option<String>,
-    #[serde(default)]
     uses: Vec<String>,
-    #[serde(default)]
     provides: Vec<String>,
 }
 
@@ -126,6 +123,8 @@ pub(crate) struct Outcome {
     pub(crate) source: Source,
     /// The name of its manifest, when the manifest reads.
     pub(crate) name: Option<String>,
+    /// The commit of a Git plugin in `plugins.lock`, when the lock has one.
+    pub(crate) commit: Option<String>,
     /// Why the plugin does not load. `None` for a plugin that loads.
     pub(crate) failure: Option<Failure>,
 }
@@ -213,39 +212,46 @@ fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data
     let lock = Lock::read_for(config_folder, config)?;
     let mut outcomes = Vec::with_capacity(config.plugins.len());
     for ConfigPlugin { source, options } in &config.plugins {
-        let root = match source {
-            Source::Folder(folder) => Some(config_folder.join(folder)),
-            Source::Git(source) => lock
-                .commits
-                .get(source)
-                .map(|commit| git_folder(data, &source.git, commit))
-                .filter(|installed| installed.is_dir())
-                .map(|installed| installed.join(source.folder.as_deref().unwrap_or_default())),
+        let (root, commit) = match source {
+            Source::Folder(folder) => (Some(config_folder.join(folder)), None),
+            Source::Git(git) => {
+                let commit = lock.commits.get(git).cloned();
+                let root = (commit.as_ref())
+                    .map(|commit| git_folder(data, &git.git, commit))
+                    .filter(|installed| installed.is_dir())
+                    .map(|installed| installed.join(git.folder.as_deref().unwrap_or_default()));
+                (root, commit)
+            }
         };
+        let read = root.map(|root| {
+            let root = root.canonicalize().map_err(|error| error.to_string())?;
+            read_manifest(&root).map(|manifest| (root, manifest))
+        });
+        // A plugin with bad fields still has a name, so the list and a remove can find it.
+        let name = (read.as_ref())
+            .and_then(|read| read.as_ref().ok())
+            .map(|(_, manifest)| manifest.name.clone());
         let mut outcome = Outcome {
             source: source.clone(),
-            name: None,
-            failure: Some(Failure::NotInstalled),
+            name,
+            commit,
+            failure: None,
         };
-        if let Some(root) = root {
-            let checked = root
-                .canonicalize()
-                .map_err(|error| error.to_string())
-                .and_then(|root| manifest_plugin(&root, data, options.clone()))
-                .and_then(|plugin| check_conflicts(&plugins, &plugin).map(|()| plugin));
-            // A plugin with bad fields still has a name, so the list and a remove can find it.
-            outcome.name = read_manifest(&root).ok().map(|manifest| manifest.name);
-            outcome.failure = match checked {
-                Ok(plugin) => {
-                    plugins.push(plugin);
-                    None
-                }
-                Err(error) => Some(Failure::Invalid(format!(
-                    "plugin {} did not load: {error}",
-                    outcome.label()
-                ))),
-            };
-        }
+        let checked = read.map(|read| {
+            read.and_then(|(root, manifest)| plugin_of(&root, manifest, data, options.clone()))
+                .and_then(|plugin| check_conflicts(&plugins, &plugin).map(|()| plugin))
+        });
+        outcome.failure = match checked {
+            None => Some(Failure::NotInstalled),
+            Some(Ok(plugin)) => {
+                plugins.push(plugin);
+                None
+            }
+            Some(Err(error)) => Some(Failure::Invalid(format!(
+                "plugin {} did not load: {error}",
+                outcome.label()
+            ))),
+        };
         outcomes.push(outcome);
     }
     Ok(PluginList {
@@ -350,7 +356,11 @@ fn parse_manifest(text: &str) -> Result<Manifest, String> {
 
 /// The plugin of the folder `root`, from its manifest, with the `options` of `config.json`.
 pub(crate) fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
-    let manifest = read_manifest(root)?;
+    plugin_of(root, read_manifest(root)?, data, options)
+}
+
+/// The plugin of the folder `root` with the manifest `manifest` and the `options` of `config.json`.
+fn plugin_of(root: &Path, manifest: Manifest, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
     let path = root.join(MANIFEST);
     let fields: YukeFields = match manifest.extensions.get(EXTENSION) {
         Some(value) => YukeFields::deserialize(value)

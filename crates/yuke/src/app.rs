@@ -150,7 +150,7 @@ struct Profile {
     /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
     plugin_folders: Rc<[PathBuf]>,
     /// The outcome of each plugin of `config.json` at the last load, with the failures of the runtime.
-    outcomes: Rc<[Outcome]>,
+    outcomes: Vec<Outcome>,
     /// The wait of a session with running jobs and no holder before it closes, from `sessionIdleMinutes`.
     session_idle: Duration,
 }
@@ -166,7 +166,7 @@ impl Profile {
         let profile = Self {
             providers: Rc::new(providers),
             plugin_folders: Self::plugin_folders(&list.load),
-            outcomes: list.outcomes.into(),
+            outcomes: list.outcomes,
             session_idle: Duration::from_secs(
                 60 * u64::from(config.session_idle_minutes.unwrap_or(SESSION_IDLE_MINUTES)),
             ),
@@ -195,8 +195,7 @@ impl Shared {
     fn report_failures(&self, failures: Vec<yuke_js::PluginFailure>) {
         let mut failed: Vec<(String, String)> = Vec::new();
         {
-            let mut profile = self.profile.borrow_mut();
-            let mut outcomes = profile.outcomes.to_vec();
+            let outcomes = &mut self.profile.borrow_mut().outcomes;
             for failure in failures {
                 let text = chain_text(&failure);
                 match outcomes
@@ -208,12 +207,11 @@ impl Shared {
                     None => failed.push((failure.name().to_owned(), text)),
                 }
             }
-            for outcome in &outcomes {
+            for outcome in outcomes.iter() {
                 if let Some(text) = outcome.failure_text() {
                     failed.push((outcome.label().to_owned(), text));
                 }
             }
-            profile.outcomes = outcomes.into();
         }
         let text = match failed.as_slice() {
             [] => return,
@@ -469,8 +467,8 @@ impl Shared {
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
     pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
-        let running = Rc::clone(&self.profile.borrow().outcomes);
-        let plugins = plugins::manager::list(&self.machine.paths, &running).map_err(AppError::Invalid)?;
+        let plugins =
+            plugins::manager::list(&self.machine.paths, &self.profile.borrow().outcomes).map_err(AppError::Invalid)?;
         Ok(ListPluginsResult { plugins })
     }
 

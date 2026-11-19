@@ -299,18 +299,6 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     let url = clock(&root, None).git;
     let original = "{\n  // mine\n  \"plugins\": [\n    \"./notes\"\n  ]\n}\n";
     fs::write(paths.config.join("config.json"), original).unwrap();
-    // An entry of a plugin that config.json no longer has, as a stop of a remove leaves it.
-    let stale = PluginSource {
-        git: "https://h/gone".to_owned(),
-        folder: None,
-        reference: None,
-    };
-    Lock {
-        commits: [(stale.clone(), "a".repeat(40))].into(),
-    }
-    .write(&paths.config)
-    .unwrap();
-
     let added = add(&paths, &url, &[], Some("main")).await.unwrap();
     let text = fs::read_to_string(paths.config.join("config.json")).unwrap();
     let locked = Lock::read(&paths.config).unwrap();
@@ -337,11 +325,10 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     assert_eq!(
         text,
         format!(
-            "{{\n  // mine\n  \"plugins\": [\n    \"./notes\",\n    {{ \"git\": {url_text}, \"folder\": \"plugins/clock\", \"ref\": \"main\" }}\n  ]\n}}\n"
+            "{{\n  // mine\n  \"plugins\": [\n    \"./notes\",\n    {{\"git\":{url_text},\"folder\":\"plugins/clock\",\"ref\":\"main\"}}\n  ]\n}}\n"
         )
     );
     assert_eq!(locked.commits[&main], first);
-    assert!(!locked.commits.contains_key(&stale));
     assert_eq!(again, "plugin clock: config.json has a plugin of this name already");
     assert_eq!(after, original);
     assert!(unlocked.commits.is_empty());
