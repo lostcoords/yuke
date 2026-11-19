@@ -21,6 +21,8 @@ yuke-engine = { path = "../engine" }
 yuke-protocol = { path = "../protocol" }
 
 [dev-dependencies]
+# The integration tests use the shared fixtures of the `testing` feature.
+yuke-agent = { path = ".", features = ["testing"] }
 yuke-ai = { path = "../ai", default-features = false, features = ["scripted"] }
 yuke-testing = { path = "../testing" }
 tokio = { version = "1.53", features = ["macros", "rt"] }

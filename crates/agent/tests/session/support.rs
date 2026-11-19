@@ -1,41 +1,25 @@
 //! The fixtures that only the session tests use: settings, inputs, a tool that sends input, and a store that fails a
-//! chosen commit. The shared ones live in `yuke-testing`.
+//! chosen commit. The shared ones live in `yuke-testing` and in `yuke_agent::testing`.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use yuke_protocol::{
-    CommitEvent, ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput,
-    SessionEvent, SessionId, SessionSettings, SessionSummary,
+    CommitEvent, ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings,
+    SessionSummary,
 };
 
 use async_trait::async_trait;
 use yuke_agent::{
     Access, EventPage, ListPosition, Loaded, MemoryStore, Opened, PromptSection, SessionPage, Store, StoreError,
 };
-use yuke_ai::Block;
 use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
 
-/// A system prompt of one section.
-pub(crate) fn prompt() -> Vec<PromptSection> {
-    vec![PromptSection::new("base", "the prompt")]
-}
+pub(crate) use yuke_agent::testing::{prompt, user_input};
 
 /// Session settings for the shared test target.
 pub(crate) fn settings() -> SessionSettings {
-    SessionSettings {
-        model: ModelReference {
-            provider: "test".to_owned(),
-            model: "test-model".to_owned(),
-        },
-        settings: yuke_ai::RequestSettings::new(),
-        folder: std::path::PathBuf::from("/work"),
-    }
-}
-
-/// An input of the user with one text block.
-pub(crate) fn user_input(text: &str) -> Input {
-    Input::new(InputSource::User, InputKind::Message, vec![Block::user_text(text)]).unwrap()
+    yuke_agent::testing::settings("test-model")
 }
 
 /// The records of the inputs that the commits of session `id` consumed, in event order.
