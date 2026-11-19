@@ -30,7 +30,12 @@ description: Read and fill PDF forms.
 The steps of the skill.
 ```
 
-`name` defaults to the folder name. `description` is required.
+| Field | Rule |
+|---|---|
+| `name` | Any text that is not empty. It defaults to the folder name. It does not need to match the folder name. |
+| `description` | Required. It has at most 1024 characters. |
+
+The front matter holds `key: value` lines. A value can be plain, quoted, or a block (`|` or `>`). yuke ignores other keys.
 
 The name, description, and location of each skill appear in the prompt. The model reads a matching skill through the `read` tool.
 
@@ -38,9 +43,16 @@ yuke scans these folders, in this order:
 
 1. The workspace `.agents/skills`.
 2. The user's `~/.agents/skills`.
-3. The `skills` folder of each plugin.
+3. The `skills` folder of each plugin, in load order. A plugin can have only this folder. See [Plugin manifest](plugins.md#plugin-manifest).
 
-Each skill is a direct subfolder. An earlier folder hides a later skill with the same name. yuke skips an invalid skill and tells you why.
+Each skill is a direct subfolder. An earlier folder hides a later skill with the same name. yuke skips a skill when:
+
+- the file has no front matter,
+- the name is empty,
+- the description is missing or has more than 1024 characters, or
+- an earlier skill has the same name.
+
+A skipped skill gives a warning notice when the session starts: "yuke skipped the skill at PATH: REASON". The other skills stay.
 
 ## Change the prompt from a plugin
 
