@@ -222,10 +222,10 @@ async fn a_run_without_a_model_or_a_reasoning_choice_is_an_error_and_sends_nothi
         reasoning: None,
         ..task("Hi.", SessionChoice::New)
     };
-    let no_level = "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
+    let no_level = "no reasoning level: pass --reasoning <LEVEL>, or --reasoning default to let the endpoint choose";
 
     for (task, expected) in [
-        (no_model, "no model: pass --model <provider/model>"),
+        (no_model, "no model: pass --model <PROVIDER/MODEL>"),
         (no_reasoning, no_level),
     ] {
         let (finished, requests) = run_with(&place, &task, &[]).await;

@@ -8,7 +8,7 @@ description: Run one task without the terminal UI, in a script or a CI job, and 
 
 ## Run a task
 
-A new session needs both a model and a reasoning choice. For example, with `ANTHROPIC_API_KEY` set:
+A new session needs both a model and a reasoning level. For example, with `ANTHROPIC_API_KEY` set:
 
 ```sh
 yuke -p 'Explain how to run the tests. Do not change files.' \
@@ -41,7 +41,7 @@ To send a follow-up to the newest conversation in this directory:
 yuke -c -p 'Which test should I run first?'
 ```
 
-To continue a session by its ID, in any folder, use `--resume ID` (or `-r ID`) with `-p`. A continued session keeps its model and reasoning choice unless you replace them. If you pass `--model` on a continued session, also pass `--reasoning`.
+To continue a session by its ID, in any folder, use `--resume ID` (or `-r ID`) with `-p`. A continued session keeps its model and reasoning level unless you replace them. If you pass `--model` on a continued session, also pass `--reasoning`.
 
 ## Plugins without a terminal
 

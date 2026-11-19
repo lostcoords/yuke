@@ -27,9 +27,9 @@ pub(crate) struct Task {
     /// The input of the turn.
     pub(crate) prompt: String,
     /// The model as `provider/model`. A new session needs it. For an existing session, it replaces the model of the
-    /// session, and the command line then needs a reasoning choice too.
+    /// session, and the command line then needs a reasoning level too.
     pub(crate) model: Option<String>,
-    /// The reasoning choice. A new session needs it. For an existing session, it replaces the level of the session.
+    /// The reasoning level. A new session needs it. For an existing session, it replaces the level of the session.
     pub(crate) reasoning: Option<ReasoningSelection>,
     /// The session of the turn.
     pub(crate) session: SessionChoice,
@@ -108,7 +108,7 @@ async fn run_turn(
 ) -> Result<Finished, String> {
     let id = match task.session {
         SessionChoice::New => {
-            let selector = task.model.as_deref().ok_or("no model: pass --model <provider/model>")?;
+            let selector = task.model.as_deref().ok_or("no model: pass --model <PROVIDER/MODEL>")?;
             let choice = task.reasoning.ok_or(NO_REASONING)?;
             let settings = new_settings(&app.providers(), selector, choice, cwd)?;
             app.sessions()
@@ -169,9 +169,9 @@ async fn run_turn(
     })
 }
 
-/// The error of a run that needs a reasoning choice and has none.
+/// The error of a run that needs a reasoning level and has none.
 const NO_REASONING: &str =
-    "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
+    "no reasoning level: pass --reasoning <LEVEL>, or --reasoning default to let the endpoint choose";
 
 /// The settings of a new session in `cwd` with the model `selector` of `providers` and the reasoning `choice`. The app
 /// builds the system prompt.
