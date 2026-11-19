@@ -8,7 +8,7 @@ import { assertEquals, assertRejects, createHost, folder, test, waitForSettled }
 async function failures(host: Promise<unknown>): Promise<string[]> {
   const error = await assertRejects(() => host);
   const message = error instanceof Error ? error.message : String(error);
-  return message.split("\n").filter((line) => line.startsWith("plugin "));
+  return message.split("\n").filter((line) => /^plugin /i.test(line));
 }
 
 /**
