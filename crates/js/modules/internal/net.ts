@@ -17,9 +17,9 @@ import type { UnixConnection, UnixListener } from "yuke:net";
 export class ConnectionError extends Error {
   readonly code: string | undefined;
 
-  constructor(message: string, code: string | undefined) {
+  constructor(message: string, details: { readonly code?: string | undefined }) {
     super(message);
-    this.code = code;
+    this.code = details.code;
   }
 }
 ConnectionError.prototype.name = "ConnectionError";
@@ -36,8 +36,10 @@ export function failureOf(
   if (signal?.aborted === true) return signal.reason;
   // The natives reject with `{ cancelled }`, or with `{ code, message }`, as a conversion error does too.
   const record = error as Readonly<Record<string, unknown>>;
-  if ("cancelled" in record) return new ConnectionError(`the ${subject} is closed`, "ERR_CLOSED");
-  return new ConnectionError(String(record.message), typeof record.code === "string" ? record.code : undefined);
+  if ("cancelled" in record) return new ConnectionError(`the ${subject} is closed`, { code: "ERR_CLOSED" });
+  return new ConnectionError(String(record.message), {
+    code: typeof record.code === "string" ? record.code : undefined,
+  });
 }
 
 export class Connection implements UnixConnection {

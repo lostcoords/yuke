@@ -33,7 +33,7 @@ declare module "yuke:net" {
 
   /** The failure of a connection or a listener. */
   export class ConnectionError extends Error {
-    constructor(message: string, code: string | undefined);
+    constructor(message: string, details: { readonly code?: string | undefined });
     /**
      * The POSIX name of the failure: `ENOENT` (no socket or folder at the path), `ECONNREFUSED` (no server at the
      * path), `EADDRINUSE` (the path exists), `EACCES`, `EPIPE`, or `ECONNRESET`.
