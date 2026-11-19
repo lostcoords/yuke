@@ -222,17 +222,11 @@ async fn a_run_without_a_model_or_a_reasoning_choice_is_an_error_and_sends_nothi
         reasoning: None,
         ..task("Hi.", SessionChoice::New)
     };
-    // The level of the session may not fit a new model.
-    let new_model_only = Task {
-        model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
-        ..task("Hi.", SessionChoice::Newest)
-    };
     let no_level = "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
 
     for (task, expected) in [
         (no_model, "no model: pass --model <provider/model>"),
         (no_reasoning, no_level),
-        (new_model_only, no_level),
     ] {
         let (finished, requests) = run_with(&place, &task, &[]).await;
         assert_eq!(finished, Err(expected.to_owned()), "{task:?}");

@@ -74,12 +74,12 @@ struct Cli {
     #[arg(long, requires = "prompt")]
     json: bool,
 
-    /// The model, as provider/model. A new session needs it.
-    #[arg(long, value_name = "PROVIDER/MODEL", requires = "prompt")]
+    /// The model, as provider/model. A new session needs it. It needs --reasoning too, because the level of a saved
+    /// session may not fit a new model.
+    #[arg(long, value_name = "PROVIDER/MODEL", requires_all = ["prompt", "reasoning"])]
     model: Option<String>,
 
-    /// The reasoning level: default, off, or an effort such as low or high. A new session needs it, and so does
-    /// --model on a continued session.
+    /// The reasoning level: default, off, or an effort such as low or high. A new session needs it.
     #[arg(long, value_name = "LEVEL", requires = "prompt")]
     reasoning: Option<ReasoningSelection>,
 
@@ -753,6 +753,14 @@ mod tests {
         assert_eq!(
             mode(&["-p", "Hi.", "--reasoning", "extreme"]),
             Err(ErrorKind::ValueValidation)
+        );
+    }
+
+    #[test]
+    fn a_model_needs_a_reasoning_level() {
+        assert_eq!(
+            mode(&["-p", "Hi.", "--model", "a/b"]),
+            Err(ErrorKind::MissingRequiredArgument)
         );
     }
 

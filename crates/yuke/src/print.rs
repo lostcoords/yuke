@@ -27,7 +27,7 @@ pub(crate) struct Task {
     /// The input of the turn.
     pub(crate) prompt: String,
     /// The model as `provider/model`. A new session needs it. For an existing session, it replaces the model of the
-    /// session, and the run then needs a reasoning choice too.
+    /// session, and the command line then needs a reasoning choice too.
     pub(crate) model: Option<String>,
     /// The reasoning choice. A new session needs it. For an existing session, it replaces the level of the session.
     pub(crate) reasoning: Option<ReasoningSelection>,
@@ -192,12 +192,8 @@ fn new_settings(
     })
 }
 
-/// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event. A
-/// new model needs a reasoning choice too, because the level of the session may not fit it.
+/// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event.
 async fn existing_session(task: &Task, id: SessionId, app: &App) -> Result<SessionId, String> {
-    if task.model.is_some() && task.reasoning.is_none() {
-        return Err(NO_REASONING.to_owned());
-    }
     let changed = |saved: &SessionSettings, providers: &Providers| {
         let Some(choice) = task.reasoning else {
             return Ok(None);
