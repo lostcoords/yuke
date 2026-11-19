@@ -54,7 +54,7 @@ Section order is prompt order. The model reads each section except `base` betwee
 
 `round.retry` runs after the host's retries for a transient failure stop. An answer retries the round with that plan. No answer lets the failure end the turn. The host sets no limit on retries, so check `retries` to bound a loop.
 
-`round.after` runs after an answer and its tool results. `{ continue: "text" }` sends a plugin notification and requests another round. `{ stop: true }` ends the turn. Check `continues` to bound a continuation loop.
+`round.after` runs after an answer and its tool results. `{ continue: "text" }` gives the text to the model as an input of the plugin, shows it to the user as a notice, and requests another round. `{ stop: true }` ends the turn. Check `continues` to bound a continuation loop.
 
 ### Hook failures
 
