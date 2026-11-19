@@ -499,9 +499,6 @@ impl Target {
         };
         let authority = uri.authority().ok_or(Error::BadUrl)?;
         let host = authority.host();
-        if host.is_empty() {
-            return Err(Error::BadUrl);
-        }
         let host_and_port = authority
             .as_str()
             .rsplit_once('@')
