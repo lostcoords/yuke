@@ -347,7 +347,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         chat.refresh();
       } catch (error) {
         // The session can start without the saved choice.
-        ctx.notify("error", `The model choice did not save: ${String(error)}`);
+        ctx.notify("error", `yuke could not save the model choice: ${String(error)}`);
       }
     }
     return {
@@ -377,7 +377,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const reasoning = settings.settings.reasoning;
       await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `The model did not change: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `yuke could not change the model: ${String(error)}`);
     } finally {
       busy = false;
     }
@@ -412,7 +412,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     try {
       await chatComposer.send();
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `The message did not send: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `yuke could not send the message: ${String(error)}`);
     } finally {
       busy = false;
     }
@@ -422,9 +422,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const olderMessage = async (): Promise<void> => {
     try {
       const result = await chatComposer.olderMessage();
-      if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "The message reached the turn already");
+      if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "The turn already has the message");
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `The message did not come back: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `yuke could not get the message back: ${String(error)}`);
     }
   };
 
@@ -436,12 +436,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const image = await tui.clipboard.readImage();
       if (mount.signal.aborted) return;
       if (image === undefined) {
-        ctx.notify("info", "The clipboard holds no image");
+        ctx.notify("info", "There is no image on the clipboard");
         return;
       }
       await chatComposer.attachImage(image);
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `The image did not attach: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `yuke could not attach the image: ${String(error)}`);
     } finally {
       busy = false;
     }
@@ -797,7 +797,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     nextFolder = chatSession.transcript.settings?.cwd ?? nextFolder;
     chatComposer.setDraft(EMPTY);
     chatSession.leave();
-    if (running) ctx.notify("info", "The work goes on: /sessions shows it");
+    if (running) ctx.notify("info", "The session is still running: use /sessions to check it");
   };
   const actions: PaneActions = {
     pane: chatPaneFields,

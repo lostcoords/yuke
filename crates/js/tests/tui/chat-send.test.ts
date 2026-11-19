@@ -164,7 +164,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   await waitForSettled();
   frame.key("enter");
   await waitForSettled();
-  // A new pane without a session shows no pick, because the pick did not save.
+  // A new pane without a session shows no pick, because yuke could not save the pick.
   chat.tui.commands.run("core:split-right");
   frame.draw();
   assertEquals(
@@ -174,7 +174,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
       chat.tui.status.list().some((item) => item.id === "chat:model"),
     ],
     [
-      ["error The model choice did not load", "error The model choice did not save"],
+      ["error The model choice did not load", "error yuke could not save the model choice"],
       [[{ kind: "userText", text: "hi" }]],
       false,
     ],
@@ -199,7 +199,7 @@ test("a refused input comes back above the newer text with the spans of both, an
   refuse.reject(new Error("full"));
   await waitForSettled();
   assertEquals(draft(composerOf(chat).state), [`first\n${"x".repeat(301)}`, [[6, 307, "[Pasted text · 301 chars]"]]]);
-  assertEquals(chat.notices, ["error The message did not send: Error: full"]);
+  assertEquals(chat.notices, ["error yuke could not send the message: Error: full"]);
 });
 
 test("an accepted input followed by a failed turn does not come back", async () => {
@@ -492,7 +492,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   await waitForSettled();
   frame.key("enter");
   await waitForSettled();
-  assertEquals(chat.notices, ["error The model did not change: Error: a turn runs"]);
+  assertEquals(chat.notices, ["error yuke could not change the model: Error: a turn runs"]);
 });
 
 test("a slash word lists the matching commands above the composer, and enter runs the selected one", async () => {
@@ -728,7 +728,7 @@ test("a message that a turn took stays sent and the next up recalls an older one
   sessions.state.removed = false;
   frame.key("up");
   await waitForSettled();
-  assertEquals([composerOf(chat).state.text, chat.notices], ["", ["info The message reached the turn already"]]);
+  assertEquals([composerOf(chat).state.text, chat.notices], ["", ["info The turn already has the message"]]);
   // The next up goes on with the older message, so it never asks for the sent one again.
   sessions.state.removed = true;
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -802,7 +802,7 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
   await waitForSettled();
   assertEquals(
     [strip, composerOf(chat).state.text, chat.notices],
-    [[" b", `${" c".padEnd(13)} ↑ edit`], "", ["error The message did not come back: Error: disk"]],
+    [[" b", `${" c".padEnd(13)} ↑ edit`], "", ["error yuke could not get the message back: Error: disk"]],
   );
 });
 
@@ -888,7 +888,13 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
       sessions.opened.map((open) => open.id),
       composerOf(chat).state.text,
     ],
-    [["info The clipboard holds no image"], ["error The image did not attach: Error: disk full"], 1, ["s-new"], ""],
+    [
+      ["info There is no image on the clipboard"],
+      ["error yuke could not attach the image: Error: disk full"],
+      1,
+      ["s-new"],
+      "",
+    ],
   );
 });
 

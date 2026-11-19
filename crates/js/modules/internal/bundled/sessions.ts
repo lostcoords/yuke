@@ -93,7 +93,9 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     onChoose: (row) => {
       dialog.close();
       const id = row.sessionId;
-      chat.show(id).catch((error: unknown) => ctx.notify("error", `The session ${id} did not show: ${String(error)}`));
+      chat
+        .show(id)
+        .catch((error: unknown) => ctx.notify("error", `yuke could not show the session ${id}: ${String(error)}`));
     },
     onCancel: () => dialog.close(),
   });

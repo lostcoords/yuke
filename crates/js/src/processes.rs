@@ -598,7 +598,7 @@ async fn run_program(program: Program, stop: CancellationToken) -> Result<Progra
     };
     let (stdout, stderr) = read
         .map_err(|error| error.to_string())?
-        .map_err(|error| format!("the output of {} did not read: {error}", program.command))?;
+        .map_err(|error| format!("yuke could not read the output of {}: {error}", program.command))?;
     let signal = std::os::unix::process::ExitStatusExt::signal(&status);
     let code = match (status.code(), signal) {
         (Some(code), _) => code,
@@ -720,7 +720,7 @@ async fn finish_in_call(
     let status = status.map_err(|error| error.to_string())?;
     if let Some(read) = running.finish_read().await {
         read.map_err(|error| error.to_string())?
-            .map_err(|error| format!("the output of the command did not read: {error}"))?;
+            .map_err(|error| format!("yuke could not read the output of the command: {error}"))?;
     }
     let cause = match (
         stopped,

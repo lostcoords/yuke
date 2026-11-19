@@ -56,7 +56,7 @@ pub trait TestHost {
     ///
     /// # Errors
     ///
-    /// Returns why the bytes did not read: the store failed, or it has no such blob.
+    /// Returns why the host could not read the bytes: the store failed, or it has no such blob.
     fn read_media(&self, id: SessionId, blob: &Blob) -> Result<Vec<u8>, TestError>;
 }
 

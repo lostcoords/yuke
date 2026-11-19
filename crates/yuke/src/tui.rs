@@ -87,7 +87,7 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
         warn(&format!("{}: {}", notice.source, notice.text));
     }
     if let Some(text) = ended? {
-        writeln!(io::stdout(), "{text}").map_err(failed("the output did not write"))?;
+        writeln!(io::stdout(), "{text}").map_err(failed("yuke could not write the output"))?;
     }
     Ok(())
 }

@@ -274,7 +274,7 @@ async fn print_task(task: &Task, json: bool) -> Result<ExitCode, String> {
     match run_until_signal(run_here(task, cancellation_token.clone()), &cancellation_token).await? {
         Signaled::Ended(finished, signal_number) => {
             let finished = finished?;
-            write_output(&finished, json).map_err(|error| format!("the output did not write: {error}"))?;
+            write_output(&finished, json).map_err(|error| format!("yuke could not write the output: {error}"))?;
             if let TurnEnd::Failed { error } = &finished.end
                 && !json
             {
@@ -308,7 +308,7 @@ fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
     let mut stdout = io::stdout().lock();
     write!(stdout, "{}", summary.failures)
         .and_then(|()| writeln!(stdout, "{} passed, {} failed", summary.passed, summary.failed))
-        .map_err(|error| format!("the output did not write: {error}"))?;
+        .map_err(|error| format!("yuke could not write the output: {error}"))?;
     Ok(if summary.failed == 0 {
         ExitCode::SUCCESS
     } else {
@@ -326,8 +326,9 @@ fn environment_paths() -> Result<(Paths, Option<PathBuf>), String> {
 /// Run the `yuke plugin` command `command`, and print its result.
 async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
     let (paths, _) = environment_paths()?;
-    let say =
-        |text: &str| writeln!(io::stdout(), "{text}").map_err(|error| format!("the output did not write: {error}"));
+    let say = |text: &str| {
+        writeln!(io::stdout(), "{text}").map_err(|error| format!("yuke could not write the output: {error}"))
+    };
     // The steps of the work go to stderr, so stdout keeps only the result.
     let progress = |text: &str| {
         if writeln!(io::stderr(), "{text}…").is_err() {
@@ -462,7 +463,7 @@ fn short(commit: &str) -> &str {
 
 /// Ask `question` on the terminal. Gives whether the answer is yes.
 fn confirm(question: &str) -> Result<bool, String> {
-    let fail = |error: io::Error| format!("the question did not work: {error}");
+    let fail = |error: io::Error| format!("yuke could not ask the question: {error}");
     // The question goes to stderr, so the user sees it when stdout goes to a file.
     let mut stderr = io::stderr();
     write!(stderr, "{question}")

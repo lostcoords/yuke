@@ -40,7 +40,7 @@ function open(ctx: PluginContext, tui: Tui): void {
       dialog.close();
       tui.styles.setTheme(item.name);
       writeTextFile(FILE, JSON.stringify({ name: item.name }), { cwd: ctx.dataDir, atomic: true }).catch(
-        (error: unknown) => ctx.notify("error", `The theme did not save: ${String(error)}`),
+        (error: unknown) => ctx.notify("error", `yuke could not save the theme: ${String(error)}`),
       );
     },
     onCancel: () => {
