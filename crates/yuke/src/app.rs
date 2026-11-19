@@ -46,7 +46,7 @@ use self::models::PluginModels;
 use self::plugin_sessions::PluginSessions;
 pub(crate) use self::sessions::{Attachment, SessionService};
 pub(crate) use self::test_host::{TestPlace, TestSetup};
-use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
+use crate::auth::{LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
 use crate::plugins::{self, Outcome};
@@ -452,11 +452,8 @@ impl Shared {
                 )));
             }
         }
-        // A model request sends the key in a header, and a header holds no control character.
-        if api_key.is_empty() || api_key.chars().any(char::is_control) {
-            return Err(AppError::Invalid(
-                "apiKey: send a value that is not empty and has no control character".to_owned(),
-            ));
+        if api_key.is_empty() {
+            return Err(AppError::Invalid("apiKey: send a value that is not empty".to_owned()));
         }
         crate::auth::set_api_key(provider, api_key, self.machine.paths.data.clone())
             .await
@@ -740,7 +737,7 @@ impl App {
             )));
         };
         let source = login_source(&self.shared, &provider.id, flow);
-        source.push(Pushed::new(params, flow, SystemTime::now()).map_err(AppError::Invalid)?);
+        source.push(Pushed::new(params).map_err(AppError::Invalid)?);
         self.shared.facts.catalog_changed();
         Ok(())
     }
@@ -974,7 +971,6 @@ fn login_source(shared: &Shared, id: &str, flow: Flow) -> LoginSource {
         flow,
         shared.machine.paths.data.clone(),
         Arc::clone(&shared.machine.exchange),
-        LOCK_LIMIT,
     );
     logins.insert(id.to_owned(), source.clone());
     source

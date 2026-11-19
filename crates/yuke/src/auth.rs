@@ -1,15 +1,15 @@
 //! The stored credentials of the providers. `auth.json` in the data folder holds one entry for each provider: a login
 //! or an API key. Each write holds the lock file `auth.lock`, so two processes never refresh one login at once.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
-use std::fs::{self, File, OpenOptions, Permissions, TryLockError};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -25,12 +25,6 @@ const LOCK: &str = "auth.lock";
 
 /// A login that ends within this margin refreshes before the attempt, so a long request does not outlive its token.
 const MARGIN: Duration = Duration::from_mins(5);
-
-/// The longest wait for the lock. A holder that keeps it longer is stuck, so the wait ends without a refresh.
-pub(crate) const LOCK_LIMIT: Duration = Duration::from_secs(30);
-
-/// The wait between two tries of the lock.
-const LOCK_RETRY: Duration = Duration::from_millis(100);
 
 /// RFC 8628 section 3.5 adds this much to the interval after a `slow_down` answer.
 const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
@@ -109,28 +103,17 @@ pub(crate) struct Pushed {
 }
 
 impl Pushed {
-    /// The token of `params` for a provider with `flow`, at `now`. It is valid until its end, with no margin.
+    /// The token of `params`. It is valid until its end, with no margin.
     ///
     /// # Errors
     ///
-    /// Returns a text that names the bad field: an empty token, a control character, an end in the past, or an
-    /// account that `flow` cannot name.
-    pub(crate) fn new(params: UpdateCredentialParams, flow: Flow, now: SystemTime) -> Result<Pushed, String> {
-        let bad = |value: &str| value.is_empty() || value.chars().any(char::is_control);
-        if bad(&params.access_token) {
-            return Err("accessToken: send a value that is not empty and has no control character".to_owned());
+    /// Returns a text that names the bad field: an empty token or an empty account.
+    pub(crate) fn new(params: UpdateCredentialParams) -> Result<Pushed, String> {
+        if params.access_token.is_empty() {
+            return Err("accessToken: send a value that is not empty".to_owned());
         }
-        if params.expires_at <= millis(now) {
-            return Err("expiresAt: the token already expired".to_owned());
-        }
-        match &params.account_id {
-            Some(_) if flow.account_header().is_none() => {
-                return Err(format!("accountId: {} names no account, so send none", params.provider));
-            }
-            Some(account) if bad(account) => {
-                return Err("accountId: send a value that is not empty and has no control character".to_owned());
-            }
-            _ => {}
+        if params.account_id.as_deref().is_some_and(str::is_empty) {
+            return Err("accountId: send a value that is not empty".to_owned());
         }
         Ok(Pushed {
             access_token: params.access_token,
@@ -191,8 +174,8 @@ impl Files {
         }
     }
 
-    /// Take the lock, and wait at most `limit`. `None` when another holder keeps it longer.
-    fn lock(&self, limit: Duration) -> Result<Option<LockedFiles>, Box<dyn Error + Send + Sync>> {
+    /// Take the lock. The call blocks until the holder releases it.
+    fn lock(&self) -> Result<LockedFiles, Box<dyn Error + Send + Sync>> {
         fs::create_dir_all(&self.folder).map_err(self.file_error(""))?;
         // The lock is its own file, because the rename of `auth.json` changes the file of that name.
         let file = OpenOptions::new()
@@ -202,25 +185,11 @@ impl Files {
             .mode(0o600)
             .open(self.path(LOCK))
             .map_err(self.file_error(LOCK))?;
-        let deadline = Instant::now() + limit;
-        loop {
-            match file.try_lock() {
-                Ok(()) => {
-                    return Ok(Some(LockedFiles {
-                        files: self.clone(),
-                        _lock: file,
-                    }));
-                }
-                Err(TryLockError::WouldBlock) => {
-                    let left = deadline.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return Ok(None);
-                    }
-                    std::thread::sleep(left.min(LOCK_RETRY));
-                }
-                Err(TryLockError::Error(error)) => return Err(self.file_error(LOCK)(error)),
-            }
-        }
+        file.lock().map_err(self.file_error(LOCK))?;
+        Ok(LockedFiles {
+            files: self.clone(),
+            _lock: file,
+        })
     }
 }
 
@@ -263,9 +232,6 @@ impl LockedFiles {
             .mode(0o600)
             .open(&temporary)
             .map_err(files.file_error(TEMPORARY))?;
-        // A file that an earlier crash left keeps its old mode, so the mode is set again.
-        file.set_permissions(Permissions::from_mode(0o600))
-            .map_err(files.file_error(TEMPORARY))?;
         file.write_all(&bytes).map_err(files.file_error(TEMPORARY))?;
         file.sync_all().map_err(files.file_error(TEMPORARY))?;
         fs::rename(&temporary, files.path(FILE)).map_err(files.file_error(FILE))?;
@@ -281,7 +247,7 @@ impl LockedFiles {
 ///
 /// # Errors
 ///
-/// Returns an error when the lock waits too long, or the file does not read or write.
+/// Returns an error when the file does not read or write.
 pub(crate) async fn logout(provider: &str, folder: PathBuf) -> Result<(), Box<dyn Error + Send + Sync>> {
     write_entry(provider, None, folder).await
 }
@@ -290,7 +256,7 @@ pub(crate) async fn logout(provider: &str, folder: PathBuf) -> Result<(), Box<dy
 ///
 /// # Errors
 ///
-/// Returns an error when the lock waits too long, or the file does not read or write.
+/// Returns an error when the file does not read or write.
 pub(crate) async fn set_api_key(
     provider: &str,
     api_key: String,
@@ -337,13 +303,7 @@ async fn write_entry(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let files = Files { folder };
     let provider = provider.to_owned();
-    blocking(move || {
-        let Some(locked) = files.lock(LOCK_LIMIT)? else {
-            return Err(format!("{}: another process holds the lock", files.path(LOCK).display()).into());
-        };
-        locked.set(&provider, entry)
-    })
-    .await
+    blocking(move || files.lock()?.set(&provider, entry)).await
 }
 
 /// Run `f` on a blocking thread of tokio, because the file calls block.
@@ -374,29 +334,18 @@ struct Login {
     flow: Flow,
     files: Files,
     exchange: Arc<dyn Exchange>,
-    lock_limit: Duration,
-    /// The refresh tokens that a refresh can have spent while `auth.json` still holds them. None goes out again.
-    spent: Mutex<HashSet<String>>,
     /// The newest token from `credential/update`. Once set, it replaces the login for the life of the process.
     pushed: Mutex<Option<Pushed>>,
 }
 
 impl LoginSource {
     /// The source of `provider` with `flow`, and with the files in `folder`.
-    pub(crate) fn new(
-        provider: String,
-        flow: Flow,
-        folder: PathBuf,
-        exchange: Arc<dyn Exchange>,
-        lock_limit: Duration,
-    ) -> LoginSource {
+    pub(crate) fn new(provider: String, flow: Flow, folder: PathBuf, exchange: Arc<dyn Exchange>) -> LoginSource {
         LoginSource(Arc::new(Login {
             provider,
             flow,
             files: Files { folder },
             exchange,
-            lock_limit,
-            spent: Mutex::default(),
             pushed: Mutex::default(),
         }))
     }
@@ -434,15 +383,7 @@ impl Login {
             return Ok(stored);
         }
         let files = self.files.clone();
-        let limit = self.lock_limit;
-        let Some(locked) = blocking(move || files.lock(limit)).await? else {
-            // A refresh without the lock can send a token that the holder spends too, so only a valid token serves.
-            let stored = self.stored().await?;
-            if stored.valid(SystemTime::now(), Duration::ZERO) {
-                return Ok(stored);
-            }
-            return Err(format!("{}: another process holds the lock", self.files.path(LOCK).display()).into());
-        };
+        let locked = blocking(move || files.lock()).await?;
         self.refresh(locked).await
     }
 
@@ -454,20 +395,11 @@ impl Login {
         if stored.valid(now, MARGIN) {
             return Ok(stored);
         }
-        if lock(&self.spent).contains(&stored.refresh_token) {
-            return if stored.valid(now, Duration::ZERO) {
-                Ok(stored)
-            } else {
-                Err(self.ended())
-            };
-        }
         match self.flow.refresh(&*self.exchange, &stored.refresh_token, now).await {
             Ok(grant) => {
                 let new = StoredLogin::from_grant(grant, stored.refresh_token.clone(), stored.account_id);
-                if self.save(locked, Some(new.clone())).await.is_err() {
-                    // The provider can have spent the old token, and the file still holds it.
-                    lock(&self.spent).insert(stored.refresh_token);
-                }
+                // The new login serves this attempt, even when the save fails.
+                _ = self.save(locked, Some(new.clone())).await;
                 Ok(new)
             }
             // The refresh can take long, so the token is checked again at its end.
@@ -481,9 +413,8 @@ impl Login {
             // The login is gone, or its token can be spent: only a new login recovers it. An error that yuke does not
             // know can have spent the token too.
             Err(_) => {
-                if self.save(locked, None).await.is_err() {
-                    lock(&self.spent).insert(stored.refresh_token);
-                }
+                // The attempt fails with the same error, even when the removal fails.
+                _ = self.save(locked, None).await;
                 Err(self.ended())
             }
         }

@@ -78,8 +78,8 @@ async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_be
         }
         params
     };
-    let bad_token = "accessToken: send a value that is not empty and has no control character";
-    let bad_account = "accountId: send a value that is not empty and has no control character";
+    let bad_token = "accessToken: send a value that is not empty";
+    let bad_account = "accountId: send a value that is not empty";
     let cases = [
         (
             update("openai", "t", later, None),
@@ -90,13 +90,6 @@ async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_be
             "provider: nobody has no login flow, so it takes no credential/update",
         ),
         (update("xai-grok", "", later, None), bad_token),
-        (update("xai-grok", "a\nb", later, None), bad_token),
-        (update("xai-grok", "a\tb", later, None), bad_token),
-        (update("xai-grok", "t", 1, None), "expiresAt: the token already expired"),
-        (
-            update("xai-grok", "t", later, Some("account")),
-            "accountId: xai-grok names no account, so send none",
-        ),
         (update("openai-codex", "t", later, Some("")), bad_account),
     ];
 
@@ -619,7 +612,6 @@ async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refuse
         key("xai-grok", "k"),
         key("local", "k"),
         key("anthropic", ""),
-        key("anthropic", "k\n"),
     ] {
         refusals.push(client.call("auth/setApiKey", params).await.unwrap_err());
     }
@@ -630,14 +622,13 @@ async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refuse
         .map(|error| (&error["code"], error["message"].as_str().unwrap()))
         .collect();
     let invalid = json!(ResponseError::INVALID_PARAMS);
-    let bad_key = "apiKey: send a value that is not empty and has no control character";
+    let bad_key = "apiKey: send a value that is not empty";
     assert_eq!(
         texts,
         [
             (&invalid, "yuke has no provider nobody"),
             (&invalid, "xai-grok takes a login, not an API key: send auth/login"),
             (&invalid, "local takes no API key"),
-            (&invalid, bad_key),
             (&invalid, bad_key),
         ]
     );
