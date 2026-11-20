@@ -18,10 +18,13 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request runs only the checks and the tests. The nightly publishes the archives of a push to main.
   packages:
     name: Packages
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/packages.yml
     with:
+      nightly: ${{ github.ref == 'refs/heads/main' }}
       tag: ${{ inputs.tag || '' }}
 
   lint:

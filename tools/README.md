@@ -45,6 +45,7 @@ To release:
 3. Commit, tag `vVERSION`, and push the tag.
 4. Set the next version with `-dev`, for example `0.2.0-dev`, so that a nightly sorts after the release.
 
-Successful push CI on `main` builds the rolling nightly. The nightly job deletes the release and the tag `nightly`,
+A push to `main` builds and tests the nightly archives in CI, and a successful CI publishes them as the rolling
+nightly. A pull request runs only the checks and the tests. The nightly job deletes the release and the tag `nightly`,
 and creates them again on the new commit, so the nightly is absent for a few seconds.
 If an upload fails, `gh` leaves a draft release. Delete the draft, then run the job again.

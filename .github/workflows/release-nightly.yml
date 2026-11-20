@@ -5,7 +5,6 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,35 +14,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
-    uses: ./.github/workflows/packages.yml
-    with:
-      revision: ${{ github.event.workflow_run.head_sha || github.sha }}
-      nightly: true
-
   publish:
-    needs: build
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      actions: read
       contents: write
     steps:
+      # CI built and tested these archives with the nightly version, so the nightly builds nothing.
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           pattern: package-*
           merge-multiple: true
           path: dist
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
       - name: Publish the four tested nightly archives
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
         run: |
           # The first nightly has no release to delete.
           gh release delete nightly --cleanup-tag --yes || true
