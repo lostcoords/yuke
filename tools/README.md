@@ -40,7 +40,8 @@ A hyphen suffix creates a prerelease.
 To release:
 
 1. Set the version in `Cargo.toml`, and run `mise exec -- cargo update --workspace`.
-2. Add the section `## VERSION` to `CHANGELOG.md`. The release job publishes it as the notes, and fails without it.
+2. Rename the section `## Unreleased` of `CHANGELOG.md` to `## VERSION`. The release job publishes it as the notes, and
+   fails without it.
 3. Commit, tag `vVERSION`, and push the tag.
 4. Set the next version with `-dev`, for example `0.2.0-dev`, so that a nightly sorts after the release.
 
