@@ -6,6 +6,7 @@ Each release has one section. The release job publishes the section of the tag a
 
 - `yuke:chat` exports the chat building blocks again: `ChatSession`, `ChatComposer`, `ChatQuestions`,
   `ChatCompletions`, `ChatWorking`, `ChatDocument`, `slashCompletions`, and `composerRows`.
+- `TextEditor.screenAt` and `TextView.screenAt` give the cell of a position again.
 
 ## 0.1.0
 

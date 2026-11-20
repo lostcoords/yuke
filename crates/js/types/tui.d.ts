@@ -433,6 +433,8 @@ declare module "yuke:tui" {
      * `undefined`.
      */
     hitTest: (point: Point) => P | undefined;
+    /** The cell of `position` in the widget, or `undefined` when it does not show. */
+    screenAt: (position: P) => Point | undefined;
     /** Scroll the least to show `position`. `false` when it cannot show. */
     ensureVisible: (position: P) => boolean;
   }
@@ -526,6 +528,7 @@ declare module "yuke:tui" {
     submit(): void;
     extend(signal: AbortSignal): TextExtension<number, EditorChange>;
     hitTest(point: Point): number | undefined;
+    screenAt(position: number): Point | undefined;
     ensureVisible(position: number): boolean;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
@@ -641,6 +644,7 @@ declare module "yuke:tui" {
     activate(position: TextPosition): boolean;
     extend(signal: AbortSignal): TextExtension<TextPosition, TextViewChange>;
     hitTest(point: Point): TextPosition | undefined;
+    screenAt(position: TextPosition): Point | undefined;
     ensureVisible(position: TextPosition): boolean;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;

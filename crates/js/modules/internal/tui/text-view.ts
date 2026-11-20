@@ -253,7 +253,7 @@ export class TextView implements TextWidget<TextPosition, TextViewChange> {
     return this.rows.at({ column: Math.max(0, point.column), row: point.row + this.#list.state.top });
   }
 
-  #screenAt(position: TextPosition): Point | undefined {
+  screenAt(position: TextPosition): Point | undefined {
     const point = this.rows.point(position);
     if (point === undefined) return undefined;
     const row = point.row - this.#list.state.top;
@@ -319,7 +319,7 @@ export class TextView implements TextWidget<TextPosition, TextViewChange> {
 
   cursor(): Cursor | undefined {
     if (this.#caret === undefined) return undefined;
-    const at = this.#screenAt(this.#caret);
+    const at = this.screenAt(this.#caret);
     if (at === undefined) return undefined;
     const shape = this.#support.appearance(this.#appearance).cursorShape;
     return shape === undefined ? at : { ...at, shape };
