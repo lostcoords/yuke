@@ -1,8 +1,6 @@
 // The frame around the input of a chat pane: its insets, its paint, its context, and its owner.
 
-import type { ComposerFrameContext } from "yuke:chat";
-import { ChatDocument } from "yuke:internal/chat/document";
-import { composerRows } from "yuke:internal/chat/rows";
+import { ChatDocument, type ComposerFrameContext, composerRows } from "yuke:chat";
 import type { InteractionRequest } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { type Canvas, TextEditor } from "yuke:tui";

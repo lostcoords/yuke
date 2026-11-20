@@ -3,7 +3,7 @@
  * draft that Enter runs.
  */
 
-import type { CompletionItem, CompletionProvider } from "yuke:chat";
+import type { CompletionItem, CompletionProvider, SlashCommands } from "yuke:chat";
 import { type CommandItem, fuzzyMatch, type OffsetRange } from "yuke:tui";
 
 /** A draft of one slash word, such as `/mod`, and the text after it. */
@@ -12,12 +12,6 @@ const SLASH_DRAFT = /^(\/\S*)(\s[\s\S]*)?$/;
 /** Enter on the slash word `word` runs `item`: text after the word needs a command that takes text. */
 function runsCommand(item: CommandItem, word: string, hasText: boolean): boolean {
   return item.enabled && `/${item.slash}` === word && (!hasText || item.argumentHint !== undefined);
-}
-
-/** The commands to list and run. `tui.commands` fits. */
-export interface SlashCommands {
-  readonly list: () => readonly CommandItem[];
-  readonly run: (name: string, args?: string) => boolean;
 }
 
 /**

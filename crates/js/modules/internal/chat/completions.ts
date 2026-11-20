@@ -1,25 +1,18 @@
 /** This module holds `ChatCompletions`: the list of the completions of the draft of a composer. */
 
-import type { CompletionContext, CompletionItem, CompletionList, CompletionProvider } from "yuke:chat";
+import type {
+  ChatCompletionsOptions,
+  CompletionContext,
+  CompletionItem,
+  CompletionList,
+  CompletionProvider,
+} from "yuke:chat";
 import { EMPTY } from "yuke:internal/chat/composer";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
 import { type Canvas, measure, strokeOf, type TextEditor, type View } from "yuke:tui";
 
 /** The most rows of the list. */
 const ROWS = 6;
-
-export interface ChatCompletionsOptions {
-  /** The providers to ask, the first one first. The first list with an item shows. */
-  readonly providers: () => readonly CompletionProvider[];
-  /** The folder of `CompletionContext.folder`. */
-  readonly folder: () => string;
-  /** Its abort removes the watch of the editor and aborts the open ask. */
-  readonly signal: AbortSignal;
-  /** While this gives `false`, the list shows nothing and takes no key. */
-  readonly enabled: () => boolean;
-  /** Gets the throw or the rejection of a provider. The ask then goes on to the next provider. */
-  readonly onError: (error: unknown) => void;
-}
 
 /**
  * The list of the completions of the draft of a composer. Each change of the draft or of the caret asks the

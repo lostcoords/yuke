@@ -2,6 +2,11 @@
 
 Each release has one section. The release job publishes the section of the tag as the notes of the release.
 
+## Unreleased
+
+- `yuke:chat` exports the chat building blocks again: `ChatSession`, `ChatComposer`, `ChatQuestions`,
+  `ChatCompletions`, `ChatWorking`, `ChatDocument`, `slashCompletions`, and `composerRows`.
+
 ## 0.1.0
 
 The first release of yuke: a fast, hackable coding agent with a TUI that you change with TypeScript plugins.

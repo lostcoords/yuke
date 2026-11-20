@@ -3,6 +3,7 @@
  * of the turn, the elapsed time, and the cancel key.
  */
 
+import type { ChatWorkingOptions, ChatWorkingTextOptions } from "yuke:chat";
 import { clipped } from "yuke:internal/chat/rows";
 import type { ChatSession } from "yuke:internal/chat/session";
 import type { Transcript, TurnFailure } from "yuke:transcript";
@@ -30,23 +31,6 @@ export function elapsed(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
-}
-
-/** What `ChatWorking.text` shows. */
-export interface ChatWorkingTextOptions {
-  /** The key of the interrupt hint. */
-  readonly cancelKey?: string | undefined;
-  /** The key of the background hint. The hint shows when a tool call has waited for a job for two seconds. */
-  readonly backgroundKey?: string | undefined;
-  /** The columns of the text. A long phase is clipped. A narrow row drops the background hint, then the interrupt hint. */
-  readonly width?: number | undefined;
-}
-
-export interface ChatWorkingOptions {
-  /** Its abort ends the watch of the chat session. */
-  readonly signal: AbortSignal;
-  /** The clock in milliseconds, as `() => tui.now()`. */
-  readonly now: () => number;
 }
 
 /**

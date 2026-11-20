@@ -1,10 +1,7 @@
 // The tests use the chat blocks without a pane. They cover the sessions, the pages, the composer, the
 // questions, and the working row.
 
-import { ChatComposer } from "yuke:internal/chat/composer";
-import { ChatQuestions } from "yuke:internal/chat/questions";
-import { ChatSession } from "yuke:internal/chat/session";
-import { ChatWorking } from "yuke:internal/chat/working";
+import { ChatComposer, ChatQuestions, ChatSession, ChatWorking } from "yuke:chat";
 import type { Sessions } from "yuke:plugins";
 import type { StoredEvent } from "yuke:protocol";
 import { assertEquals, test, waitForSettled } from "yuke:test";

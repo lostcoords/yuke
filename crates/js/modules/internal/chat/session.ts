@@ -1,15 +1,9 @@
 /** `ChatSession` of the chat: the session that one chat view shows, with its transcript and its pages of history. */
 
+import type { ChatSessionOptions } from "yuke:chat";
 import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
 import type { SessionId, SessionSettings } from "yuke:protocol";
 import { Transcript } from "yuke:transcript";
-
-export interface ChatSessionOptions {
-  /** Its abort ends the handle. */
-  readonly signal: AbortSignal;
-  /** The session to show. Without it, the chat has no session yet. Call `open` to show it. */
-  readonly id?: SessionId | undefined;
-}
 
 /** The count of saved events that an open gets. Older events come in pages. */
 const TAIL = 200;

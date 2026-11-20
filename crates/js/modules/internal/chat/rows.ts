@@ -3,18 +3,9 @@
  * row. It wraps a text with a style and a link for each range of its source.
  */
 
-import type { ComposerView } from "yuke:chat";
+import type { ComposerRow, ComposerView } from "yuke:chat";
 import { wrap } from "yuke:internal/tui/text";
-import {
-  type CanvasStyle,
-  fit,
-  measure,
-  type OffsetRange,
-  type Segment,
-  type TextItem,
-  type TextRow,
-  type TextSection,
-} from "yuke:tui";
+import { fit, measure, type OffsetRange, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
 
 /** The style groups of the chat. The default theme gives their look. */
 export const STYLE = {
@@ -139,12 +130,6 @@ export function shifted(row: TextRow, by: number): TextRow {
       : { ...segment, source: { ...segment.source, from: segment.source.from + by, to: segment.source.to + by } },
   );
   return { segments, join: row.join };
-}
-
-/** One row of `composerRows`. The chat cuts a longer text to the width and ends it with `…`. */
-export interface ComposerRow {
-  readonly text: string;
-  readonly style?: CanvasStyle | undefined;
 }
 
 /**

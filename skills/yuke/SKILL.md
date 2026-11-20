@@ -45,7 +45,7 @@ Use these names. An older name fails the type check.
 - A session id is `sessionId`: `s.sessionId`, `tui.startup.sessionId`, and the events of `ctx.addListener`.
 - `SessionHandle.cancelTurn()` cancels a turn. `tui.prompt(options)` asks for a line of text. `tui.confirm(options)` asks a yes or no question.
 - A registration returns a remover: `tui.status.set(id, entry)`, `tui.styles.setTheme(name)`, and the `set*` methods of a text extension. There is no `status.delete`: call the remover. `TextExtension.close()` removes a whole extension.
-- `DisplayBlock` is in `yuke:protocol`. `yuke:chat` holds `ChatService` and the types that it uses. The chat building blocks, such as `ChatSession` and `ChatComposer`, are internal.
+- `DisplayBlock` is in `yuke:protocol`. `yuke:chat` holds `ChatService` and the chat building blocks: `ChatSession`, `ChatComposer`, `ChatQuestions`, `ChatCompletions`, `ChatWorking`, `ChatDocument`, `slashCompletions`, and `composerRows`.
 - `ConnectionError` takes `(message, details)`, as `FileSystemError` does: `new ConnectionError("text", { code: "ENOENT" })`.
 - `yuke:test` has `folder()`: the scratch folder of one test.
 - The keys of `providers.json` are camelCase, such as `apiKeyEnv`, `baseUrl`, and `reasoningLevels`. The values of an enum stay snake_case, such as `openai_chat`. A repeated provider or model id applies in file order, and the last wins. `apiKeyEnv` is an error on `openai-codex` and `xai-grok`.

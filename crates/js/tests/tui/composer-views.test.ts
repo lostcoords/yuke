@@ -1,7 +1,6 @@
 // Views of plugins on each side of the composer of the bundled chat: their place, their limit, order, and lifetime.
 
-import type { ChatPane } from "yuke:chat";
-import { composerRows } from "yuke:internal/chat/rows";
+import { type ChatPane, composerRows } from "yuke:chat";
 import type { SessionUpdate } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { click, fakeSessions, loadChat, replies } from "./chat.ts";

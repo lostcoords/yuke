@@ -4,6 +4,7 @@
  * without options is a one-line field, and it masks a secret.
  */
 
+import type { ChatQuestion, ChatQuestionsOptions } from "yuke:chat";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
 import type { ChatSession } from "yuke:internal/chat/session";
 import { sourceName } from "yuke:internal/source-name";
@@ -230,19 +231,6 @@ function ask(
   };
   const rows = Math.max(...pages.map((each) => 2 + lines(each).length + Math.min(listRows(each), LIST_ROWS)));
   return { view, rows };
-}
-
-/** The view of a request, which takes the keys, and the most rows that it needs. */
-export interface ChatQuestion {
-  readonly view: View;
-  readonly rows: number;
-}
-
-export interface ChatQuestionsOptions {
-  /** Its abort ends the watch of the chat session. */
-  readonly signal: AbortSignal;
-  /** Gets the failure of an answer, as after an answer of another client. The question then takes an answer again. */
-  readonly onError: (error: unknown) => void;
 }
 
 /**

@@ -3,9 +3,10 @@
  * its whole text in the draft, so the input gets the text. An image span covers one U+FFFC and becomes a media block.
  */
 
+import type { ChatComposerOptions } from "yuke:chat";
 import type { ChatSession } from "yuke:internal/chat/session";
 import { fitImage } from "yuke:internal/native";
-import type { Frozen, SessionHandle } from "yuke:plugins";
+import type { Frozen } from "yuke:plugins";
 import type { Block, Input, InputId } from "yuke:protocol";
 import type { Entry } from "yuke:transcript";
 import type { EditorSpan, EditorState, TextEditor } from "yuke:tui";
@@ -75,13 +76,6 @@ function joined(first: EditorState, second: EditorState): EditorState {
     ...second.spans.map((span) => ({ ...span, from: span.from + shift, to: span.to + shift })),
   ];
   return { text, selection: { anchor: text.length, head: text.length }, spans };
-}
-
-export interface ChatComposerOptions {
-  /** The handle for a send. `undefined` cancels the send, and the draft stays. */
-  readonly handle: () => Promise<SessionHandle | undefined>;
-  /** Its abort removes the watch of the editor by the composer. An attach that started before it puts nothing. */
-  readonly signal: AbortSignal;
 }
 
 /**

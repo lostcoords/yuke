@@ -1,9 +1,7 @@
 // `ChatCompletions` above a bare editor: the rows, the scroll, the selection, the labels, the run, the
 // order of the providers, and a late list. The slash commands are the provider of the bundled chat.
 
-import type { CompletionProvider } from "yuke:chat";
-import { type SlashCommands, slashCompletions } from "yuke:internal/chat/commands";
-import { ChatCompletions } from "yuke:internal/chat/completions";
+import { ChatCompletions, type CompletionProvider, type SlashCommands, slashCompletions } from "yuke:chat";
 import { assert, assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { type CommandItem, TextEditor } from "yuke:tui";
 import { rows } from "./rows.ts";
