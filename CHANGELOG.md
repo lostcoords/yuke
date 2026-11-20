@@ -2,7 +2,7 @@
 
 Each release has one section. The release job publishes the section of the tag as the notes of the release.
 
-## Unreleased
+## 0.1.1
 
 - `yuke:chat` exports the chat building blocks again: `ChatSession`, `ChatComposer`, `ChatQuestions`,
   `ChatCompletions`, `ChatWorking`, `ChatDocument`, `slashCompletions`, and `composerRows`.
