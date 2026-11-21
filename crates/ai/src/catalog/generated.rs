@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// The identifier of this catalog snapshot.
-pub const REVISION: &str = "50e33e52633b03fca4929a05c2d20bac5b2270d36a43c459feee7d71e0739b9ca8c0dbfc77158eca8b5693212b9cc3175fd25c1b0977c2df3d099db18405c207";
+pub const REVISION: &str = "8888b7f48ea39954b0de30585fb3e865d783186a09f4ada8ac565f4cb586ecab584dd0375202b3c94c669bef2b80b271bf0af4d86bb80a968faac646d633c863";
 
 /// The provider table. Each row borrows static storage.
 pub static PROVIDERS: &[Provider] = &[
@@ -1426,10 +1426,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.21),
-                    output: Some(0.84),
-                    reasoning: Some(0.84),
-                    cache_read: Some(0.0042),
+                    input: Some(0.15),
+                    output: Some(0.6),
+                    reasoning: Some(0.6),
+                    cache_read: Some(0.003),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -1463,10 +1463,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(2.4),
-                    output: Some(9.6),
-                    reasoning: Some(9.6),
-                    cache_read: Some(0.048),
+                    input: Some(1.2),
+                    output: Some(4.8),
+                    reasoning: Some(4.8),
+                    cache_read: Some(0.024),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -1500,10 +1500,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.21),
-                    output: Some(0.84),
-                    reasoning: Some(0.84),
-                    cache_read: Some(0.0042),
+                    input: Some(0.15),
+                    output: Some(0.6),
+                    reasoning: Some(0.6),
+                    cache_read: Some(0.003),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -1574,10 +1574,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.98),
-                    output: Some(3.08),
-                    reasoning: Some(3.08),
-                    cache_read: Some(0.182),
+                    input: Some(0.7),
+                    output: Some(2.2),
+                    reasoning: Some(2.2),
+                    cache_read: Some(0.13),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -7606,49 +7606,6 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("inkling-2-small-free"),
-                upstream_id: Cow::Borrowed("inkling-2-small-free"),
-                name: Cow::Borrowed("Inkling 2 Small Free"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(1048576),
-                    max_output_tokens: Some(131072),
-                },
-                cost: Cow::Borrowed(&[PriceBand {
-                    min_prompt_tokens: 0,
-                    input: Some(0.0),
-                    output: Some(0.0),
-                    reasoning: Some(0.0),
-                    cache_read: Some(0.0),
-                    cache_write: Some(0.0),
-                }]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: Some(true),
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[
-                    Some(Effort::Minimal),
-                    Some(Effort::Low),
-                    Some(Effort::Medium),
-                    Some(Effort::High),
-                    Some(Effort::Max),
-                ]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::None,
-                        reasoning_replay: ReasoningReplayMode::ReasoningContent,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Image, Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
                 id: Cow::Borrowed("kimi-k2.5"),
                 upstream_id: Cow::Borrowed("kimi-k2.5"),
                 name: Cow::Borrowed("Kimi K2.5"),
@@ -11402,43 +11359,6 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("cohere/north-mini-code:free"),
-                upstream_id: Cow::Borrowed("cohere/north-mini-code:free"),
-                name: Cow::Borrowed("North Mini Code (free)"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(256000),
-                    max_output_tokens: Some(64000),
-                },
-                cost: Cow::Borrowed(&[PriceBand {
-                    min_prompt_tokens: 0,
-                    input: Some(0.0),
-                    output: Some(0.0),
-                    reasoning: Some(0.0),
-                    cache_read: None,
-                    cache_write: None,
-                }]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: Some(true),
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[Some(Effort::High)]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::Openrouter,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
                 id: Cow::Borrowed("deepseek/deepseek-chat"),
                 upstream_id: Cow::Borrowed("deepseek/deepseek-chat"),
                 name: Cow::Borrowed("DeepSeek Chat"),
@@ -11482,14 +11402,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(163840),
-                    max_output_tokens: Some(115200),
+                    max_output_tokens: Some(147456),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.29),
-                    output: Some(1.14),
-                    reasoning: Some(1.14),
-                    cache_read: Some(0.11),
+                    input: Some(0.25),
+                    output: Some(1.0),
+                    reasoning: Some(1.0),
+                    cache_read: None,
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -11745,7 +11665,7 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.062),
+                    input: Some(0.0443),
                     output: Some(0.3),
                     reasoning: Some(0.3),
                     cache_read: Some(0.035),
@@ -11778,14 +11698,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(943717),
+                    max_output_tokens: Some(262144),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.44),
-                    output: Some(1.32),
-                    reasoning: Some(1.32),
-                    cache_read: Some(0.014),
+                    input: Some(0.2156),
+                    output: Some(0.6468),
+                    reasoning: Some(0.6468),
+                    cache_read: Some(0.00686),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -11822,7 +11742,7 @@ pub static PROVIDERS: &[Provider] = &[
                     input: Some(0.9),
                     output: Some(1.5),
                     reasoning: Some(1.5),
-                    cache_read: Some(0.25),
+                    cache_read: Some(0.2),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -11856,10 +11776,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.111),
-                    output: Some(4.44),
-                    reasoning: Some(4.44),
-                    cache_read: Some(0.097),
+                    input: Some(1.32),
+                    output: Some(3.96),
+                    reasoning: Some(3.96),
+                    cache_read: Some(0.044),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -11889,14 +11809,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(943718),
+                    max_output_tokens: Some(393216),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.3),
-                    output: Some(1.2),
-                    reasoning: Some(1.2),
-                    cache_read: Some(0.006),
+                    input: Some(0.0498),
+                    output: Some(0.1992),
+                    reasoning: Some(0.1992),
+                    cache_read: Some(0.000996),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -12820,14 +12740,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(131072),
-                    max_output_tokens: Some(16384),
+                    max_output_tokens: Some(117964),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
                     input: Some(0.08),
-                    output: Some(0.16),
-                    reasoning: Some(0.16),
-                    cache_read: None,
+                    output: Some(0.45),
+                    reasoning: Some(0.45),
+                    cache_read: Some(0.04),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -12898,10 +12818,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.09),
-                    output: Some(0.3),
-                    reasoning: Some(0.3),
-                    cache_read: Some(0.05),
+                    input: Some(0.0675),
+                    output: Some(0.225),
+                    reasoning: Some(0.225),
+                    cache_read: Some(0.0375),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -13305,10 +13225,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.045),
-                    output: Some(0.135),
-                    reasoning: Some(0.135),
-                    cache_read: Some(0.009),
+                    input: Some(0.06),
+                    output: Some(0.18),
+                    reasoning: Some(0.18),
+                    cache_read: Some(0.012),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -13628,43 +13548,6 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("meituan/longcat-2.0"),
-                upstream_id: Cow::Borrowed("meituan/longcat-2.0"),
-                name: Cow::Borrowed("LongCat-2.0"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(1048756),
-                    max_output_tokens: Some(262144),
-                },
-                cost: Cow::Borrowed(&[PriceBand {
-                    min_prompt_tokens: 0,
-                    input: Some(0.3),
-                    output: Some(1.2),
-                    reasoning: Some(1.2),
-                    cache_read: Some(0.006),
-                    cache_write: None,
-                }]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: Some(true),
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[Some(Effort::High)]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::Openrouter,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
                 id: Cow::Borrowed("meta-llama/llama-3.1-70b-instruct"),
                 upstream_id: Cow::Borrowed("meta-llama/llama-3.1-70b-instruct"),
                 name: Cow::Borrowed("Llama-3.1-70B-Instruct"),
@@ -13739,56 +13622,19 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("meta-llama/llama-3.2-1b-instruct"),
-                upstream_id: Cow::Borrowed("meta-llama/llama-3.2-1b-instruct"),
-                name: Cow::Borrowed("Llama 3.2 1B Instruct"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(60000),
-                    max_output_tokens: Some(54000),
-                },
-                cost: Cow::Borrowed(&[PriceBand {
-                    min_prompt_tokens: 0,
-                    input: Some(0.027),
-                    output: Some(0.201),
-                    reasoning: Some(0.201),
-                    cache_read: None,
-                    cache_write: None,
-                }]),
-                caps: Caps {
-                    tools: Some(false),
-                    tool_search: None,
-                    disable_reasoning: None,
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::None,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
                 id: Cow::Borrowed("meta-llama/llama-3.2-3b-instruct"),
                 upstream_id: Cow::Borrowed("meta-llama/llama-3.2-3b-instruct"),
                 name: Cow::Borrowed("Llama 3.2 3B Instruct"),
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(131072),
-                    max_output_tokens: Some(72000),
+                    max_output_tokens: Some(117964),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.0509),
-                    output: Some(0.335),
-                    reasoning: Some(0.335),
+                    input: Some(0.05),
+                    output: Some(0.33),
+                    reasoning: Some(0.33),
                     cache_read: None,
                     cache_write: None,
                 }]),
@@ -14411,14 +14257,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(198000),
-                    max_output_tokens: Some(176947),
+                    max_output_tokens: Some(32768),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.295),
-                    output: Some(1.2),
-                    reasoning: Some(1.2),
-                    cache_read: Some(0.06),
+                    input: Some(0.27),
+                    output: Some(0.95),
+                    reasoning: Some(0.95),
+                    cache_read: Some(0.03),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -14448,14 +14294,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(196608),
-                    max_output_tokens: Some(176947),
+                    max_output_tokens: Some(131072),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.21),
-                    output: Some(0.84),
-                    reasoning: Some(0.84),
-                    cache_read: Some(0.042),
+                    input: Some(0.6),
+                    output: Some(1.8),
+                    reasoning: Some(1.8),
+                    cache_read: None,
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -14485,14 +14331,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(512000),
+                    max_output_tokens: Some(235929),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.3),
-                    output: Some(1.2),
-                    reasoning: Some(1.2),
-                    cache_read: Some(0.06),
+                    input: Some(0.23),
+                    output: Some(0.96),
+                    reasoning: Some(0.96),
+                    cache_read: Some(0.05),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -14522,14 +14368,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(524288),
+                    max_output_tokens: Some(512000),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.15),
-                    output: Some(0.6),
-                    reasoning: Some(0.6),
-                    cache_read: Some(0.015),
+                    input: Some(0.135),
+                    output: Some(0.54),
+                    reasoning: Some(0.54),
+                    cache_read: Some(0.0135),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -15262,6 +15108,43 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
+                id: Cow::Borrowed("mistralai/pixtral-large-2502"),
+                upstream_id: Cow::Borrowed("mistralai/pixtral-large-2502"),
+                name: Cow::Borrowed("Pixtral Large (25.02)"),
+                protocol: Protocol::OpenaiChat,
+                limits: Limits {
+                    context_window: Some(128000),
+                    max_output_tokens: Some(102400),
+                },
+                cost: Cow::Borrowed(&[PriceBand {
+                    min_prompt_tokens: 0,
+                    input: Some(2.0),
+                    output: Some(6.0),
+                    reasoning: Some(6.0),
+                    cache_read: None,
+                    cache_write: None,
+                }]),
+                caps: Caps {
+                    tools: Some(false),
+                    tool_search: None,
+                    disable_reasoning: None,
+                    cache_breakpoint: None,
+                },
+                reasoning_levels: Cow::Borrowed(&[]),
+                dialect: Dialect {
+                    chat: ChatFlags {
+                        thinking_format: ThinkingFormat::None,
+                        reasoning_replay: ReasoningReplayMode::None,
+                        max_tokens_field: MaxTokensField::MaxTokens,
+                    },
+                    anthropic_thinking: AnthropicThinking::None,
+                },
+                modalities: Modalities {
+                    input: Cow::Borrowed(&[Modality::Image, Modality::Text]),
+                    output: Cow::Borrowed(&[Modality::Text]),
+                },
+            },
+            Model {
                 id: Cow::Borrowed("mistralai/voxtral-small-24b-2507"),
                 upstream_id: Cow::Borrowed("mistralai/voxtral-small-24b-2507"),
                 name: Cow::Borrowed("Voxtral Small 24B 2507"),
@@ -15568,10 +15451,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.66),
-                    output: Some(3.5),
-                    reasoning: Some(3.5),
-                    cache_read: Some(0.16),
+                    input: Some(0.6),
+                    output: Some(3.0),
+                    reasoning: Some(3.0),
+                    cache_read: Some(0.12),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -16230,13 +16113,13 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(235929),
+                    max_output_tokens: Some(943718),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
                     input: Some(0.15),
-                    output: Some(0.5),
-                    reasoning: Some(0.5),
+                    output: Some(0.47),
+                    reasoning: Some(0.47),
                     cache_read: Some(0.02),
                     cache_write: None,
                 }]),
@@ -18680,14 +18563,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(131072),
-                    max_output_tokens: Some(65536),
+                    max_output_tokens: Some(117964),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.15),
-                    output: Some(0.6),
-                    reasoning: Some(0.6),
-                    cache_read: Some(0.075),
+                    input: Some(0.09),
+                    output: Some(0.36),
+                    reasoning: Some(0.36),
+                    cache_read: None,
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -18721,10 +18604,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.018),
-                    output: Some(0.09),
-                    reasoning: Some(0.09),
-                    cache_read: Some(0.009),
+                    input: Some(0.017),
+                    output: Some(0.085),
+                    reasoning: Some(0.085),
+                    cache_read: Some(0.0085),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -19060,10 +18943,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.06),
+                    input: Some(0.07),
                     output: Some(0.5),
                     reasoning: Some(0.5),
-                    cache_read: Some(0.003),
+                    cache_read: Some(0.006),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -19903,9 +19786,9 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.15),
-                    output: Some(0.6),
-                    reasoning: Some(0.6),
+                    input: Some(0.07),
+                    output: Some(0.28),
+                    reasoning: Some(0.28),
                     cache_read: None,
                     cache_write: None,
                 }]),
@@ -20804,8 +20687,8 @@ pub static PROVIDERS: &[Provider] = &[
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
                     input: Some(0.06),
-                    output: Some(2.2),
-                    reasoning: Some(2.2),
+                    output: Some(1.96),
+                    reasoning: Some(1.96),
                     cache_read: Some(0.059),
                     cache_write: None,
                 }]),
@@ -21023,6 +20906,43 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 modalities: Modalities {
                     input: Cow::Borrowed(&[Modality::Image, Modality::Text, Modality::Video]),
+                    output: Cow::Borrowed(&[Modality::Text]),
+                },
+            },
+            Model {
+                id: Cow::Borrowed("radixark/daisyrose-27b"),
+                upstream_id: Cow::Borrowed("radixark/daisyrose-27b"),
+                name: Cow::Borrowed("DaisyRose 27B"),
+                protocol: Protocol::OpenaiChat,
+                limits: Limits {
+                    context_window: Some(262144),
+                    max_output_tokens: Some(235929),
+                },
+                cost: Cow::Borrowed(&[PriceBand {
+                    min_prompt_tokens: 0,
+                    input: Some(0.15),
+                    output: Some(1.875),
+                    reasoning: Some(1.875),
+                    cache_read: Some(0.0375),
+                    cache_write: None,
+                }]),
+                caps: Caps {
+                    tools: Some(true),
+                    tool_search: None,
+                    disable_reasoning: Some(true),
+                    cache_breakpoint: None,
+                },
+                reasoning_levels: Cow::Borrowed(&[Some(Effort::Low), Some(Effort::Medium), Some(Effort::Xhigh)]),
+                dialect: Dialect {
+                    chat: ChatFlags {
+                        thinking_format: ThinkingFormat::Openrouter,
+                        reasoning_replay: ReasoningReplayMode::None,
+                        max_tokens_field: MaxTokensField::MaxTokens,
+                    },
+                    anthropic_thinking: AnthropicThinking::None,
+                },
+                modalities: Modalities {
+                    input: Cow::Borrowed(&[Modality::Image, Modality::Text]),
                     output: Cow::Borrowed(&[Modality::Text]),
                 },
             },
@@ -21830,43 +21750,6 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("tencent/hy3-preview"),
-                upstream_id: Cow::Borrowed("tencent/hy3-preview"),
-                name: Cow::Borrowed("Hy3 preview"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(262144),
-                    max_output_tokens: Some(235929),
-                },
-                cost: Cow::Borrowed(&[PriceBand {
-                    min_prompt_tokens: 0,
-                    input: Some(0.18),
-                    output: Some(0.6),
-                    reasoning: Some(0.6),
-                    cache_read: Some(0.06),
-                    cache_write: None,
-                }]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: Some(true),
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[Some(Effort::Low), Some(Effort::High)]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::Openrouter,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
                 id: Cow::Borrowed("tencent/hy4"),
                 upstream_id: Cow::Borrowed("tencent/hy4"),
                 name: Cow::Borrowed("Hy4"),
@@ -22132,26 +22015,26 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("thinkingmachines/inkling-2-small"),
-                upstream_id: Cow::Borrowed("thinkingmachines/inkling-2-small"),
-                name: Cow::Borrowed("Inkling 2 Small"),
+                id: Cow::Borrowed("thinkingmachines/inkling-2-mini"),
+                upstream_id: Cow::Borrowed("thinkingmachines/inkling-2-mini"),
+                name: Cow::Borrowed("Inkling 2 Mini"),
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(943718),
+                    max_output_tokens: Some(65536),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.3),
-                    output: Some(1.0),
-                    reasoning: Some(1.0),
-                    cache_read: Some(0.03),
+                    input: Some(0.1),
+                    output: Some(0.4),
+                    reasoning: Some(0.4),
+                    cache_read: Some(0.02),
                     cache_write: None,
                 }]),
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    disable_reasoning: Some(false),
+                    disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
                 reasoning_levels: Cow::Borrowed(&[
@@ -22175,20 +22058,20 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("thinkingmachines/inkling-2-small:free"),
-                upstream_id: Cow::Borrowed("thinkingmachines/inkling-2-small:free"),
-                name: Cow::Borrowed("Inkling 2 Small (free)"),
+                id: Cow::Borrowed("thinkingmachines/inkling-2-small"),
+                upstream_id: Cow::Borrowed("thinkingmachines/inkling-2-small"),
+                name: Cow::Borrowed("Inkling 2 Small"),
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(131072),
+                    max_output_tokens: Some(943718),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.0),
-                    output: Some(0.0),
-                    reasoning: Some(0.0),
-                    cache_read: None,
+                    input: Some(0.3),
+                    output: Some(1.0),
+                    reasoning: Some(1.0),
+                    cache_read: Some(0.03),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -22831,59 +22714,12 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("x-ai/grok-build-0.1"),
-                upstream_id: Cow::Borrowed("x-ai/grok-build-0.1"),
-                name: Cow::Borrowed("Grok Build 0.1"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(256000),
-                    max_output_tokens: Some(230400),
-                },
-                cost: Cow::Borrowed(&[
-                    PriceBand {
-                        min_prompt_tokens: 0,
-                        input: Some(1.0),
-                        output: Some(2.0),
-                        reasoning: Some(2.0),
-                        cache_read: Some(0.2),
-                        cache_write: None,
-                    },
-                    PriceBand {
-                        min_prompt_tokens: 200001,
-                        input: Some(2.0),
-                        output: Some(4.0),
-                        reasoning: Some(4.0),
-                        cache_read: Some(0.4),
-                        cache_write: None,
-                    },
-                ]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: None,
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::None,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Image, Modality::Pdf, Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
                 id: Cow::Borrowed("xiaomi/mimo-v2.6-flash"),
                 upstream_id: Cow::Borrowed("xiaomi/mimo-v2.6-flash"),
                 name: Cow::Borrowed("MiMo-V2.6-Flash"),
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
-                    context_window: Some(1050000),
+                    context_window: Some(1048576),
                     max_output_tokens: Some(131072),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
@@ -22920,7 +22756,7 @@ pub static PROVIDERS: &[Provider] = &[
                 name: Cow::Borrowed("MiMo-V2.6-Pro"),
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
-                    context_window: Some(1050000),
+                    context_window: Some(1048576),
                     max_output_tokens: Some(131072),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
@@ -23113,7 +22949,7 @@ pub static PROVIDERS: &[Provider] = &[
                     input: Some(0.3),
                     output: Some(0.9),
                     reasoning: Some(0.9),
-                    cache_read: Some(0.05),
+                    cache_read: Some(0.055),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -23295,10 +23131,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(1.19),
-                    output: Some(3.74),
-                    reasoning: Some(3.74),
-                    cache_read: Some(0.6),
+                    input: Some(1.4),
+                    output: Some(4.4),
+                    reasoning: Some(4.4),
+                    cache_read: Some(0.26),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -23402,13 +23238,13 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(943717),
+                    max_output_tokens: Some(131072),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.15),
-                    output: Some(0.5),
-                    reasoning: Some(0.5),
+                    input: Some(0.0399),
+                    output: Some(0.0784),
+                    reasoning: Some(0.0784),
                     cache_read: Some(0.03),
                     cache_write: None,
                 }]),
@@ -23773,10 +23609,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.035),
-                    output: Some(0.15),
-                    reasoning: Some(0.15),
-                    cache_read: Some(0.0015),
+                    input: Some(0.036),
+                    output: Some(0.5),
+                    reasoning: Some(0.5),
+                    cache_read: Some(0.01),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -23843,14 +23679,14 @@ pub static PROVIDERS: &[Provider] = &[
                 protocol: Protocol::OpenaiChat,
                 limits: Limits {
                     context_window: Some(1048576),
-                    max_output_tokens: Some(384000),
+                    max_output_tokens: Some(131072),
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.06),
-                    output: Some(0.18),
-                    reasoning: Some(0.18),
-                    cache_read: Some(0.015),
+                    input: Some(0.044),
+                    output: Some(0.132),
+                    reasoning: Some(0.132),
+                    cache_read: Some(0.0014),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -23985,7 +23821,7 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.1824),
+                    input: Some(0.1805),
                     output: Some(11.0055),
                     reasoning: Some(11.0055),
                     cache_read: Some(0.18),
@@ -25432,53 +25268,6 @@ pub static PROVIDERS: &[Provider] = &[
                     output: Cow::Borrowed(&[Modality::Text]),
                 },
             },
-            Model {
-                id: Cow::Borrowed("grok-build-0.1"),
-                upstream_id: Cow::Borrowed("grok-build-0.1"),
-                name: Cow::Borrowed("Grok Build 0.1"),
-                protocol: Protocol::OpenaiResponses,
-                limits: Limits {
-                    context_window: Some(256000),
-                    max_output_tokens: Some(256000),
-                },
-                cost: Cow::Borrowed(&[
-                    PriceBand {
-                        min_prompt_tokens: 0,
-                        input: Some(1.0),
-                        output: Some(2.0),
-                        reasoning: Some(2.0),
-                        cache_read: Some(0.2),
-                        cache_write: None,
-                    },
-                    PriceBand {
-                        min_prompt_tokens: 200001,
-                        input: Some(2.0),
-                        output: Some(4.0),
-                        reasoning: Some(4.0),
-                        cache_read: Some(0.4),
-                        cache_write: None,
-                    },
-                ]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: None,
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::None,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Image, Modality::Pdf, Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
         ]),
     },
     Provider {
@@ -25837,53 +25626,6 @@ pub static PROVIDERS: &[Provider] = &[
                     Some(Effort::High),
                     Some(Effort::Xhigh),
                 ]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::None,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Image, Modality::Pdf, Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
-                id: Cow::Borrowed("grok-build-0.1"),
-                upstream_id: Cow::Borrowed("grok-build-0.1"),
-                name: Cow::Borrowed("Grok Build 0.1"),
-                protocol: Protocol::OpenaiResponses,
-                limits: Limits {
-                    context_window: Some(256000),
-                    max_output_tokens: Some(256000),
-                },
-                cost: Cow::Borrowed(&[
-                    PriceBand {
-                        min_prompt_tokens: 0,
-                        input: Some(1.0),
-                        output: Some(2.0),
-                        reasoning: Some(2.0),
-                        cache_read: Some(0.2),
-                        cache_write: None,
-                    },
-                    PriceBand {
-                        min_prompt_tokens: 200001,
-                        input: Some(2.0),
-                        output: Some(4.0),
-                        reasoning: Some(4.0),
-                        cache_read: Some(0.4),
-                        cache_write: None,
-                    },
-                ]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: None,
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[]),
                 dialect: Dialect {
                     chat: ChatFlags {
                         thinking_format: ThinkingFormat::None,
