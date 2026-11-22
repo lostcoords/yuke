@@ -1,5 +1,5 @@
 //! The system prompt of a new session. It has four sections: the base text, the `AGENTS.md` instructions, the skills,
-//! and the facts of the environment. A session keeps the prompt of its creation.
+//! and the facts of the environment. A `SYSTEM.md` in the config folder replaces the base text. A session keeps the prompt of its creation.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -48,6 +48,8 @@ pub(crate) fn deferred_tools(toolset: &Toolset) -> Option<PromptSection> {
 /// The facts of the machine that the prompt states.
 #[derive(Debug)]
 pub(crate) struct Environment<'a> {
+    /// The config folder of the profile, which can hold `SYSTEM.md`.
+    pub(crate) config: &'a Path,
     /// The folder of the session.
     pub(crate) workspace: &'a Path,
     /// The home folder of the user, which holds the global `~/.agents/AGENTS.md`.
@@ -71,7 +73,7 @@ pub(crate) struct Prompt {
 /// The `instructions` section exists only when at least one `AGENTS.md` file exists, and the `skills` section only
 /// with at least one skill.
 pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<Prompt, String> {
-    let mut sections = vec![PromptSection::new(PromptSection::BASE, BASE)];
+    let mut sections = vec![PromptSection::new(PromptSection::BASE, base(environment.config)?)];
     let instructions = instructions(environment.workspace, environment.home)?;
     if !instructions.is_empty() {
         let blocks: Vec<String> = instructions
@@ -121,6 +123,16 @@ pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<Prompt, Str
     );
     sections.push(PromptSection::new("environment", environment));
     Ok(Prompt { sections, warnings })
+}
+
+/// The text of `SYSTEM.md` in `config`, or the base text of yuke when that file does not exist.
+fn base(config: &Path) -> Result<String, String> {
+    let path = config.join("SYSTEM.md");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(text.trim_end().to_owned()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(BASE.to_owned()),
+        Err(error) => Err(format!("Cannot load SYSTEM.md at {}: {error}", path.display())),
+    }
 }
 
 /// One `AGENTS.md` file.
@@ -239,6 +251,7 @@ mod tests {
         std::fs::write(&charts, "---\nname: charts <2>\ndescription: Draw charts.\n---\n").unwrap();
 
         let prompt = system_prompt(&Environment {
+            config: &root.join("config"),
             workspace: &workspace,
             home: Some(&home),
             plugins: std::slice::from_ref(&plugin),
@@ -277,6 +290,7 @@ mod tests {
         let workspace = folder("none");
 
         let prompt = system_prompt(&Environment {
+            config: &workspace,
             workspace: &workspace,
             home: None,
             plugins: &[],
@@ -289,6 +303,47 @@ mod tests {
         let keys: Vec<&str> = prompt.sections.iter().map(|section| section.key.as_str()).collect();
         assert_eq!(keys, ["base", "environment"]);
         assert!(yuke_agent::prompt_text(&prompt.sections).starts_with(&format!("{BASE}\n\n<environment>\n")));
+    }
+
+    #[test]
+    fn system_md_of_the_config_folder_replaces_the_base_text() {
+        let root = folder("system");
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::write(
+            config.join("SYSTEM.md"),
+            "You review code.\n\nKeep each answer short.\n",
+        )
+        .unwrap();
+
+        let prompt = system_prompt(&Environment {
+            config: &config,
+            workspace: &root,
+            home: None,
+            plugins: &[],
+            shell: Path::new("/bin/sh"),
+            now: UNIX_EPOCH,
+        })
+        .unwrap();
+
+        assert_eq!(prompt.sections[0].key, "base");
+        assert_eq!(prompt.sections[0].text, "You review code.\n\nKeep each answer short.");
+    }
+
+    #[test]
+    fn an_unreadable_system_md_is_an_error_that_names_it() {
+        let config = folder("unreadable-system");
+        std::fs::create_dir_all(config.join("SYSTEM.md")).unwrap();
+
+        let error = base(&config).unwrap_err();
+
+        assert!(
+            error.starts_with(&format!(
+                "Cannot load SYSTEM.md at {}: ",
+                config.join("SYSTEM.md").display()
+            )),
+            "{error}"
+        );
     }
 
     #[test]

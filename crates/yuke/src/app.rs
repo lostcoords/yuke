@@ -997,10 +997,17 @@ async fn canonical(folder: PathBuf) -> Result<PathBuf, AppError> {
     .await
 }
 
-/// The system prompt of a session in `workspace`, with the skills of the plugin folders `plugins`.
-async fn system_prompt(workspace: PathBuf, home: Option<PathBuf>, plugins: Vec<PathBuf>) -> Result<Prompt, AppError> {
+/// The system prompt of a session in `workspace`, with the `SYSTEM.md` of the config folder `config` and the skills of
+/// the plugin folders `plugins`.
+async fn system_prompt(
+    config: PathBuf,
+    workspace: PathBuf,
+    home: Option<PathBuf>,
+    plugins: Vec<PathBuf>,
+) -> Result<Prompt, AppError> {
     blocking(move || {
         prompt::system_prompt(&Environment {
+            config: &config,
             workspace: &workspace,
             home: home.as_deref(),
             plugins: &plugins,
