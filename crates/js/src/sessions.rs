@@ -34,7 +34,7 @@ pub enum ViewEvent {
 /// Receives the events of one view after the host state borrow ends. A call must not block.
 pub type ViewSink = Rc<dyn Fn(ViewEvent)>;
 
-/// A fact of the consumer for `ctx.on` of the plugins. It reports what happened, and no answer changes it.
+/// A fact of the consumer for `ctx.addListener` of the plugins. It reports what happened, and no answer changes it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "event", content = "data")]
 pub enum Fact {

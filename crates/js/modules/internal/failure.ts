@@ -1,5 +1,3 @@
-/** The text form of a thrown value, for its author. */
-
 /** The text form of the thrown `error` for its author: an `Error` adds the frames of the plugin on the next lines. */
 export function failureOf(error: unknown): string {
   const text = String(error);

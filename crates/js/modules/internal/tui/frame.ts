@@ -17,11 +17,9 @@ const NONE = Object.freeze({ shift: false, alt: false, ctrl: false, super: false
 /** The core of each frame test, for a test host that gives its plugins the surfaces of the frame. */
 const cores = new WeakMap<FrameTest, Core>();
 
-/** The core of the frame test `frame`. */
+/** The core of the frame test `frame`, which `createFrame` made. */
 export function coreOf(frame: FrameTest): Core {
-  const core = cores.get(frame);
-  if (core === undefined) throw new TypeError("the frame is not a frame of createFrame");
-  return core;
+  return cores.get(frame) as Core;
 }
 
 export function createFrame(

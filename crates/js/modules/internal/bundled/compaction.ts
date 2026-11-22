@@ -3,7 +3,7 @@
  * nears the window of the model, and after the provider refuses a context that does not fit.
  */
 
-import type { RoundBeforeAnswer, RoundBeforeEvent, RoundRetryEvent, SessionContext } from "yuke:plugins";
+import type { RoundBeforeAnswer, RoundBeforeEvent, SessionContext } from "yuke:plugins";
 import type { Block } from "yuke:protocol";
 
 /** The most tokens that stay exact after a summary. */
@@ -170,7 +170,7 @@ export function session(s: SessionContext): undefined {
     }
   });
 
-  s.addHook("round.retry", async (event: RoundRetryEvent) => {
+  s.addHook("round.retry", async (event) => {
     const { contextWindow: window, failure, retries } = event;
     if (window === undefined || failure.kind !== "contextOverflow" || retries >= RETRIES) return undefined;
     const context = event.blocks();

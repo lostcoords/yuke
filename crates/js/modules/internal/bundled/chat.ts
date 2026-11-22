@@ -425,7 +425,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     if (usage?.input === undefined) showStatus("context", undefined);
     else {
       const used = usage.input + (usage.output ?? 0);
-      const window = model?.contextWindow ?? undefined;
+      const window = model?.contextWindow;
       const share = window === undefined ? undefined : Math.min(1, used / window);
       const text =
         share === undefined

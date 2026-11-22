@@ -57,10 +57,10 @@ const RULES: ComposerFrame = {
 };
 
 /** The item at the top of a scrolled transcript, and its row there. */
-interface Viewport {
+type Viewport = {
   readonly id: string;
   readonly row: number;
-}
+};
 
 /**
  * The saved state of a pane: the session that it shows, the draft of its composer, its fold choices, the place of a
@@ -366,9 +366,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     busy = true;
     try {
       const settings = await settingsOf(true);
-      if (settings === undefined || mount.signal.aborted) return;
-      const id = chatSession.id;
-      if (id === undefined) return;
+      if (settings === undefined || mount.signal.aborted || chatSession.id === undefined) return;
       const target = await sessionHandle();
       if (target === undefined || mount.signal.aborted) return;
       // A handle comes after the snapshot, and the snapshot gives the settings.
@@ -483,7 +481,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     busy = true;
     try {
       const row = await ctx.get("sessions").get(id);
-      if (mount.signal.aborted || chatSession.id !== id) return;
+      // The busy pane shows no other session, so only a close of the pane ends the rename.
+      if (mount.signal.aborted) return;
       // A refused title stays in the field with its error.
       await tui.prompt({
         title: "Rename session",
@@ -758,7 +757,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
               : {}),
           draft: composer.state as unknown as JsonValue,
           folds: document.folds,
-          ...(viewport === undefined ? {} : { viewport: { id: viewport.id, row: viewport.row } }),
+          ...(viewport === undefined ? {} : { viewport }),
         },
       };
     },

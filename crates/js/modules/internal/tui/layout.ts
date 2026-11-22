@@ -1,7 +1,7 @@
 /** `stack`: a layout of children in a row or a column, on the placement contract of `View`. */
 import type { Direction, Placement, Rect, Size, StackChild, View } from "yuke:tui";
 
-/** The rect of `rows` rows at the bottom of `size`, cut to its height, as for an overlay above the composer. */
+/** The rect of `rows` rows at the bottom of `size`, cut to its height. */
 export function bottom(size: Size, rows: number): Rect {
   const height = Math.min(rows, size.height);
   return { column: 0, row: size.height - height, width: size.width, height };

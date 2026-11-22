@@ -269,7 +269,8 @@ export function startInputBefore(
         },
       );
     } catch (error) {
-      notify("host:plugins", "error", error instanceof Error ? error.message : String(error), sessionId);
+      // The handlers fail only with the error of `hookFailure`.
+      notify("host:plugins", "error", (error as Error).message, sessionId);
       return { blocks: undefined };
     }
     if (removed) return { blocks: undefined };

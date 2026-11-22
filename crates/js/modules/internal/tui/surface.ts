@@ -1,5 +1,5 @@
 /**
- * The surface of one plugin: the frozen `Tui` of `ctx.get("tui")`. Each registration and mount of the surface belongs
+ * The surface of one plugin: the `Tui` of `ctx.get("tui")`. Each registration and mount of the surface belongs
  * to the plugin; the abort of its signal removes the rest, and later calls throw. A bare name gets the plugin prefix.
  */
 import type { Core } from "yuke:internal/tui/core";
@@ -58,8 +58,8 @@ class Scope {
     this.#owner = owner;
     this.#signal = signal;
     this.#report = report;
-    if (signal.aborted) this.#stop();
-    else signal.addEventListener("abort", () => this.#stop(), { once: true });
+    // An aborted signal fires no listener, and the scope then has nothing to clean.
+    signal.addEventListener("abort", () => this.#stop(), { once: true });
   }
 
   /** Throw after the stop of the plugin, also in an abort listener that runs before the one of the scope. */

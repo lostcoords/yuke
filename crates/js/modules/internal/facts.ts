@@ -1,4 +1,4 @@
-// The facts of `ctx.on`: one watch of the host for the runtime while a listener exists. The host sends nothing while
+// The facts of `ctx.addListener`: one watch of the host for the runtime while a listener exists. The host sends nothing while
 // no listener exists.
 
 import { failureOf } from "yuke:internal/failure";

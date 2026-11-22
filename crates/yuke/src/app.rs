@@ -126,7 +126,7 @@ pub(crate) struct Shared {
     mcp: yuke_mcp::Config,
     /// The id of the last question of any session.
     last_question: Rc<Cell<u64>>,
-    /// The watches of `ctx.on`.
+    /// The watches of `ctx.addListener`.
     facts: Rc<facts::Facts>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
     logins: RefCell<HashMap<String, LoginSource>>,

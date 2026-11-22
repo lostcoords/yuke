@@ -1,4 +1,4 @@
-//! The facts of the app for `ctx.on` of the plugins: each update of each open session, its open and its close, and
+//! The facts of the app for `ctx.addListener` of the plugins: each update of each open session, its open and its close, and
 //! each notice. A watch holds no session.
 
 use std::cell::Cell;

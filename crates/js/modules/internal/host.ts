@@ -51,10 +51,10 @@ export const reply = {
   toolCalls: (calls: readonly ScriptedCall[], options?: CallsOptions): Reply => ({
     kind: "toolCalls",
     text: options?.text ?? "",
-    calls: [...calls],
+    calls,
     inputTokens: options?.inputTokens ?? 0,
   }),
-  cut: (calls: readonly ScriptedCall[]): Reply => ({ kind: "cut", calls: [...calls] }),
+  cut: (calls: readonly ScriptedCall[]): Reply => ({ kind: "cut", calls }),
   overloaded: (): Reply => ({ kind: "overloaded" }),
   overflow: (): Reply => ({ kind: "overflow" }),
   failed: (text: string): Reply => ({ kind: "failed", text }),
@@ -90,17 +90,8 @@ function responderOf(onClientRequest: NonNullable<HostOptions["onClientRequest"]
 }
 
 export async function createHost(options: HostOptions): Promise<Host> {
-  const plugins = options.plugins.map((plugin) => {
-    const common = { options: plugin.options ?? {}, dataDir: plugin.dataDir };
-    if ("bundled" in plugin) return { bundled: plugin.bundled, ...common };
-    if ("folder" in plugin) return { folder: plugin.folder, ...common };
-    const exports: Record<string, unknown> = {};
-    if (plugin.apply !== undefined) exports.apply = plugin.apply;
-    if (plugin.session !== undefined) exports.session = plugin.session;
-    if (plugin.optionsSchema !== undefined) exports.optionsSchema = plugin.optionsSchema;
-    give(plugin.name, exports);
-    return { name: plugin.name, uses: plugin.uses ?? [], provides: plugin.provides ?? [], ...common };
-  });
+  // The host gets the plugins as JSON, which drops the exports, so each given plugin keeps them here.
+  for (const plugin of options.plugins) if ("name" in plugin) give(plugin.name, plugin);
   const stop = new AbortController();
   const frame = options.frame;
   if (frame !== undefined) {
@@ -111,7 +102,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
   }
   // A plugin can send a request while the host loads it.
   if (options.onClientRequest !== undefined) setResponder(responderOf(options.onClientRequest));
-  await testHostCreate({ plugins, replies: options.replies ?? [] }).promise;
+  await testHostCreate({ plugins: options.plugins, replies: options.replies ?? [] }).promise;
   await testWaitForSettled();
 
   const sessions = sessionsOf("test", stop.signal);

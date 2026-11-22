@@ -137,7 +137,7 @@ export class Scene {
     });
     const view = startView(owner, create, mount, this.#host.report);
     if (view === undefined) return mount;
-    layer = { view, mount, modal: modal !== false, place, focus: undefined, tree: undefined };
+    layer = { view, mount, modal, place, focus: undefined, tree: undefined };
     if (layer.modal) this.cancelCapture();
     this.#overlays.push(layer);
     this.#host.requestFrame();
