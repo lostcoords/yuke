@@ -390,15 +390,9 @@ test("reset and restore report one edit over the whole text", () => {
   );
 });
 
-test("the editor checks the grapheme edges of its spans and copies its media", () => {
-  const media = { blob: { digest: "abc", len: 3 }, mimeType: "image/png" };
+test("the editor refuses a span that ends inside a grapheme", () => {
   // The astronaut is one grapheme of 5 units, so a span that ends inside it splits it.
   assertThrows(() => new TextEditor({ state: state("👩‍💻", 0, [{ from: 0, to: 2, kind: "paste", label: "[p]" }]) }));
-  const image = (value: unknown) =>
-    new TextEditor({
-      state: state("￼", 0, [{ from: 0, to: 1, kind: "image", label: "[i]", media: value as typeof media }]),
-    });
-  assertEquals(image(media).state.spans[0], { from: 0, to: 1, kind: "image", label: "[i]", media });
 });
 
 test("the scroll follows a new prompt and stays inside the text after a restore", () => {

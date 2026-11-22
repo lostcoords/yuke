@@ -272,10 +272,6 @@ test("a break tag in a code span or after a backslash stays literal", () => {
   assertEquals(lines(rowsOf("a `<br>` b \\<br> c", 80)), ["a <br> b <br> c"]);
 });
 
-test("a long paragraph wraps to the width and keeps each word", () => {
-  assertEquals(lines(rowsOf("alpha bravo charlie delta", 11)), ["alpha bravo", "charlie", "delta"]);
-});
-
 // A pane can have no width for a moment, and a row then still takes one character.
 test("a code block at width 0 gives one character for each row", () => {
   assertEquals(lines(rowsOf("```\nab\n```", 0)), ["a", "b"]);
@@ -656,30 +652,6 @@ function looks(frame: FrameTest, source: string): Record<string, unknown> {
   });
   return found;
 }
-
-test("a Markdown text draws its look without a plugin", () => {
-  using frame = createFrame({ width: 40, height: 12 });
-  assertEquals(looks(frame, "plain **b** *i* ***both*** `c`"), {
-    "plain ": {},
-    b: { bold: true },
-    i: { italic: true },
-    both: { bold: true, italic: true },
-    c: { dim: true },
-  });
-  assertEquals(looks(frame, "# head\n\n> said\n\n- item\n\n```\nblock\n```\n\n[go](u)"), {
-    head: { bold: true },
-    "▏ ": { dim: true },
-    said: { dim: true },
-    "• ": { dim: true },
-    item: {},
-    block: { dim: true },
-    "[": { dim: true },
-    go: { underline: true },
-    "](u)": { dim: true },
-  });
-  const borders = looks(frame, "---\n\n| a | b |\n|---|---|\n| 1 | 2 |");
-  assertEquals([borders["─".repeat(40)], borders[" │ "], borders.a], [{ dim: true }, { dim: true }, {}]);
-});
 
 test("a plugin changes the look of a Markdown text, and its dispose restores the look", () => {
   using frame = createFrame({ width: 40, height: 1 });

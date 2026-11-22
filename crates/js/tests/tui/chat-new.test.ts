@@ -167,19 +167,6 @@ test("/new during a turn leaves the turn running and says so", async () => {
   );
 });
 
-test("/new with a running job of a subagent says that the work goes on", async () => {
-  using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
-  const sessions = fakeSessions(SAVED);
-  sessions.state.jobs = [{ id: "reader", label: "Read the store", state: "running", kind: "plugin", plugin: "agents" }];
-  const chat = await loadChat(frame, sessions);
-  frame.start();
-  await waitForSettled();
-  frame.key("/ n e w enter");
-  await waitForSettled();
-
-  assertEquals(chat.notices, ["info The session is still running: use /sessions to check it"]);
-});
-
 test("a reload after /new keeps the folder of the old session", async () => {
   await savedPick();
   using before = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });

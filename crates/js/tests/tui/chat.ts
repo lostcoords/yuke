@@ -16,14 +16,8 @@ import type {
   StoredEvent,
 } from "yuke:protocol";
 import { createFrame, type FrameTest } from "yuke:test";
-import { type MouseEvent, TextEditor, TextView } from "yuke:tui";
+import { TextEditor, TextView } from "yuke:tui";
 import { fakeContext } from "./context.ts";
-
-const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
-
-export function mouse(column: number, row: number, action: MouseEvent["action"]): MouseEvent {
-  return { type: "mouse", column, row, button: "left", action, modifiers: MODIFIERS };
-}
 
 /** The cell style that the default theme gives to the style group `group`, read from a draw of one cell. */
 export function themeStyle(group: string) {

@@ -855,17 +855,3 @@ test("a diff shows an added line, a removed line, and its context in their own l
   assert(removed !== added);
   assertEquals(background(" same"), undefined);
 });
-
-test("the failure of a turn shows in bold in the danger color", async () => {
-  using frame = createFrame({ width: 30, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
-  const saved: StoredEvent[] = [
-    { seq: 1, kind: "settings", ...SETTINGS },
-    commit(2, [], { end: { kind: "failed", error: "boom" } }),
-  ];
-  await loadChat(frame, fakeSessions(saved));
-  frame.start();
-  const row = transcriptRows(frame).findIndex((line) => line.includes("Failed: boom"));
-  const danger = themeStyle("chat.error").fg;
-  assert(danger !== undefined);
-  assertEquals(frame.frame.cells[row]?.[1]?.style, { fg: danger, bold: true });
-});

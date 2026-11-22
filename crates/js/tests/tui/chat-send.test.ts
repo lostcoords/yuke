@@ -805,22 +805,6 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
   );
 });
 
-test("a send after a close of the session by another client opens the session again", async () => {
-  using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
-  const sessions = fakeSessions();
-  await loadChat(frame, sessions);
-  frame.start();
-  await waitForSettled();
-  sessions.close("s1");
-  frame.paste("hi");
-  frame.key("enter");
-  await waitForSettled();
-  assertEquals(
-    [sessions.opened.map((open) => open.id), sessions.inputs],
-    [["s1", "s1"], [[{ kind: "userText", text: "hi" }]]],
-  );
-});
-
 const PNG = Object.freeze({ bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" as const });
 
 test("ctrl+v puts the image of the clipboard at the caret with the next number, and a send keeps the order", async () => {

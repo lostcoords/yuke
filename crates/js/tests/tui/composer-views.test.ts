@@ -271,30 +271,23 @@ test("each call is its own view, and a disposer removes only its own", async () 
   assertEquals([both, count()], [2, 1]);
 });
 
-test("the rule above the composer has a default look that a plugin changes", async () => {
+test("both rules of the composer have a default look that a plugin changes", async () => {
   using frame = createFrame({ width: 24, height: 6 }, undefined, { folder: "/w" });
   await loadChat(frame, fakeSessions());
   frame.start();
   await waitForSettled();
-  const look = () => {
+  const looks = () => {
     const cells = frame.draw().cells;
-    return cells[frame.rows().findIndex((line) => line.startsWith("──"))]?.[0]?.style;
+    return frame.rows().flatMap((line, row) => (line.startsWith("──") ? [cells[row]?.[0]?.style] : []));
   };
-  const before = look();
+  const before = looks();
   frame.surface("theme").tui.styles.add({ "chat.rule": { fg: 1, dim: null } });
-  assertEquals([before, look()], [{ dim: true }, { fg: 1 }]);
-});
-
-test("a pane without plugin views shows a rule below the composer, in the look of the rule above it", async () => {
-  using frame = createFrame({ width: 24, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
-  await loadChat(frame, fakeSessions());
-  frame.start();
-  await waitForSettled();
-  frame.draw();
-  const rule = "─".repeat(24);
   assertEquals(
-    [frame.rows(), frame.frame.cells[5]?.[23]?.style],
-    [["", "", "", rule, "Message…", rule], { dim: true }],
+    [before, looks()],
+    [
+      [{ dim: true }, { dim: true }],
+      [{ fg: 1 }, { fg: 1 }],
+    ],
   );
 });
 

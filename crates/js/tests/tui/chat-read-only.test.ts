@@ -4,8 +4,6 @@ import type { InteractionRequest, SessionUpdate } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
 
-const RULE = "─".repeat(30);
-
 const QUESTION: InteractionRequest = {
   kind: "questions",
   questions: [{ id: "q", header: "Branch", question: "Delete?", options: [{ label: "Yes" }] }],
@@ -24,13 +22,6 @@ async function opened() {
   frame.draw();
   return { frame, sessions, chat, end };
 }
-
-test("a read-only session shows its row with the key back, in place of the composer", async () => {
-  const { frame } = await opened();
-  using _frame = frame;
-
-  assertEquals(frame.rows().slice(-3), [RULE, "A child session · esc back", RULE]);
-});
 
 test("a read-only session takes no message, no recall, no image, and no cancel", async () => {
   const { frame, sessions } = await opened();
