@@ -17,7 +17,7 @@ export interface Screen {
 
 /** The canvas of the screen rect `rect`, cut to `clip`, both in absolute cells. `base` comes before each style. */
 export function createCanvas(screen: Screen, rect: Rect, clip: Rect, base?: CanvasStyle): Canvas {
-  return Object.freeze({
+  return {
     width: rect.width,
     height: rect.height,
     text(column: number, row: number, text: string, style?: CanvasStyle): number {
@@ -40,7 +40,7 @@ export function createCanvas(screen: Screen, rect: Rect, clip: Rect, base?: Canv
       };
       return createCanvas(screen, part, intersect(clip, part), base);
     },
-  });
+  };
 }
 
 /** `over` on top of `under`: a later style wins per field. */

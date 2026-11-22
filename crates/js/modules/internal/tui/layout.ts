@@ -6,12 +6,11 @@ import type { Direction, Placement, Size, StackChild, View } from "yuke:tui";
  * remain; `fill` children share the rest, and the last one gets the cells of the rounding.
  */
 export function stack(direction: Direction, children: readonly StackChild[]): View {
-  const items = [...children];
-  return Object.freeze({
+  return {
     layout(size: Size): readonly Placement[] {
       const along = direction === "row" ? size.width : size.height;
       let left = along;
-      const cells = items.map((item) => {
+      const cells = children.map((item) => {
         const wanted = item.size;
         if (wanted === "fill") return undefined;
         const asked = typeof wanted === "function" ? wanted(size) : wanted;
@@ -23,7 +22,7 @@ export function stack(direction: Direction, children: readonly StackChild[]): Vi
       const share = fills === 0 ? 0 : Math.floor(left / fills);
       const lastFill = cells.lastIndexOf(undefined);
       let at = 0;
-      return items.map(({ view }, index) => {
+      return children.map(({ view }, index) => {
         const count = cells[index] ?? (index === lastFill ? left - share * (fills - 1) : share);
         const start = at;
         at += count;
@@ -33,5 +32,5 @@ export function stack(direction: Direction, children: readonly StackChild[]): Vi
       });
     },
     draw(): void {},
-  });
+  };
 }

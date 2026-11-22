@@ -478,7 +478,7 @@ export function startToolAfter(request: ToolAfterRequest): Operation<ChangedResu
     let result: ToolCallResult = Object.freeze({
       text: given.text,
       isError: given.isError,
-      media: Object.freeze([...originals]),
+      media: Object.freeze(originals),
       display: frozen(given.display),
     });
     let answered = false;

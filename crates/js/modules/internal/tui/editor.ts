@@ -412,7 +412,7 @@ export class TextEditor implements TextWidget<number, EditorChange> {
     this.#state = after;
     this.ensureVisible(after.selection.head);
     this.#support.requestFrame();
-    this.#support.emit(Object.freeze({ kind, before, after, changes: Object.freeze([...changes]) }));
+    this.#support.emit(Object.freeze({ kind, before, after, changes: Object.freeze(changes) }));
   }
 
   /** A copy of `state` with whole offsets inside its text, frozen. */

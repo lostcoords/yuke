@@ -294,7 +294,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
   return {
     get size(): Size {
       scope.check();
-      return Object.freeze({ width: core.driver.width(), height: core.driver.height() });
+      return { width: core.driver.width(), height: core.driver.height() };
     },
     get background(): "dark" | "light" {
       scope.check();

@@ -260,7 +260,7 @@ export interface PluginManager {
 }
 
 /** The credentials of the providers. */
-export const auth: Auth = Object.freeze({
+export const auth: Auth = {
   async login(provider, options) {
     const signal = options?.signal;
     signal?.throwIfAborted();
@@ -269,21 +269,21 @@ export const auth: Auth = Object.freeze({
     if (signal?.aborted) cancel();
     else signal?.addEventListener("abort", cancel, { once: true });
     let end: Promise<LoginOutcome> | undefined;
-    return Object.freeze({
+    return {
       verificationUrl: started.verificationUrl,
       userCode: started.userCode,
       waitForEnd: () => {
         end ??= authWaitForLogin(started.loginId);
         return end;
       },
-    });
+    };
   },
   setApiKey: (provider, apiKey) => authSetApiKey({ provider, apiKey }),
   logout: (provider) => authLogout(provider),
-} satisfies Auth);
+} satisfies Auth;
 
 /** The plugin manager of the profile. */
-export const plugins: PluginManager = Object.freeze({
+export const plugins: PluginManager = {
   list: () => pluginsList(null),
   sync: (options) => underStop(options?.signal, () => pluginsSync(null)),
   check: (target, options) => underStop(options?.signal, () => pluginsCheck({ target })),
@@ -295,4 +295,4 @@ export const plugins: PluginManager = Object.freeze({
   async remove(name) {
     await pluginsRemove({ name });
   },
-} satisfies PluginManager);
+} satisfies PluginManager;
