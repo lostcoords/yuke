@@ -2,6 +2,7 @@
 // fake model. The app of the test does the work through the natives of the test host.
 
 import { underSignal } from "yuke:internal/events";
+import { addListener } from "yuke:internal/facts";
 import { setResponder } from "yuke:internal/hooks";
 import {
   type Operation,
@@ -16,6 +17,9 @@ import {
 import { give } from "yuke:internal/plugins";
 import { sessionsOf } from "yuke:internal/sessions";
 import { folder } from "yuke:internal/test";
+import { coreOf } from "yuke:internal/tui/frame";
+import { setSurfaces } from "yuke:internal/tui/host";
+import { createSurface } from "yuke:internal/tui/surface";
 import { jsonCopy } from "yuke:internal/values";
 import { ClientRequestError, type Frozen, type SessionHandleEvent } from "yuke:plugins";
 import type { ExtensionRequestParams, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
@@ -87,29 +91,29 @@ function responderOf(onClientRequest: NonNullable<HostOptions["onClientRequest"]
 
 export async function createHost(options: HostOptions): Promise<Host> {
   const plugins = options.plugins.map((plugin) => {
-    if ("folder" in plugin) {
-      return plugin.options === undefined
-        ? { folder: plugin.folder }
-        : { folder: plugin.folder, options: plugin.options };
-    }
+    const common = { options: plugin.options ?? {}, dataDir: plugin.dataDir };
+    if ("bundled" in plugin) return { bundled: plugin.bundled, ...common };
+    if ("folder" in plugin) return { folder: plugin.folder, ...common };
     const exports: Record<string, unknown> = {};
     if (plugin.apply !== undefined) exports.apply = plugin.apply;
     if (plugin.session !== undefined) exports.session = plugin.session;
     if (plugin.optionsSchema !== undefined) exports.optionsSchema = plugin.optionsSchema;
     give(plugin.name, exports);
-    return {
-      name: plugin.name,
-      options: plugin.options ?? {},
-      uses: plugin.uses ?? [],
-      provides: plugin.provides ?? [],
-    };
+    return { name: plugin.name, uses: plugin.uses ?? [], provides: plugin.provides ?? [], ...common };
   });
+  const stop = new AbortController();
+  const frame = options.frame;
+  if (frame !== undefined) {
+    const core = coreOf(frame);
+    setSurfaces((owner, signal) => createSurface(core, owner, signal));
+    // The terminal shows each notice of the host, so the frame gets each one too.
+    addListener("test", stop.signal, "notice", (notice) => frame.notice(notice));
+  }
   // A plugin can send a request while the host loads it.
   if (options.onClientRequest !== undefined) setResponder(responderOf(options.onClientRequest));
   await testHostCreate({ plugins, replies: options.replies ?? [] }).promise;
   await testWaitForSettled();
 
-  const stop = new AbortController();
   const sessions = sessionsOf("test", stop.signal);
   const questions: TestQuestion[] = [];
   /** The sessions that the test closed. */
@@ -221,6 +225,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       setResponder(undefined);
       await testHostClose(null).promise;
       await testWaitForSettled();
+      if (frame !== undefined) setSurfaces(undefined);
     })();
     return closing;
   };

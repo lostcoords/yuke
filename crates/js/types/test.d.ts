@@ -44,7 +44,18 @@ declare module "yuke:test" {
   } from "yuke:protocol";
   import type { ObjectSchema, ToolMedia } from "yuke:tools";
   import type { Interaction, Transcript } from "yuke:transcript";
-  import type { ClipboardImage, Cursor, KeyEvent, Mount, MouseEvent, Size, Startup, Tui, ViewFactory } from "yuke:tui";
+  import type {
+    ClipboardImage,
+    Cursor,
+    KeyEvent,
+    Mount,
+    MouseEvent,
+    Point,
+    Size,
+    Startup,
+    Tui,
+    ViewFactory,
+  } from "yuke:tui";
 
   /** A color of a frame cell: a palette index from 0 to 255, or `#` and six lower-case hex digits. */
   export type ScreenColor = number | `#${string}`;
@@ -97,10 +108,16 @@ declare module "yuke:test" {
     /** A new surface for the plugin `name`. */
     surface: (name: string) => TestSurface;
     draw: () => Frame;
+    /** Draw a frame, and give the text of each row without its trailing spaces. */
+    rows: () => string[];
     /** Press a key event, or the keys of a key spec such as `ctrl+k v`, one after the other. */
     key: (event: KeyEvent | string) => void;
     /** A mouse event in screen cells. */
     mouse: (event: MouseEvent) => void;
+    /** Press and release the left button at the cell `column`, `row`, without modifiers. */
+    click: (column: number, row: number) => void;
+    /** Press the left button at `from`, drag to `to`, and release it there, without modifiers. */
+    drag: (from: Point, to: Point) => void;
     paste: (text: string) => void;
     resize: (size: Size) => void;
     /** Send the start event of the frame loop. With `snapshot` from `snapshot()`, the saved panes come back. */
@@ -170,10 +187,11 @@ declare module "yuke:test" {
   // The host of plugins under test: an app with a scripted model, in the runtime of the test.
 
   /**
-   * A plugin under test: its exports as a value, or a folder with its `plugin.json`. `import.meta.dirname` names the
-   * folder of the module that holds the code: the entry of a folder, or the module that defines the exports.
+   * A plugin under test: its exports as a value, a folder with its `plugin.json`, or a bundled plugin of yuke by name,
+   * such as `chat`. `import.meta.dirname` names the folder of the module that holds the code: the entry of a folder, or
+   * the module that defines the exports.
    */
-  export type PluginUnderTest =
+  export type PluginUnderTest = (
     | {
         /** The name of the plugin, as in a manifest. */
         readonly name: string;
@@ -184,7 +202,6 @@ declare module "yuke:test" {
         readonly session?: PluginSession<any>;
         /** The schema of `options`, as the `optionsSchema` export of an entry. */
         readonly optionsSchema?: ObjectSchema;
-        readonly options?: Readonly<Record<string, unknown>>;
         readonly uses?: readonly string[];
         readonly provides?: readonly string[];
       }
@@ -194,8 +211,20 @@ declare module "yuke:test" {
          * `plugin.json`, as for a plugin in `config.json`.
          */
         readonly folder: string;
-        readonly options?: Readonly<Record<string, unknown>>;
-      };
+      }
+    | {
+        /** The name of the bundled plugin. */
+        readonly bundled: string;
+      }
+  ) & {
+    /** The options of the plugin, as `config.json` gives them. */
+    readonly options?: Readonly<Record<string, unknown>>;
+    /**
+     * The data folder of the plugin, for a test that saves its files before the load. A relative folder starts in the
+     * working folder of `yuke test`. The default is a new folder of the host.
+     */
+    readonly dataDir?: string;
+  };
 
   /** One scripted answer of the fake model. Make it with `reply`. */
   export type Reply =
@@ -271,6 +300,12 @@ declare module "yuke:test" {
     /** The plugins under test, in list order. A provider loads before the plugins that use it. */
     readonly plugins: readonly PluginUnderTest[];
     /**
+     * The terminal of the host. With it, `ctx.get("tui")` of each plugin is a surface of this frame, which stops with
+     * the plugin, and the frame shows each notice of the host. Without it, `ctx.get("tui")` is `undefined`, as in
+     * `yuke --rpc`. Create the frame before the host, so that the host closes first.
+     */
+    readonly frame?: FrameTest;
+    /**
      * The replies of the fake model of the sessions, in order. Each request takes the next reply. The host writes the
      * reply in the stream format of the protocol of the request. A request after the last reply fails. A reply without
      * a request fails the test at the close of the host.
@@ -293,8 +328,8 @@ declare module "yuke:test" {
   }
 
   /**
-   * Start a host for the plugins under test. The host is an app of yuke with an in-memory store and no bundled plugins.
-   * It does not wait before a retry. A test creates one host. The end of the test closes it.
+   * Start a host for the plugins under test. The host is an app of yuke with an in-memory store. It loads only the
+   * plugins under test, so a bundled plugin loads only when the list names it. It does not wait before a retry. A test creates one host. The end of the test closes it.
    */
   export function createHost(options: HostOptions): Promise<Host>;
 

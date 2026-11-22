@@ -22,7 +22,7 @@ use yuke_protocol::{ExtensionEventParams, NoticeParams, ServerNotification, Sess
 use super::sessions::SessionService;
 use super::{App, Machine, Observer, Profile, RunMode, Shared};
 use crate::paths::Paths;
-use crate::plugins::{check_conflicts, create_data_folders, load_order, manifest_plugin, valid_name};
+use crate::plugins::{bundled_plugin, check_conflicts, create_data_folders, load_order, manifest_plugin, valid_name};
 
 /// What the app of a test needs beyond production. It holds the TypeScript cache of the run and the internal imports
 /// of the tests of yuke. It also holds the test host of the runtime and the sender of the raw reports to the runner.
@@ -74,19 +74,29 @@ struct CreateRequest {
     replies: Vec<ReplyRequest>,
 }
 
-/// One plugin under test: a folder with its manifest, or exports that the test gave.
+/// One plugin under test: its code, its options, and the data folder that the test gave it.
 #[derive(Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
-enum PluginRequest {
+#[serde(rename_all = "camelCase")]
+struct PluginRequest {
+    #[serde(flatten)]
+    code: CodeRequest,
+    #[serde(default)]
+    options: Map<String, Value>,
+    data_dir: Option<PathBuf>,
+}
+
+/// The code of a plugin under test: a folder with its manifest, a bundled plugin, or exports that the test gave.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CodeRequest {
+    Bundled {
+        bundled: String,
+    },
     Folder {
         folder: PathBuf,
-        #[serde(default)]
-        options: Map<String, Value>,
     },
     Given {
         name: String,
-        #[serde(default)]
-        options: Map<String, Value>,
         #[serde(default)]
         uses: Vec<String>,
         #[serde(default)]
@@ -290,21 +300,24 @@ impl TestHost for AppTestHost {
         let (shared, sessions) = self.app()?;
         let data = &shared.machine.paths.data;
         let mut plugins = Vec::with_capacity(request.plugins.len());
-        for requested in request.plugins {
-            let plugin = match requested {
-                PluginRequest::Folder { folder, options } => {
+        for PluginRequest {
+            code,
+            options,
+            data_dir,
+        } in request.plugins
+        {
+            let mut plugin = match code {
+                CodeRequest::Folder { folder } => {
                     let root = folder
                         .canonicalize()
                         .map_err(|error| format!("plugin folder {}: {error}", folder.display()))?;
                     manifest_plugin(&root, data, options)
                         .map_err(|error| format!("plugin folder {}: {error}", root.display()))?
                 }
-                PluginRequest::Given {
-                    name,
-                    options,
-                    uses,
-                    provides,
-                } => {
+                CodeRequest::Bundled { bundled } => {
+                    bundled_plugin(&bundled, data, options).map_err(|error| format!("plugin {bundled}: {error}"))?
+                }
+                CodeRequest::Given { name, uses, provides } => {
                     // The name is a folder below the data folder, so it follows the rule of a manifest name.
                     valid_name(&name).map_err(|error| format!("plugin {name}: {error}"))?;
                     Plugin {
@@ -317,6 +330,9 @@ impl TestHost for AppTestHost {
                     }
                 }
             };
+            if let Some(data_dir) = data_dir {
+                plugin.data_dir = data_dir;
+            }
             check_conflicts(&plugins, &plugin).map_err(|error| format!("plugin {}: {error}", plugin.name))?;
             plugins.push(plugin);
         }

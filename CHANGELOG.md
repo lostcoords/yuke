@@ -8,6 +8,9 @@ Each release has one section. The release job publishes the section of the tag a
 - The installer takes `YUKE_VERSION` to install one release.
 - The installer checks each download against `SHA256SUMS`.
 - Better Markdown in the TUI: tables, code blocks, and quotes inside list items now render.
+- `yuke:test`: `createHost({ frame })` gives each plugin under test a terminal on the frame, and the frame shows the
+  notices of the host. A plugin under test can be a bundled plugin, `{ bundled: "chat" }`, and can get a `dataDir`.
+- `yuke:test`: `FrameTest` has `rows()`, `click()`, and `drag()`.
 
 ## 0.1.1
 

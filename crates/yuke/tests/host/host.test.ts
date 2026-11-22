@@ -1,8 +1,19 @@
 // The test host itself: its plugins, its records, its calls, and its lifetime.
 
-import { mkdir } from "yuke:fs";
+import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { assert, assertEquals, assertRejects, createHost, folder, reply, test, waitForSettled } from "yuke:test";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  createFrame,
+  createHost,
+  folder,
+  reply,
+  test,
+  waitForSettled,
+} from "yuke:test";
+import type { Notice, Tui } from "yuke:tui";
 
 const echo: PluginSession = (s) => {
   s.tools.add({
@@ -181,4 +192,120 @@ test("a setSettings that fails during a turn changes nothing", async () => {
     host.requests.map((request) => (request.body as { model: string }).model),
     ["MiniMax-M3", "MiniMax-M3"],
   );
+});
+
+test("with a frame, a plugin draws on it, and the close of the host removes what the plugin drew", async () => {
+  using frame = createFrame({ width: 20, height: 2 });
+  const host = await createHost({
+    frame,
+    plugins: [
+      {
+        name: "painter",
+        apply: (ctx) => {
+          ctx.get("tui")?.overlay(() => ({ draw: (canvas) => canvas.text(0, 0, "painted") }), { modal: false });
+          return undefined;
+        },
+      },
+    ],
+  });
+  const drawn = frame.rows();
+  await host.close();
+
+  assertEquals(
+    [drawn, frame.rows()],
+    [
+      ["painted", ""],
+      ["", ""],
+    ],
+  );
+});
+
+test("without a frame, a plugin gets no terminal", async () => {
+  let tui: Tui | undefined | null = null;
+  await using _host = await createHost({
+    plugins: [
+      {
+        name: "looker",
+        apply: (ctx) => {
+          tui = ctx.get("tui");
+          return undefined;
+        },
+      },
+    ],
+  });
+
+  assertEquals(tui, undefined);
+});
+
+test("with a frame, the terminal gets each notice of the host", async () => {
+  let notices: (() => readonly Notice[]) | undefined;
+  using frame = createFrame({ width: 20, height: 2 });
+  await using _host = await createHost({
+    frame,
+    plugins: [
+      {
+        name: "reader",
+        apply: (ctx) => {
+          const tui = ctx.get("tui");
+          notices = () => tui?.notices.list() ?? [];
+          ctx.notify("warn", "Disk full");
+          return undefined;
+        },
+      },
+    ],
+  });
+  await waitForSettled();
+
+  assertEquals(
+    notices?.().map((notice) => [notice.source, notice.level, notice.text]),
+    [["reader", "warn", "Disk full"]],
+  );
+});
+
+test("a bundled plugin loads by its name with its options", async () => {
+  using frame = createFrame({ width: 30, height: 3 });
+  await using _host = await createHost({
+    frame,
+    plugins: [
+      { bundled: "bar", options: { hide: ["status:secret"] } },
+      {
+        name: "status",
+        apply: (ctx) => {
+          ctx.get("tui")?.status.set("mode", { text: "NORMAL", side: "left", order: 0 });
+          ctx.get("tui")?.status.set("secret", { text: "HIDDEN", side: "left", order: 1 });
+          return undefined;
+        },
+      },
+    ],
+  });
+
+  assertEquals(frame.rows().at(-1), "NORMAL");
+});
+
+test("a bundled name that yuke does not have rejects the host with the bundled names", async () => {
+  const error = await assertRejects(() => createHost({ plugins: [{ bundled: "nope" }] }));
+
+  assert(error instanceof Error);
+  assert(error.message.includes("'nope' is not a bundled plugin: the bundled plugins are"), error.message);
+});
+
+test("a plugin with a dataDir reads the files that the test saved there before the load", async () => {
+  const dataDir = `${folder()}/saved`;
+  await mkdir(dataDir);
+  await writeTextFile(`${dataDir}/state.txt`, "kept");
+  let read: string | undefined;
+  await using _host = await createHost({
+    plugins: [
+      {
+        name: "keeper",
+        dataDir,
+        apply: async (ctx) => {
+          read = await readTextFile(`${ctx.dataDir}/state.txt`);
+          return undefined;
+        },
+      },
+    ],
+  });
+
+  assertEquals(read, "kept");
 });

@@ -6,8 +6,11 @@ import type { Tui } from "yuke:tui";
 
 let bind: ((owner: string, signal: AbortSignal) => Tui) | undefined;
 
-/** Set the function that makes the surface of each plugin. The boot calls it once. */
-export function setSurfaces(surface: (owner: string, signal: AbortSignal) => Tui): void {
+/**
+ * Set the function that makes the surface of each plugin. The boot calls it once. A test host sets the surfaces of its
+ * frame, and `undefined` at its close.
+ */
+export function setSurfaces(surface: ((owner: string, signal: AbortSignal) => Tui) | undefined): void {
   bind = surface;
 }
 

@@ -10,9 +10,19 @@ import { createMount } from "yuke:internal/tui/mount";
 import { createSurface } from "yuke:internal/tui/surface";
 import type { NoticeParams } from "yuke:protocol";
 import type { Frame, FrameTest, TestSurface } from "yuke:test";
-import type { ClipboardImage, KeyCode, KeyEvent, MouseEvent, Size, Startup, ViewFactory } from "yuke:tui";
+import type { ClipboardImage, KeyCode, KeyEvent, MouseEvent, Point, Size, Startup, ViewFactory } from "yuke:tui";
 
 const NONE = Object.freeze({ shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false });
+
+/** The core of each frame test, for a test host that gives its plugins the surfaces of the frame. */
+const cores = new WeakMap<FrameTest, Core>();
+
+/** The core of the frame test `frame`. */
+export function coreOf(frame: FrameTest): Core {
+  const core = cores.get(frame);
+  if (core === undefined) throw new TypeError("the frame is not a frame of createFrame");
+  return core;
+}
 
 export function createFrame(
   size: Size,
@@ -71,7 +81,7 @@ export function createFrame(
     return frame;
   };
   draw();
-  return {
+  const test: FrameTest = {
     quits,
     get frame(): Frame {
       return frame;
@@ -100,9 +110,25 @@ export function createFrame(
         draw();
       }
     },
+    rows: () =>
+      draw().cells.map((row) =>
+        row
+          .map((cell) => cell.text)
+          .join("")
+          .trimEnd(),
+      ),
     mouse(event: MouseEvent): void {
       core.event(event);
       draw();
+    },
+    click(column: number, row: number): void {
+      test.mouse({ type: "mouse", column, row, button: "left", action: "press", modifiers: NONE });
+      test.mouse({ type: "mouse", column, row, button: "left", action: "release", modifiers: NONE });
+    },
+    drag(from: Point, to: Point): void {
+      test.mouse({ type: "mouse", ...from, button: "left", action: "press", modifiers: NONE });
+      test.mouse({ type: "mouse", ...to, button: "left", action: "drag", modifiers: NONE });
+      test.mouse({ type: "mouse", ...to, button: "left", action: "release", modifiers: NONE });
     },
     paste(text: string): void {
       core.event({ type: "paste", text });
@@ -135,6 +161,8 @@ export function createFrame(
       core.scene.layout();
     },
   };
+  cores.set(test, core);
+  return test;
 }
 
 /** The key event of one stroke of `parseKeys`, without the kitty fields `shifted` and `baseLayout`. */

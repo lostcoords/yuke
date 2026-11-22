@@ -49,6 +49,38 @@ struct Bundled {
     provides: &'static [&'static str],
 }
 
+impl Bundled {
+    /// The plugin to load, with its data folder below `data` and the options `options`.
+    fn plugin(&self, data: &Path, options: Map<String, Value>) -> Plugin {
+        Plugin {
+            name: self.name.to_owned(),
+            origin: PluginCode::Bundled {
+                module: self.module.to_owned(),
+            },
+            data_dir: data.join("plugins").join(self.name),
+            options,
+            uses: self.uses.iter().map(|&service| service.to_owned()).collect(),
+            provides: self.provides.iter().map(|&service| service.to_owned()).collect(),
+        }
+    }
+}
+
+/// The bundled plugin `name` with the options `options`, for a test host.
+///
+/// # Errors
+///
+/// Returns a text that names the bundled plugins when none has the name `name`.
+pub(crate) fn bundled_plugin(name: &str, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
+    let plugin = BUNDLED.iter().find(|plugin| plugin.name == name).ok_or_else(|| {
+        let names: Vec<&str> = BUNDLED.iter().map(|plugin| plugin.name).collect();
+        format!(
+            "'{name}' is not a bundled plugin: the bundled plugins are {}",
+            names.join(", ")
+        )
+    })?;
+    Ok(plugin.plugin(data, options))
+}
+
 /// The plugins of the binary, in list order.
 const BUNDLED: &[Bundled] = &[
     Bundled {
@@ -201,16 +233,7 @@ fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data
     let mut plugins: Vec<Plugin> = bundled
         .iter()
         .filter(|plugin| !config.disable.iter().any(|disabled| disabled == plugin.name))
-        .map(|plugin| Plugin {
-            name: plugin.name.to_owned(),
-            origin: PluginCode::Bundled {
-                module: plugin.module.to_owned(),
-            },
-            data_dir: data.join("plugins").join(plugin.name),
-            options: config.bundled.get(plugin.name).cloned().unwrap_or_default(),
-            uses: plugin.uses.iter().map(|&service| service.to_owned()).collect(),
-            provides: plugin.provides.iter().map(|&service| service.to_owned()).collect(),
-        })
+        .map(|plugin| plugin.plugin(data, config.bundled.get(plugin.name).cloned().unwrap_or_default()))
         .collect();
     let lock = Lock::read(config_folder)?;
     let mut outcomes = Vec::with_capacity(config.plugins.len());
