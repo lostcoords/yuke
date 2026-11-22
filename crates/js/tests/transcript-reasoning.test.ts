@@ -66,9 +66,7 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
     { kind: "draftStarted", draftId: "empty" },
     model("empty", { kind: "blockStarted", blockId: 4, content: { kind: "reasoning" } }),
   ]);
-  const entry = reasoning(transcript)[0];
-  assertEquals(entry, { kind: "reasoning", id: "draft:empty:4", text: "", draft: true });
-  assert(entry !== undefined, "the live empty reasoning run is missing");
+  assertEquals(reasoning(transcript)[0], { kind: "reasoning", id: "draft:empty:4", text: "", draft: true });
 });
 
 test("a live group keeps its first key and only changes when its retained text changes", () => {

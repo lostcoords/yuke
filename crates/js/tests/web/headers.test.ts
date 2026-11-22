@@ -74,7 +74,6 @@ test("set replaces the first value and removes the others", () => {
 test("a value loses its outer whitespace and an invalid name or value throws", () => {
   const headers = new Headers([["a", " \t v w \r\n"]]);
   assertEquals(headers.get("a"), "v w");
-  assertEquals(headers.get("a"), new Headers({ a: "v w" }).get("a"));
   assertEquals(
     thrownNames([
       () => headers.append("bad name", "x"),

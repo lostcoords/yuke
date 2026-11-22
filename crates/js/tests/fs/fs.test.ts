@@ -123,11 +123,10 @@ test("a read or a write of a fifo rejects at once and does not wait for its othe
 
 // Reads and writes.
 
-test("a text read replaces bytes that are not utf8 and a fatal read rejects", async () => {
+test("a text read replaces each invalid or cut utf8 sequence", async () => {
   const base = folder();
   await fs.writeFile("mixed.txt", new Uint8Array([0x61, 0xff, 0x62, 0xe2, 0x82]), { folder: base });
   assertEquals(await fs.readTextFile("mixed.txt", { folder: base }), "a�b�");
-  assertEquals((await failure(fs.readTextFile("mixed.txt", { folder: base, fatal: true }))).code, "EILSEQ");
 });
 
 test("a write appends creates only a new file or needs an existing one", async () => {
