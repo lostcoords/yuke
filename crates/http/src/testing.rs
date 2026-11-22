@@ -1,10 +1,6 @@
-//! A loopback HTTP server for tests. It accepts one connection, reads one request, and sends the response that a
-//! [`Server`] defines.
-#![expect(
-    clippy::unwrap_used,
-    clippy::missing_panics_doc,
-    reason = "a fixture fails its test by panicking"
-)]
+//! A loopback HTTP server for tests. Each [`Answer`] answers one request. One connection can carry several
+//! requests, so a test sees whether the client reuses a connection.
+#![expect(clippy::unwrap_used, reason = "a fixture fails its test by panicking")]
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -13,9 +9,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
-/// The response that one loopback server sends.
+/// The answer of the loopback server to one request.
 #[derive(Debug, Default)]
-pub struct Server {
+pub struct Answer {
     /// The status of the answer.
     pub status: u16,
     /// The body of the answer, in chunked transfer encoding.
@@ -43,6 +39,8 @@ pub struct Seen {
     pub headers: Vec<(String, String)>,
     /// The body.
     pub body: Vec<u8>,
+    /// The connection that carried the request: 0 for the first connection, 1 for the next, and so on.
+    pub connection: usize,
 }
 
 impl Seen {
@@ -56,21 +54,43 @@ impl Seen {
     }
 }
 
-/// Bind a loopback port, and answer one connection on it as `server` says. Return the port and the task, which ends
-/// with what the server read.
-pub async fn listen(server: Server) -> (u16, JoinHandle<Seen>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    (port, tokio::spawn(serve_once(listener, server)))
+/// Bind a loopback port, and answer one request on it with `answer`. Return the port and the task, which ends with
+/// what the server read.
+pub async fn listen(answer: Answer) -> (u16, JoinHandle<Seen>) {
+    let (listener, port) = bind().await;
+    (
+        port,
+        tokio::spawn(async move { serve_all(listener, vec![answer]).await.remove(0) }),
+    )
 }
 
-/// Read one request head and its body, by its `content-length`.
-pub(crate) async fn read_request(stream: &mut TcpStream) -> Seen {
+/// Bind a loopback port, and answer the requests on it in order: the first answer goes to the first request, and so
+/// on. A connection carries requests until the client closes it or asks for the close, and the last answer asks for
+/// the close. Return the port and the task, which ends after the last answer with what the server read of each
+/// request.
+pub async fn serve(answers: Vec<Answer>) -> (u16, JoinHandle<Vec<Seen>>) {
+    let (listener, port) = bind().await;
+    (port, tokio::spawn(serve_all(listener, answers)))
+}
+
+/// A listener on a free loopback port, and the port.
+async fn bind() -> (TcpListener, u16) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    (listener, port)
+}
+
+/// Read one request head and its body, by its `content-length`. `None` means that the client closed the connection
+/// before a new request.
+pub(crate) async fn read_request(stream: &mut TcpStream) -> Option<Seen> {
     let mut bytes = Vec::new();
     let mut buf = [0u8; 4096];
     let head_end = loop {
         let n = stream.read(&mut buf).await.unwrap();
-        assert_ne!(n, 0, "the client closed before its head");
+        if n == 0 {
+            assert!(bytes.is_empty(), "the client closed before the end of its head");
+            return None;
+        }
         bytes.extend_from_slice(&buf[..n]);
         if let Some(at) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
             break at + 4;
@@ -98,7 +118,7 @@ pub(crate) async fn read_request(stream: &mut TcpStream) -> Seen {
         bytes.extend_from_slice(&buf[..n]);
     }
     seen.body = bytes[head_end..].to_vec();
-    seen
+    Some(seen)
 }
 
 /// Wait until the client closes the connection.
@@ -107,55 +127,77 @@ async fn wait_for_close(stream: &mut TcpStream) {
     while matches!(stream.read(&mut buf).await, Ok(n) if n != 0) {}
 }
 
-/// Accept one connection and answer it as `server` says.
-async fn serve_once(listener: TcpListener, server: Server) -> Seen {
-    let (mut stream, _) = listener.accept().await.unwrap();
-    let seen = read_request(&mut stream).await;
-    if let Some(bytes) = server.raw_response {
+/// Answer one request with each of `answers`, and give what the server read of each request.
+async fn serve_all(listener: TcpListener, answers: Vec<Answer>) -> Vec<Seen> {
+    let mut seen = Vec::new();
+    let mut connection = 0;
+    while seen.len() < answers.len() {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        while let Some(mut request) = read_request(&mut stream).await {
+            request.connection = connection;
+            let answer = &answers[seen.len()];
+            // The last answer closes the connection, so the task ends without a wait for the client.
+            let last = seen.len() + 1 == answers.len();
+            let close = last || request.values("connection") == ["close"];
+            let open = write_answer(&mut stream, answer, close).await;
+            seen.push(request);
+            if !open {
+                break;
+            }
+        }
+        connection += 1;
+    }
+    seen
+}
+
+/// Write `answer` to one request. With `close`, the answer asks for the close of the connection. Return whether the
+/// connection stays open for the next request.
+async fn write_answer(stream: &mut TcpStream, answer: &Answer, close: bool) -> bool {
+    if let Some(bytes) = answer.raw_response {
         stream.write_all(bytes).await.unwrap();
-        return seen;
+        return false;
     }
-    if server.silent {
-        wait_for_close(&mut stream).await;
-        return seen;
+    if answer.silent {
+        wait_for_close(stream).await;
+        return false;
     }
-    let mut head = format!(
-        "HTTP/1.1 {} OK\r\nconnection: close\r\ncontent-type: text/event-stream\r\n",
-        server.status
-    );
-    for (name, value) in &server.headers {
+    let mut head = format!("HTTP/1.1 {} OK\r\n", answer.status);
+    if close {
+        head.push_str("connection: close\r\n");
+    }
+    head.push_str("content-type: text/event-stream\r\n");
+    for (name, value) in &answer.headers {
         _ = write!(head, "{name}: {value}\r\n");
     }
     head.push_str("transfer-encoding: chunked\r\n\r\n");
     let mut out = head.into_bytes();
-    if server.trickle {
+    if answer.trickle {
         if stream.write_all(&out).await.is_err() {
-            return seen;
+            return false;
         }
-        for byte in &server.body {
+        for byte in &answer.body {
             tokio::time::sleep(Duration::from_millis(1)).await;
             if stream
                 .write_all(&[b'1', b'\r', b'\n', *byte, b'\r', b'\n'])
                 .await
                 .is_err()
             {
-                return seen;
+                return false;
             }
         }
         out.clear();
-    } else if !server.body.is_empty() {
-        out.extend_from_slice(format!("{:x}\r\n", server.body.len()).as_bytes());
-        out.extend_from_slice(&server.body);
+    } else if !answer.body.is_empty() {
+        out.extend_from_slice(format!("{:x}\r\n", answer.body.len()).as_bytes());
+        out.extend_from_slice(&answer.body);
         out.extend_from_slice(b"\r\n");
     }
     // A failed write means that the client already closed, as a stalled request expects.
     if stream.write_all(&out).await.is_err() {
-        return seen;
+        return false;
     }
-    if server.stall {
-        wait_for_close(&mut stream).await;
-        return seen;
+    if answer.stall {
+        wait_for_close(stream).await;
+        return false;
     }
-    _ = stream.write_all(b"0\r\n\r\n").await;
-    seen
+    stream.write_all(b"0\r\n\r\n").await.is_ok() && !close
 }

@@ -1,9 +1,9 @@
-use yuke_http::testing::{Server, listen};
+use yuke_http::testing::{Answer, listen};
 
 use super::*;
 
 /// Answer one release check as `server` says, and give its result and the path that the check asked for.
-async fn check_with(server: Server, current: &str, channel: Channel) -> (Result<Found, String>, String) {
+async fn check_with(server: Answer, current: &str, channel: Channel) -> (Result<Found, String>, String) {
     let (port, seen) = listen(server).await;
     let origin = format!("http://127.0.0.1:{port}");
     let hosts = Hosts {
@@ -15,19 +15,19 @@ async fn check_with(server: Server, current: &str, channel: Channel) -> (Result<
     (found, seen.await.unwrap().target)
 }
 
-fn newest_stable(location: &'static str) -> Server {
-    Server {
+fn newest_stable(location: &'static str) -> Answer {
+    Answer {
         status: 302,
         headers: vec![("location", location)],
-        ..Server::default()
+        ..Answer::default()
     }
 }
 
-fn nightly(commit: &str) -> Server {
-    Server {
+fn nightly(commit: &str) -> Answer {
+    Answer {
         status: 200,
         body: format!(r#"{{"tag_name":"nightly","target_commitish":"{commit}"}}"#).into_bytes(),
-        ..Server::default()
+        ..Answer::default()
     }
 }
 
@@ -129,9 +129,9 @@ async fn a_nightly_is_current_when_the_nightly_release_has_its_commit() {
 
 #[tokio::test(flavor = "local")]
 async fn a_missing_nightly_release_asks_for_a_new_try() {
-    let missing = Server {
+    let missing = Answer {
         status: 404,
-        ..Server::default()
+        ..Answer::default()
     };
     let (found, _) = check_with(missing, "0.1.1", Channel::Nightly).await;
     assert!(found.unwrap_err().contains("try again in a few minutes"));

@@ -1,6 +1,6 @@
 //! Loopback tests of the provider rules over [`Client`]: one real server and one real client per test.
 
-use yuke_http::testing::{Seen, Server, listen};
+use yuke_http::testing::{Answer, Seen, listen};
 
 use super::*;
 
@@ -66,7 +66,7 @@ fn client() -> Client {
 }
 
 /// Run one server and one client request on a private loopback port.
-async fn exchange(server: Server, client: &Client) -> (Seen, ClientOut) {
+async fn exchange(server: Answer, client: &Client) -> (Seen, ClientOut) {
     let (port, served) = listen(server).await;
     let out = run_client(client, port).await;
     (served.await.unwrap(), out)
@@ -74,10 +74,10 @@ async fn exchange(server: Server, client: &Client) -> (Seen, ClientOut) {
 
 #[tokio::test]
 async fn streams_sse_body() {
-    let server = Server {
+    let server = Answer {
         status: 200,
         body: CANNED_SSE.into(),
-        ..Server::default()
+        ..Answer::default()
     };
     let (seen, out) = exchange(server, &client()).await;
     assert_eq!(out.err, None);
@@ -93,7 +93,7 @@ async fn streams_sse_body() {
 }
 
 /// Run one server and one exchange of a form `body` with an answer limit of `max_answer` bytes.
-async fn exchange_once(server: Server, body: &[u8], max_answer: usize) -> (Seen, Result<ExchangeAnswer, Fault>) {
+async fn exchange_once(server: Answer, body: &[u8], max_answer: usize) -> (Seen, Result<ExchangeAnswer, Fault>) {
     let (port, served) = listen(server).await;
     let url = format!("http://127.0.0.1:{port}/oauth2/token");
     let request = ExchangeRequest {
@@ -108,12 +108,12 @@ async fn exchange_once(server: Server, body: &[u8], max_answer: usize) -> (Seen,
 
 #[tokio::test]
 async fn an_exchange_sends_its_type_and_body_and_reads_the_whole_answer() {
-    let server = Server {
+    let server = Answer {
         status: 400,
         body: br#"{"error":"authorization_pending"}"#.to_vec(),
         headers: vec![("request-id", "req_1")],
         trickle: true,
-        ..Server::default()
+        ..Answer::default()
     };
 
     let (seen, answer) = exchange_once(server, b"grant_type=refresh_token", 1024).await;
@@ -129,10 +129,10 @@ async fn an_exchange_sends_its_type_and_body_and_reads_the_whole_answer() {
 
 #[tokio::test]
 async fn an_exchange_answer_over_its_limit_fails() {
-    let server = || Server {
+    let server = || Answer {
         status: 200,
         body: b"0123456789".to_vec(),
-        ..Server::default()
+        ..Answer::default()
     };
 
     let (_, fits) = exchange_once(server(), b"", 10).await;
@@ -148,11 +148,11 @@ async fn non_200_response_keeps_status_id_and_body() {
         "{{\"error\":{{\"type\":\"invalid_request_error\",\"message\":\"{}\"}}}}",
         "x".repeat(5000)
     );
-    let server = Server {
+    let server = Answer {
         status: 400,
         body: long.clone().into(),
         headers: vec![("request-id", "req_123")],
-        ..Server::default()
+        ..Answer::default()
     };
     let (_, out) = exchange(server, &client()).await;
     assert_eq!(out.err, None);
@@ -196,10 +196,10 @@ async fn head_reads_request_id_and_retry_hints() {
         (vec![("retry-after-ms", "250.5")], None, Some(251), None),
     ];
     for (headers, request_id, retry_after_ms, should_retry) in cases {
-        let server = Server {
+        let server = Answer {
             status: 429,
             headers,
-            ..Server::default()
+            ..Answer::default()
         };
         let (_, out) = exchange(server, &client()).await;
         assert_eq!(out.err, None);
@@ -213,10 +213,10 @@ async fn head_reads_request_id_and_retry_hints() {
 #[tokio::test]
 async fn redirect_is_refused() {
     // The client must reject a 302 response to another origin to keep the key private.
-    let server = Server {
+    let server = Answer {
         status: 302,
         headers: vec![("location", "http://evil.example/steal")],
-        ..Server::default()
+        ..Answer::default()
     };
     let (_, out) = exchange(server, &client()).await;
     assert_eq!(out.err, Some(Fault::RedirectRefused));
@@ -250,11 +250,11 @@ async fn compressed_response_is_malformed() {
         (Some("gzip"), Some(Fault::MalformedResponse)),
         (Some("br"), Some(Fault::MalformedResponse)),
     ] {
-        let server = Server {
+        let server = Answer {
             status: 200,
             body: CANNED_SSE.into(),
             headers: encoding.map(|value| ("content-encoding", value)).into_iter().collect(),
-            ..Server::default()
+            ..Answer::default()
         };
         let (_, out) = exchange(server, &client()).await;
         assert_eq!(out.err, fault, "{encoding:?}");
@@ -270,9 +270,9 @@ async fn compressed_response_is_malformed() {
 // A body error reaches the stream of the provider as its fault.
 #[tokio::test]
 async fn a_truncated_body_is_a_lost_connection() {
-    let server = Server {
+    let server = Answer {
         raw_response: Some(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nx"),
-        ..Server::default()
+        ..Answer::default()
     };
     let (_, out) = exchange(server, &client()).await;
     assert_eq!(out.head.unwrap().status, 200);

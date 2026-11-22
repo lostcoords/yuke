@@ -7,7 +7,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 use super::*;
-use crate::testing::{Seen, Server, listen, read_request};
+use crate::testing::{Answer, Seen, listen, read_request, serve};
 
 const TEST_USER_AGENT: &str = "http-test/0";
 
@@ -71,7 +71,7 @@ async fn run(client: &Client, request: Request) -> Out {
 
 /// Run one server and one `POST` with `idle_timeout` and `deadline` on a private loopback port.
 async fn exchange(
-    server: Server,
+    server: Answer,
     client: &Client,
     idle_timeout: Option<Duration>,
     deadline: Option<std::time::Instant>,
@@ -87,12 +87,12 @@ fn after(ms: u64) -> std::time::Instant {
 
 #[tokio::test]
 async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams() {
-    let server = Server {
+    let server = Answer {
         status: 201,
         body: BODY.into(),
         headers: vec![("x-answer", "a"), ("x-answer", "b")],
         trickle: true,
-        ..Server::default()
+        ..Answer::default()
     };
     let (port, served) = listen(server).await;
     let mut request = Request::new(Method::PUT, format!("http://127.0.0.1:{port}/items?x=1"));
@@ -121,6 +121,24 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
 }
 
 #[tokio::test]
+async fn each_request_opens_a_connection_of_its_own() {
+    let answer = || Answer {
+        status: 200,
+        body: BODY.into(),
+        ..Answer::default()
+    };
+    let (port, served) = serve(vec![answer(), answer()]).await;
+    let client = client();
+
+    for _ in 0..2 {
+        assert_eq!(run(&client, post(port)).await.bytes, BODY.as_bytes());
+    }
+
+    let connections: Vec<usize> = served.await.unwrap().iter().map(|seen| seen.connection).collect();
+    assert_eq!(connections, [0, 1]);
+}
+
+#[tokio::test]
 async fn the_client_owns_the_framing_and_the_user_agent_of_a_request_wins() {
     // A wrong length makes both sides wait for bytes, so the idle timeout ends such a failure.
     let client = client();
@@ -131,9 +149,9 @@ async fn the_client_owns_the_framing_and_the_user_agent_of_a_request_wins() {
         (Method::DELETE, ""),
         (Method::PUT, "abc"),
     ] {
-        let (port, served) = listen(Server {
+        let (port, served) = listen(Answer {
             status: 200,
-            ..Server::default()
+            ..Answer::default()
         })
         .await;
         let mut request = Request::new(method, format!("http://127.0.0.1:{port}/"));
@@ -161,10 +179,10 @@ async fn the_client_owns_the_framing_and_the_user_agent_of_a_request_wins() {
 #[tokio::test]
 async fn a_redirect_and_a_compressed_body_reach_the_caller_as_they_are() {
     let (seen, out) = exchange(
-        Server {
+        Answer {
             status: 302,
             headers: vec![("location", "http://other.example/x")],
-            ..Server::default()
+            ..Answer::default()
         },
         &client(),
         None,
@@ -177,11 +195,11 @@ async fn a_redirect_and_a_compressed_body_reach_the_caller_as_they_are() {
     assert_eq!(out.headers["location"], "http://other.example/x");
 
     let (_, out) = exchange(
-        Server {
+        Answer {
             status: 200,
             body: b"\x1f\x8b raw".to_vec(),
             headers: vec![("content-encoding", "gzip")],
-            ..Server::default()
+            ..Answer::default()
         },
         &client(),
         None,
@@ -195,10 +213,10 @@ async fn a_redirect_and_a_compressed_body_reach_the_caller_as_they_are() {
 #[tokio::test]
 async fn stalled_body_hits_idle_timeout() {
     // The server sends the head, then keeps the stream open with no body until the client closes it.
-    let server = Server {
+    let server = Answer {
         status: 200,
         stall: true,
-        ..Server::default()
+        ..Answer::default()
     };
     let (_, out) = exchange(server, &client(), Some(Duration::from_millis(50)), None).await;
     assert_eq!(out.error, Some(Error::IdleTimeout));
@@ -207,10 +225,10 @@ async fn stalled_body_hits_idle_timeout() {
 
 #[tokio::test]
 async fn silent_peer_hits_idle_timeout() {
-    let server = Server {
+    let server = Answer {
         status: 200,
         silent: true,
-        ..Server::default()
+        ..Answer::default()
     };
     let (_, out) = exchange(server, &client(), Some(Duration::from_millis(50)), None).await;
     assert_eq!(out.error, Some(Error::IdleTimeout));
@@ -219,10 +237,10 @@ async fn silent_peer_hits_idle_timeout() {
 #[tokio::test]
 async fn request_deadline_wins_over_longer_idle_timeout() {
     for idle in [None, Some(Duration::from_secs(30))] {
-        let server = Server {
+        let server = Answer {
             status: 200,
             stall: true,
-            ..Server::default()
+            ..Answer::default()
         };
         let (_, out) = exchange(server, &client(), idle, Some(after(50))).await;
         assert_eq!(out.error, Some(Error::RequestTimeout));
@@ -251,10 +269,10 @@ async fn stalled_handshake_is_a_connect_timeout() {
 
 #[tokio::test]
 async fn silent_peer_hits_request_deadline() {
-    let server = Server {
+    let server = Answer {
         status: 200,
         silent: true,
-        ..Server::default()
+        ..Answer::default()
     };
     let (_, out) = exchange(server, &client(), None, Some(after(50))).await;
     assert_eq!(out.error, Some(Error::RequestTimeout));
@@ -277,9 +295,9 @@ async fn malformed_or_truncated_body_fails() {
         ),
     ];
     for (bytes, cause) in cases {
-        let server = Server {
+        let server = Answer {
             raw_response: Some(bytes),
-            ..Server::default()
+            ..Answer::default()
         };
         let (_, out) = exchange(server, &client(), None, None).await;
         assert_eq!(out.error, Some(cause), "{}", String::from_utf8_lossy(bytes));
@@ -291,11 +309,11 @@ async fn malformed_or_truncated_body_fails() {
 #[tokio::test]
 async fn a_dropped_send_or_body_closes_the_connection() {
     for body_wait in [false, true] {
-        let server = Server {
+        let server = Answer {
             status: 200,
             silent: !body_wait,
             stall: body_wait,
-            ..Server::default()
+            ..Answer::default()
         };
         // The server returns only once the client closed the connection.
         let (port, served) = listen(server).await;
@@ -330,7 +348,7 @@ async fn one_client_sends_concurrently() {
         let gate = gate.clone();
         servers.spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            read_request(&mut stream).await;
+            read_request(&mut stream).await.unwrap();
             gate.wait().await;
             let response = format!(
                 "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{BODY}",
@@ -433,10 +451,10 @@ async fn missing_root_certificates_fail_only_https() {
         let error = client.send(request).await.err();
         assert_eq!(error, Some(Error::TlsSetupFailed));
     }
-    let server = Server {
+    let server = Answer {
         status: 200,
         body: BODY.into(),
-        ..Server::default()
+        ..Answer::default()
     };
     let (_, out) = exchange(server, &client, None, None).await;
     assert_eq!(out.error, None);

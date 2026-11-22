@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use yuke_http::testing::{Server, listen};
+use yuke_http::testing::{Answer, listen};
 
 use super::{collect_garbage, evaluate, folder, run, start};
 use crate::Runtime;
@@ -45,11 +45,11 @@ fn leak(text: String) -> &'static str {
 
 #[tokio::test(flavor = "local")]
 async fn a_fetch_sends_the_request_and_reads_the_response() {
-    let (port, server) = listen(Server {
+    let (port, server) = listen(Answer {
         status: 201,
         body: b"hello".to_vec(),
         headers: vec![("x-a", "1")],
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
@@ -81,9 +81,9 @@ async fn a_fetch_sends_the_request_and_reads_the_response() {
 
 #[tokio::test(flavor = "local")]
 async fn the_header_list_of_a_headers_init_reaches_the_wire_as_it_is() {
-    let (port, server) = listen(Server {
+    let (port, server) = listen(Answer {
         status: 200,
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
@@ -106,16 +106,16 @@ async fn the_header_list_of_a_headers_init_reaches_the_wire_as_it_is() {
 
 #[tokio::test(flavor = "local")]
 async fn a_redirect_to_another_origin_drops_the_authorization() {
-    let (target, last) = listen(Server {
+    let (target, last) = listen(Answer {
         status: 200,
         body: b"final".to_vec(),
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
-    let (port, first) = listen(Server {
+    let (port, first) = listen(Answer {
         status: 302,
         headers: vec![("location", leak(format!("http://127.0.0.1:{target}/next")))],
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
@@ -140,15 +140,15 @@ async fn a_redirect_to_another_origin_drops_the_authorization() {
 #[tokio::test(flavor = "local")]
 async fn a_303_turns_a_post_into_a_get_without_its_body_and_a_307_keeps_both() {
     for (status, method, body, content_type) in [(303, "GET", "", None), (307, "POST", "x", Some("text/x"))] {
-        let (target, last) = listen(Server {
+        let (target, last) = listen(Answer {
             status: 200,
-            ..Server::default()
+            ..Answer::default()
         })
         .await;
-        let (port, _first) = listen(Server {
+        let (port, _first) = listen(Answer {
             status,
             headers: vec![("location", leak(format!("http://127.0.0.1:{target}/")))],
-            ..Server::default()
+            ..Answer::default()
         })
         .await;
 
@@ -183,10 +183,10 @@ async fn a_manual_redirect_gives_the_redirect_and_an_error_redirect_rejects() {
         vec![("location", "mailto:someone@example.com")],
         vec![("location", "/a"), ("location", "/b")],
     ] {
-        let (port, _server) = listen(Server {
+        let (port, _server) = listen(Answer {
             status: 302,
             headers,
-            ..Server::default()
+            ..Answer::default()
         })
         .await;
         ports.push(port);
@@ -217,18 +217,18 @@ async fn a_manual_redirect_gives_the_redirect_and_an_error_redirect_rejects() {
 #[tokio::test(flavor = "local")]
 async fn a_fetch_follows_at_most_twenty_redirects() {
     // Each server redirects to the one before it, so the first request starts a chain of 21 redirects.
-    let mut port = listen(Server {
+    let mut port = listen(Answer {
         status: 200,
-        ..Server::default()
+        ..Answer::default()
     })
     .await
     .0;
     for _ in 0..21 {
         let location = leak(format!("http://127.0.0.1:{port}/"));
-        port = listen(Server {
+        port = listen(Answer {
             status: 301,
             headers: vec![("location", location)],
-            ..Server::default()
+            ..Answer::default()
         })
         .await
         .0;
@@ -252,9 +252,9 @@ async fn a_network_failure_rejects_with_a_type_error_that_names_its_cause() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap().port()
     };
-    let (malformed, _server) = listen(Server {
+    let (malformed, _server) = listen(Answer {
         raw_response: Some(b"not http\r\n\r\n"),
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
@@ -278,16 +278,16 @@ async fn a_network_failure_rejects_with_a_type_error_that_names_its_cause() {
 
 #[tokio::test(flavor = "local")]
 async fn an_abort_rejects_the_fetch_and_errors_the_body_with_the_reason() {
-    let (silent, waiting) = listen(Server {
+    let (silent, waiting) = listen(Answer {
         silent: true,
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
-    let (stalled, streaming) = listen(Server {
+    let (stalled, streaming) = listen(Answer {
         status: 200,
         body: b"a".to_vec(),
         stall: true,
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
@@ -321,11 +321,11 @@ async fn an_abort_rejects_the_fetch_and_errors_the_body_with_the_reason() {
 
 #[tokio::test(flavor = "local")]
 async fn a_cancel_of_the_body_stops_the_read_and_closes_the_connection() {
-    let (port, server) = listen(Server {
+    let (port, server) = listen(Answer {
         status: 200,
         body: b"a".to_vec(),
         stall: true,
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
@@ -350,11 +350,11 @@ async fn a_cancel_of_the_body_stops_the_read_and_closes_the_connection() {
 
 #[tokio::test(flavor = "local")]
 async fn an_unread_body_closes_its_connection_although_its_signal_lives() {
-    let (port, server) = listen(Server {
+    let (port, server) = listen(Answer {
         status: 200,
         body: b"a".to_vec(),
         stall: true,
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
@@ -377,9 +377,9 @@ async fn a_head_request_and_a_null_body_status_give_no_body() {
     let mut ports = Vec::new();
     for status in [200, 204] {
         ports.push(
-            listen(Server {
+            listen(Answer {
                 status,
-                ..Server::default()
+                ..Answer::default()
             })
             .await
             .0,
@@ -402,9 +402,9 @@ async fn a_head_request_and_a_null_body_status_give_no_body() {
 
 #[tokio::test(flavor = "local")]
 async fn a_fetch_of_a_request_uses_its_body() {
-    let (port, server) = listen(Server {
+    let (port, server) = listen(Answer {
         status: 200,
-        ..Server::default()
+        ..Answer::default()
     })
     .await;
 
