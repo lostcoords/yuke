@@ -51,7 +51,7 @@ Some commands take text after the word, such as `/login anthropic`. A draft that
 |---|---|
 | `/login [PROVIDER]` | Connect a provider. For an API key, paste the key. For an account, open the page that yuke shows and confirm the code. In that dialog, `o` opens the page, `c` copies the code, and `u` copies the URL. |
 | `/logout [PROVIDER]` | Remove the API key or the login that yuke stored for a provider. A key in an environment variable stays: unset the variable. |
-| `/model` | Choose the model and the reasoning level of the session. It fails while a turn runs or a message waits. |
+| `/model` | Choose the model and the reasoning level of the session. Your [favorite models](#favorite-models) come first. It fails while a turn runs or a message waits. |
 | `/new` | Start a new session in the pane. The old session keeps its work, and `/sessions` finds it. |
 | `/rename` | Rename the session in a dialog. |
 | `/sessions` | Show the recent sessions of this folder, and show one in the pane. `tab` switches between this folder and every folder. Type to filter. |
@@ -62,6 +62,31 @@ Some commands take text after the word, such as `/login anthropic`. A draft that
 | `/quit` | Quit yuke, as `ctrl+q` does. |
 
 A plugin can add more commands. See [TUI plugin API](ui.md#commands).
+
+## Favorite models
+
+Set `favorites` for the bundled `chat` in `config.json`. Each favorite names a model and a reasoning level:
+
+```json
+{
+  "bundled": {
+    "chat": {
+      "favorites": [
+        { "name": "fast", "model": "openai-codex/gpt-*-luna", "reasoning": "low", "key": "ctrl+x f" },
+        { "model": "anthropic/claude-opus-5-5", "reasoning": "high" }
+      ]
+    }
+  }
+}
+```
+
+`/model` lists the favorites first, in this order. A favorite sets the model and the level in one pick. `/model` leaves out a favorite whose provider is not ready, or whose model or level does not exist.
+
+- `model` is `provider/model`. A `*` in the model matches a version, and the newest version wins: `gpt-*-luna` takes `gpt-6-luna` over `gpt-5.6-luna`.
+- `name` adds the command `/<name>`. It uses the favorite without a picker.
+- `key` binds that command in a chat pane. It needs `name`.
+
+A favorite saves the choice for new sessions, as `/model` does. In a pane with a session, it also changes the model of that session.
 
 ## Stop work
 

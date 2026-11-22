@@ -2,7 +2,7 @@
  * One chat pane: its transcript, its composer, its folds, and the `ChatSession` of its session.
  * An unbound pane creates its session at the first send or image paste. `/new` unbinds a pane, and its next session
  * starts in the folder of the session that it left.
- * The model and the reasoning come from `choice.json`, else from a picker.
+ * The model and the reasoning come from `choice.json`, else from a picker that lists the favorites first.
  */
 
 import type {
@@ -17,6 +17,7 @@ import type {
   ComposerView,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
+import { type Favorite, type FavoriteChoice, resolveFavorite } from "yuke:internal/bundled/chat/favorites";
 import { commandWordLength } from "yuke:internal/chat/commands";
 import { ChatCompletions } from "yuke:internal/chat/completions";
 import { ChatComposer, EMPTY } from "yuke:internal/chat/composer";
@@ -28,7 +29,7 @@ import { ChatWorking } from "yuke:internal/chat/working";
 import { failureOf } from "yuke:internal/failure";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
-import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
+import type { Input, InputId, ModelInfo, SessionId, SessionSettings, Usage } from "yuke:protocol";
 import {
   type Canvas,
   type EditorState,
@@ -82,8 +83,8 @@ export interface PaneActions {
   readonly signal: AbortSignal;
   readonly toggleTools: () => void;
   readonly send: () => Promise<void>;
-  /** Let the user choose the model and the reasoning of the pane. */
-  readonly chooseModel: () => Promise<void>;
+  /** Let the user choose the model and the reasoning of the pane, or use `favorite` without a picker. */
+  readonly chooseModel: (favorite?: Favorite) => Promise<void>;
   /** Put the image of the clipboard at the caret of the composer. */
   readonly pasteImage: () => Promise<void>;
   /**
@@ -157,6 +158,8 @@ export interface Chat {
   readonly refresh: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
+  /** The favorite models of the `favorites` option, in their order. */
+  readonly favorites: readonly Favorite[];
   /** The first answer of the read-only sources of the `chat` service for `session`. */
   readonly readOnly: (session: SessionId) => ChatReadOnly | undefined;
   /** The factory of the `chat` service for the look of the transcript. Without one, a pane uses `ChatDocument`. */
@@ -179,6 +182,12 @@ export interface Chat {
  * A chat pane: the transcript above the composer, in a frame that is two rules by default. The composer takes at most
  * half the pane height. A pane with a session holds its own handle until the mount closes.
  */
+/** The row of a favorite in the model picker: its name, its model, and its level. */
+function favoriteLabel(entry: FavoriteChoice): string {
+  const model = `${entry.provider}/${entry.model.id} · ${entry.reasoning.level}`;
+  return entry.favorite.name === undefined ? model : `${entry.favorite.name} · ${model}`;
+}
+
 export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const ctx = chat.ctx;
   const tui = chat.tui;
@@ -312,32 +321,46 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   /**
    * Return the settings of the saved choice, else the settings that the user picks.
-   * With `pick`, the picker opens and the saved choice does not count.
+   * With `pick`, the picker opens and the saved choice does not count. With `favorite`, that favorite is the pick.
    */
-  const settingsOf = async (pick: boolean): Promise<SessionSettings | undefined> => {
+  const settingsOf = async (pick: boolean, favorite?: Favorite): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
     if (models.length === 0) {
       ctx.notify("info", "No provider is ready: run /login");
       return undefined;
     }
-    const saved = pick ? undefined : chat.choice.current;
+    const saved = pick || favorite !== undefined ? undefined : chat.choice.current;
     let chosen = models.find(
       (entry) => entry.provider === saved?.model.provider && entry.model.id === saved?.model.model,
     );
     let reasoning = chosen?.model.reasoning.find((choice) => choice.level === saved?.reasoning);
     if (chosen === undefined || reasoning === undefined) {
-      chosen = await tui.select({
-        items: models,
-        label: (entry) => `${entry.provider}/${entry.model.id}`,
-        signal: mount.signal,
-      });
-      if (chosen === undefined) return undefined;
-      reasoning = await tui.select({
-        items: chosen.model.reasoning,
-        label: (choice) => choice.level,
-        signal: mount.signal,
-      });
+      let found: FavoriteChoice | { readonly provider: string; readonly model: ModelInfo } | undefined;
+      if (favorite === undefined) {
+        const favorites = chat.favorites.flatMap((entry) => resolveFavorite(entry, providers) ?? []);
+        found = await tui.select({
+          items: [...favorites, ...models],
+          label: (entry) => ("favorite" in entry ? favoriteLabel(entry) : `${entry.provider}/${entry.model.id}`),
+          signal: mount.signal,
+        });
+      } else {
+        found = resolveFavorite(favorite, providers);
+        if (found === undefined) {
+          ctx.notify("info", `No ready model matches ${favorite.model} with ${favorite.reasoning} reasoning`);
+          return undefined;
+        }
+      }
+      if (found === undefined) return undefined;
+      chosen = { provider: found.provider, model: found.model };
+      reasoning =
+        "favorite" in found
+          ? found.reasoning
+          : await tui.select({
+              items: found.model.reasoning,
+              label: (choice) => choice.level,
+              signal: mount.signal,
+            });
       if (reasoning === undefined) return undefined;
       const choice = { model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level };
       try {
@@ -361,11 +384,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
    * A pane with a session also saves them in the session.
    * The session keeps its folder and the rest of its settings.
    */
-  const chooseModel = async (): Promise<void> => {
+  const chooseModel = async (favorite?: Favorite): Promise<void> => {
     if (busy) return;
     busy = true;
     try {
-      const settings = await settingsOf(true);
+      const settings = await settingsOf(true, favorite);
       if (settings === undefined || mount.signal.aborted) return;
       const id = chatSession.id;
       if (id === undefined) return;
