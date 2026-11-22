@@ -26,7 +26,7 @@
  */
 declare module "yuke:test" {
   import type { UnixListener } from "yuke:net";
-  import type { ParsedToolCall, PluginApply, PluginSession, RoundFailureKind } from "yuke:plugins";
+  import type { ParsedToolCall, PluginApply, PluginSession, RoundFailureKind, ToolCallResult } from "yuke:plugins";
   import type {
     Block,
     DisplayBlock,
@@ -435,12 +435,8 @@ declare module "yuke:test" {
   }
 
   /** The result of a tool call as the host gives it back: a `ToolCallResult` with the bytes of its media. */
-  export interface TestToolResult {
-    readonly text: string;
-    readonly isError: boolean;
+  export interface TestToolResult extends Omit<ToolCallResult, "media"> {
     readonly media: readonly TestMedia[];
-    /** What a chat shows in place of the text. */
-    readonly display: readonly DisplayBlock[];
   }
 
   /** The result of `call`: the result of the tool, and the live texts of the call. */
