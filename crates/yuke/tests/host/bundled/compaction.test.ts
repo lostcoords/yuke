@@ -1,6 +1,5 @@
 // The bundled plugin `compaction`: when it compacts, what it keeps, and how it fails.
 
-import { session as compaction } from "yuke:internal/bundled/compaction";
 import type { Block } from "yuke:protocol";
 import {
   assertEquals,
@@ -30,7 +29,7 @@ const OLD_SUMMARY: Block = { kind: "userText", text: "<context_summary>\nold\n</
 /** A host with the plugin `compaction` whose side requests go to a fake model with `replies`. */
 async function compacting(replies: readonly Reply[]) {
   const host = await createHost({
-    plugins: [{ name: "compaction", session: compaction }],
+    plugins: [{ bundled: "compaction" }],
     replies,
     onQuestion: () => undefined,
   });

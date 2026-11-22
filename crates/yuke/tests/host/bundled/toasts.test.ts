@@ -1,15 +1,7 @@
 // The bundled toasts show the notices of the core as a stack at the top right.
 
-import { apply } from "yuke:internal/bundled/toasts";
 import type { NoticeParams } from "yuke:protocol";
-import { assert, assertEquals, createFrame, type FrameTest, test } from "yuke:test";
-import { mouse } from "./chat.ts";
-
-/** Load the toasts into `frame`. */
-function loadToasts(frame: FrameTest): void {
-  const tui = frame.surface("toasts").tui;
-  apply({ get: (name: string) => (name === "tui" ? tui : undefined), options: {} } as never);
-}
+import { assert, assertEquals, createFrame, createHost, type FrameTest, test } from "yuke:test";
 
 /** Give the toast part of each row of `frame`. The part starts at `column`, and the test trims it. */
 function stack(frame: FrameTest, column = 25): string[] {
@@ -19,6 +11,8 @@ function stack(frame: FrameTest, column = 25): string[] {
     .filter((row) => row !== "");
 }
 
+const NONE = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
+
 const notice = (level: NoticeParams["level"], source: string, text: string, sessionId?: string): NoticeParams => ({
   level,
   source,
@@ -26,9 +20,9 @@ const notice = (level: NoticeParams["level"], source: string, text: string, sess
   ...(sessionId === undefined ? {} : { sessionId }),
 });
 
-test("an info toast shows at the top right with its level bar and leaves after 4 s", () => {
+test("an info toast shows at the top right with its level bar and leaves after 4 s", async () => {
   using frame = createFrame({ width: 50, height: 8 });
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.notice(notice("info", "lint", "all clean"));
   const shown = stack(frame);
   frame.advance(3999);
@@ -37,9 +31,9 @@ test("an info toast shows at the top right with its level bar and leaves after 4
   assertEquals([shown, before, stack(frame)], [["▌ lint", "▌ all clean"], ["▌ lint", "▌ all clean"], []]);
 });
 
-test("a warning and an error stay, and debug shows no toast", () => {
+test("a warning and an error stay, and debug shows no toast", async () => {
   using frame = createFrame({ width: 50, height: 10 });
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.notice(notice("debug", "console", "trace"));
   frame.notice(notice("warn", "lint", "3 errors"));
   frame.notice(notice("error", "host:session", "the turn failed"));
@@ -47,9 +41,9 @@ test("a warning and an error stay, and debug shows no toast", () => {
   assertEquals(stack(frame), ["▌ lint", "▌ 3 errors", "▌ session", "▌ the turn failed"]);
 });
 
-test("an equal notice raises the count of its toast and starts its wait again, also with others between", () => {
+test("an equal notice raises the count of its toast and starts its wait again, also with others between", async () => {
   using frame = createFrame({ width: 50, height: 12 });
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.notice(notice("info", "lint", "all clean"));
   frame.advance(3000);
   frame.notice(notice("warn", "other", "between"));
@@ -67,9 +61,9 @@ test("an equal notice raises the count of its toast and starts its wait again, a
   );
 });
 
-test("a full stack drops its oldest info toast, else its oldest toast", () => {
+test("a full stack drops its oldest info toast, else its oldest toast", async () => {
   using frame = createFrame({ width: 50, height: 20 });
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.notice(notice("warn", "w1", "a"));
   frame.notice(notice("info", "i1", "b"));
   frame.notice(notice("warn", "w2", "c"));
@@ -87,12 +81,13 @@ test("a full stack drops its oldest info toast, else its oldest toast", () => {
   );
 });
 
-test("a click dismisses its toast and ctrl+l dismisses all", () => {
+test("a click dismisses its toast and ctrl+l dismisses all", async () => {
   using frame = createFrame({ width: 50, height: 10 });
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.notice(notice("warn", "first", "a"));
   frame.notice(notice("warn", "second", "b"));
-  const press = (button: "left" | "right"): void => frame.mouse({ ...mouse(30, 4, "press"), button });
+  const press = (button: "left" | "right"): void =>
+    frame.mouse({ type: "mouse", column: 30, row: 4, action: "press", button, modifiers: NONE });
   press("right");
   const right = stack(frame).length;
   press("left");
@@ -101,9 +96,9 @@ test("a click dismisses its toast and ctrl+l dismisses all", () => {
   assertEquals([right, clicked, stack(frame)], [4, ["▌ first", "▌ a"], []]);
 });
 
-test("the history shows a source from yuke without host:", () => {
+test("the history shows a source from yuke without host:", async () => {
   using frame = createFrame({ width: 50, height: 10 });
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.notice(notice("error", "host:session", "the turn failed"));
   frame.surface("demo").tui.commands.run("toasts:history");
   frame.draw();
@@ -114,12 +109,12 @@ test("the history shows a source from yuke without host:", () => {
   );
 });
 
-test("the warnings and errors before the load show, and the history lists each notice, the newest first", () => {
+test("the warnings and errors before the load show, and the history lists each notice, the newest first", async () => {
   using frame = createFrame({ width: 50, height: 10 });
   frame.notice(notice("info", "early", "hello"));
   frame.notice(notice("error", "plugin", "did not load"));
   frame.notice(notice("error", "plugin", "did not load"));
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.draw();
   const shown = stack(frame);
   frame.notice(notice("info", "late", "bye"));
@@ -135,9 +130,9 @@ test("the warnings and errors before the load show, and the history lists each n
   );
 });
 
-test("a toast has a default look per level that a plugin changes", () => {
+test("a toast has a default look per level that a plugin changes", async () => {
   using frame = createFrame({ width: 50, height: 12 });
-  loadToasts(frame);
+  await using _host = await createHost({ frame, plugins: [{ bundled: "toasts" }] });
   frame.notice(notice("error", "lint", "failed"));
   frame.notice(notice("warn", "lint", "careful"));
   const looks = () => {
