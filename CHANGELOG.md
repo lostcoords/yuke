@@ -11,6 +11,8 @@ Each release has one section. The release job publishes the section of the tag a
 - `yuke:test`: `createHost({ frame })` gives each plugin under test a terminal on the frame, and the frame shows the
   notices of the host. A plugin under test can be a bundled plugin, `{ bundled: "chat" }`, and can get a `dataDir`.
 - `yuke:test`: `FrameTest` has `rows()`, `click()`, and `drag()`.
+- `Transcript.jobs` holds the running background jobs of the session.
+- The chat pane no longer fails when its session closes while a page of history loads.
 
 ## 0.1.1
 

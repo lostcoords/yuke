@@ -176,7 +176,12 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         state.openFails -= 1;
         return Promise.reject(new Error("busy"));
       }
-      open.onEvent({ kind: "snapshot", snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
+      // As the host does, the snapshot ends with the running jobs.
+      const jobs = state.jobs.map((job): SessionUpdate => ({ kind: "job", job }));
+      open.onEvent({
+        kind: "snapshot",
+        snapshot: { settings: SETTINGS, updates: [...saved.slice(-open.tail), ...jobs] },
+      });
       return Promise.resolve({
         signal: end.signal,
         async sendMessage(message: { readonly content: readonly Block[] }) {
@@ -191,7 +196,6 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         cancelTurn() {
           state.cancels += 1;
         },
-        jobs: () => state.jobs,
         async setSettings(settings: SessionSettings) {
           if (state.refuseSettings) throw new Error("a turn runs");
           changes.push(settings);

@@ -28,7 +28,7 @@ import { ChatWorking } from "yuke:internal/chat/working";
 import { failureOf } from "yuke:internal/failure";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
-import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
+import type { Input, InputId, Job, SessionId, SessionSettings, Usage } from "yuke:protocol";
 import {
   type Canvas,
   type EditorState,
@@ -447,6 +447,15 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       await chatComposer.attachImage(image);
     });
 
+  /**
+   * The running jobs of the session of the pane, of the kind `kind` or of each kind, while the pane holds the session.
+   * They come in order with the other updates, so a read needs no call of the host.
+   */
+  const jobsOf = (kind?: Job["kind"]): Frozen<Job>[] =>
+    chatSession.handle === undefined
+      ? []
+      : [...chatSession.transcript.jobs.values()].filter((job) => kind === undefined || job.kind === kind);
+
   /** The read-only answer for the session of the pane. */
   const locked = (): ChatReadOnly | undefined =>
     chatSession.id === undefined ? undefined : chat.readOnly(chatSession.id);
@@ -778,7 +787,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const newSession = (): void => {
     if (occupied()) return;
     // The server keeps a session with a turn or a job open after the pane lets go of it.
-    const running = working.active || (chatSession.handle?.jobs().length ?? 0) > 0;
+    const running = working.active || jobsOf().length > 0;
     nextFolder = chatSession.transcript.settings?.folder ?? nextFolder;
     chatComposer.setDraft(EMPTY);
     chatSession.leave();
@@ -796,7 +805,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       settings: chatSession.transcript.settings,
       usage: chatSession.transcript.usage,
       // A plugin shows its own jobs, as a subagent list does, so the bar counts only the commands.
-      jobs: chatSession.handle?.jobs().filter((job) => job.kind === "process").length ?? 0,
+      jobs: jobsOf("process").length,
     }),
     toggleTools: () => {
       document.toggleTools(chatSession.transcript);
