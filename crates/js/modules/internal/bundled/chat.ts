@@ -15,6 +15,7 @@ import type {
 } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { emptyHeader } from "yuke:internal/bundled/chat/empty";
+import type { Favorite } from "yuke:internal/bundled/chat/favorites";
 import {
   type Chat,
   type ComposerViewEntry,
@@ -30,7 +31,7 @@ import type { PluginContext } from "yuke:plugins";
 import { env } from "yuke:process";
 import type { ModelInfo, SessionId } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
-import type { Mount, StatusEntry, View } from "yuke:tui";
+import type { Mount, StatusEntry, Tui, View } from "yuke:tui";
 
 /** The cells of the gauge of the token share of the last answer. */
 const GAUGE = 6;
@@ -173,6 +174,21 @@ export const optionsSchema = {
       type: "boolean",
       description: "Show the header in an empty chat pane. Terminal.app omits the icon. The default is true.",
     },
+    favorites: {
+      type: "array",
+      description:
+        "Models that /model lists first, each with its reasoning level. A favorite with a name gets /<name>.",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "The word of its command, such as sh for /sh." },
+          model: { type: "string", description: "provider/model. A * in the model matches the newest version." },
+          reasoning: { type: "string", description: "The reasoning level, such as high." },
+          key: { type: "string", description: "The key of its command, such as ctrl+x s. It needs a name." },
+        },
+        required: ["model", "reasoning"],
+      },
+    },
   },
 } as const;
 
@@ -305,6 +321,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `The model choice did not load: ${String(error)}`);
     }),
+    favorites: ctx.options.favorites ?? [],
     presenter: () => presenters.top(),
     frame: () => frames.top(),
     emptyView: () => emptyViews.top() ?? defaultEmptyView,
@@ -522,5 +539,30 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     });
     for (const key of command.keys) tui.keys.add(key, command.name, { in: command.in });
   }
+  for (const favorite of chat.favorites) addFavorite(tui, favorite, active, (text) => ctx.notify("error", text));
   return undefined;
+}
+
+/** Add the command and the key of a favorite with a name. A bad name gives a notice, and the other favorites stay. */
+function addFavorite(
+  tui: Tui,
+  favorite: Favorite,
+  active: () => PaneActions | undefined,
+  fail: (text: string) => void,
+): void {
+  const name = favorite.name;
+  if (name === undefined) return;
+  try {
+    tui.commands.add({
+      name: `favorite-${name}`,
+      slash: name,
+      description: `Use ${favorite.model} with ${favorite.reasoning} reasoning`,
+      run: () => active()?.chooseModel(favorite),
+      enabled: () => active() !== undefined,
+    });
+  } catch (error) {
+    fail(`The favorite ${name} has no command: ${failureOf(error)}`);
+    return;
+  }
+  if (favorite.key !== undefined) tui.keys.add(favorite.key, `favorite-${name}`, { in: "chat" });
 }

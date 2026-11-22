@@ -2,6 +2,7 @@
 
 import type { ChatService } from "yuke:chat";
 import { apply } from "yuke:internal/bundled/chat";
+import type { Favorite } from "yuke:internal/bundled/chat/favorites";
 import type { EventsPage, SessionHandle, SessionHandleEvent } from "yuke:plugins";
 import type {
   Block,
@@ -240,7 +241,7 @@ export async function loadChat(
   frame: FrameTest,
   sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
   catalog: { readonly list: () => Promise<ListCatalogResult> } = { list: async () => CATALOG },
-  options: { readonly emptyView?: boolean } = {},
+  options: { readonly emptyView?: boolean; readonly favorites?: readonly Favorite[] } = {},
 ) {
   const surface = frame.surface("chat");
   const notices: string[] = [];
