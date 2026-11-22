@@ -1,10 +1,16 @@
 ---
-description: Give the model project instructions with AGENTS.md, and reusable instructions with skills.
+description: Give the model project instructions with AGENTS.md, reusable instructions with skills, and your own base instructions with SYSTEM.md.
 ---
 
 # AGENTS.md and skills
 
-A new session builds its prompt from base instructions, the `AGENTS.md` files, a skill catalog, and environment facts. A session keeps the prompt of its creation. A change to `AGENTS.md` or to a skill applies to the next new session.
+A new session builds its prompt from base instructions, the `AGENTS.md` files, a skill catalog, and environment facts. A session keeps the prompt of its creation. A change to `SYSTEM.md`, to `AGENTS.md`, or to a skill applies to the next new session.
+
+## SYSTEM.md
+
+`SYSTEM.md` in the config folder, `~/.config/yuke/SYSTEM.md`, replaces the base instructions of yuke. The `AGENTS.md` files, the skills, and the environment facts stay. Without this file, yuke uses its own base instructions. A file that exists but that yuke cannot read is an error.
+
+Use `SYSTEM.md` for how the model works in each project, such as how it checks its work and how it reports. Use `AGENTS.md` for the rules of one project.
 
 ## AGENTS.md
 

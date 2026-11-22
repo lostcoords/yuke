@@ -354,6 +354,7 @@ impl SessionService {
         }
         settings.folder = canonical(settings.folder).await?;
         let prompt = system_prompt(
+            self.shared.machine.paths.config.clone(),
             settings.folder.clone(),
             self.shared.machine.home.clone(),
             self.shared.plugin_folders().to_vec(),
