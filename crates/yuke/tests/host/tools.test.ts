@@ -25,31 +25,6 @@ async function opened(...tools: Tool[]) {
   return { host, session: await host.openSession() };
 }
 
-test("a change of a tool after its definition changes neither its schema nor its execute", async () => {
-  const fixed = {
-    name: "fixed",
-    description: "d",
-    concurrency: "serial",
-    inputSchema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] },
-    execute: (args: { n: number }) => `n=${args.n}`,
-  } as unknown as Tool & { inputSchema: { required: string[] }; execute: unknown };
-  const changer: PluginSession = (s) => {
-    s.tools.add(fixed);
-    fixed.inputSchema.required = [];
-    fixed.execute = () => "changed";
-  };
-  await using host = await createHost({ plugins: [{ name: "changer", session: changer }] });
-  const session = await host.openSession();
-
-  const runs = await session.call("fixed", { n: 2 });
-  const missing = await session.call("fixed", {});
-
-  assertEquals(
-    [runs.text, runs.isError, missing.isError, missing.text.startsWith("Set n to ")],
-    ["n=2", false, true, true],
-  );
-});
-
 test("a deferred tool waits for the tool search of the replies, and the other tools load at once", async () => {
   const replies = [reply.text("Done.")];
   await using host = await createHost({

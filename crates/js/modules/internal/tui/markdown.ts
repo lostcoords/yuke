@@ -1254,7 +1254,7 @@ export class Markdown {
    * last row of the text joins with "".
    */
   rows(width: number, limit = Number.POSITIVE_INFINITY): readonly TextRow[] {
-    const most = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : Number.POSITIVE_INFINITY;
+    const most = Math.max(0, limit);
     const out: TextRow[] = [];
     for (const [index, block] of this.#parsed().entries()) {
       if (out.length >= most) break;

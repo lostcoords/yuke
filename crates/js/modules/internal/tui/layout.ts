@@ -15,7 +15,7 @@ export function stack(direction: Direction, children: readonly StackChild[]): Vi
         const wanted = item.size;
         if (wanted === "fill") return undefined;
         const asked = typeof wanted === "function" ? wanted(size) : wanted;
-        const taken = Math.min(left, Math.max(0, Number.isFinite(asked) ? Math.floor(asked) : 0));
+        const taken = Math.min(left, Math.max(0, Math.floor(asked)));
         left -= taken;
         return taken;
       });

@@ -602,7 +602,7 @@ export class TextEditor implements TextWidget<number, EditorChange> {
       at(point: Point, unit: ColumnUnit = "cell", bias: Bias = "before"): number | undefined {
         const layout = editor.#current();
         const rows = pick(layout);
-        if (!Number.isInteger(point.row) || point.row < 0) return undefined;
+        if (point.row < 0) return undefined;
         // The row after a full last row holds only the end of the text.
         if (point.row === rows.length && rows === layout.rows && editor.#rowCount(layout) > rows.length) {
           return layout.state.text.length;
@@ -614,7 +614,7 @@ export class TextEditor implements TextWidget<number, EditorChange> {
         return editor.#toSource(layout, display, bias);
       },
       point(position: number, unit: ColumnUnit = "cell", bias: Bias = "after"): Point | undefined {
-        if (!Number.isInteger(position) || position < 0 || position > editor.#state.text.length) return undefined;
+        if (position < 0 || position > editor.#state.text.length) return undefined;
         const layout = editor.#current();
         const rows = pick(layout);
         const display = editor.#toDisplay(layout, position, bias);
@@ -646,7 +646,6 @@ export class TextEditor implements TextWidget<number, EditorChange> {
     if (anchor !== head) range(anchor, head, SELECTION, false);
     for (const decoration of this.#support.decorations()) {
       const { anchor: from, head: to } = decoration.range;
-      if (!Number.isInteger(from) || !Number.isInteger(to)) continue;
       const length = layout.state.text.length;
       range(clamp(from, length), clamp(to, length), decoration.style, decoration.wholeRows === true);
     }

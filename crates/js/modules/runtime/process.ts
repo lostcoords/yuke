@@ -14,9 +14,9 @@ export class Command {
     if (!options.cwd.startsWith("/")) throw new TypeError("the option cwd is not an absolute path");
     this.#request = {
       command,
-      args: [...(options.args ?? [])],
+      args: options.args ?? [],
       cwd: options.cwd,
-      env: { ...options.env },
+      env: options.env ?? {},
       clearEnv: options.clearEnv ?? false,
       stdout: options.stdout !== "null",
       stderr: options.stderr !== "null",

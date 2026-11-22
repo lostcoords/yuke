@@ -134,7 +134,7 @@ export class ScrollList<T extends object> implements View, ScrollControl {
   /** Put row `row` of the item `id` at the top, as far as the rows below allow. `false` when the item has no such row. */
   scrollToItem(id: string, row = 0): boolean {
     const at = this.#index.get(id);
-    if (at === undefined || !Number.isInteger(row) || row < 0) return false;
+    if (at === undefined || row < 0) return false;
     if (row >= (this.#entries[at] as Entry<T>).height) return false;
     this.#moveTo((this.#prefix[at] as number) + row);
     return true;
@@ -145,7 +145,7 @@ export class ScrollList<T extends object> implements View, ScrollControl {
     const at = this.#index.get(id);
     if (at === undefined || this.#size.height <= 0) return false;
     const height = (this.#entries[at] as Entry<T>).height;
-    if (!Number.isInteger(row) || row < 0 || row >= height) return false;
+    if (row < 0 || row >= height) return false;
     const target = (this.#prefix[at] as number) + row;
     if (target < this.#top) this.#moveTo(target);
     else if (target >= this.#top + this.#size.height) this.#moveTo(target - this.#size.height + 1);
@@ -158,7 +158,7 @@ export class ScrollList<T extends object> implements View, ScrollControl {
    * Return `undefined` when `row` is not a display row.
    */
   rowAt(row: number): { readonly item: T; readonly row: number; readonly text: TextRow } | undefined {
-    if (!Number.isInteger(row) || row < 0 || row >= this.#total()) return undefined;
+    if (row < 0 || row >= this.#total()) return undefined;
     const at = this.#entryAt(row);
     const entry = this.#entries[at] as Entry<T>;
     const local = row - (this.#prefix[at] as number);

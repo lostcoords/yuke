@@ -20,8 +20,7 @@ export function defineTool<const S extends ObjectSchema>(
   jobsOf: (signal: AbortSignal) => ToolContext["jobs"] = () => NO_JOBS,
 ): Registration {
   const execute = tool.execute;
-  // The model and the argument check use this one copy, so a later change of `tool` changes neither.
-  const inputSchema = JSON.parse(JSON.stringify(tool.inputSchema)) as S;
+  const inputSchema = tool.inputSchema;
   // Rust validates the hints. The default of `preview` is here because the stored form requires it.
   const hints = {
     ...(tool.hints?.title === undefined ? {} : { title: tool.hints.title }),
@@ -33,7 +32,7 @@ export function defineTool<const S extends ObjectSchema>(
     description: tool.description,
     inputSchema: JSON.stringify(inputSchema),
     concurrency: tool.concurrency,
-    deferLoading: tool.deferLoading === true,
+    deferLoading: tool.deferLoading ?? false,
     hints,
     owner,
   };

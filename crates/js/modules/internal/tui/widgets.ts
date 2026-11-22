@@ -334,7 +334,7 @@ export class PlacedWidgets {
     watch.cleanups.set(mount, undefined);
     try {
       const cleanup = watch.attach(mount);
-      if (typeof cleanup === "function") watch.cleanups.set(mount, cleanup);
+      if (cleanup !== undefined) watch.cleanups.set(mount, cleanup);
     } catch (error) {
       this.#report(watch.owner, `A widget watch failed: ${failureOf(error)}`);
     }
