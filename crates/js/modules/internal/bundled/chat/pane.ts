@@ -310,6 +310,33 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   markCommand();
   const chatComposer = new ChatComposer(chatSession, composer, { handle: () => sessionHandle(), signal: mount.signal });
 
+  /** Give the error notice `text` with `error`, unless the pane closed: its close ends the work with no notice. */
+  const fail = (text: string, error: unknown): void => {
+    if (!mount.signal.aborted) ctx.notify("error", `${text}: ${String(error)}`);
+  };
+
+  /** Start the view of the plugin factory `create` in `child`. A failed factory gives a notice and no view. */
+  const startPluginView = <V extends View>(create: (mount: Mount, pane: ChatPane) => V, child: Mount): V | undefined =>
+    startView(
+      ctx.name,
+      (own) => create(own, chatPaneFields),
+      child,
+      (_source, text) => ctx.notify("error", text),
+    ) as V | undefined;
+
+  /** Run `task` as the one action of the pane, unless another one runs. A failure gives the notice `text`. */
+  const exclusive = async (text: string, task: () => Promise<void>): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    try {
+      await task();
+    } catch (error) {
+      fail(text, error);
+    } finally {
+      busy = false;
+    }
+  };
+
   /**
    * Return the settings of the saved choice, else the settings that the user picks.
    * With `pick`, the picker opens and the saved choice does not count.
@@ -361,10 +388,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
    * A pane with a session also saves them in the session.
    * The session keeps its folder and the rest of its settings.
    */
-  const chooseModel = async (): Promise<void> => {
-    if (busy) return;
-    busy = true;
-    try {
+  const chooseModel = (): Promise<void> =>
+    exclusive("yuke could not change the model", async () => {
       const settings = await settingsOf(true);
       if (settings === undefined || mount.signal.aborted || chatSession.id === undefined) return;
       const target = await sessionHandle();
@@ -373,12 +398,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const current = chatSession.transcript.settings as Frozen<SessionSettings>;
       const reasoning = settings.settings.reasoning;
       await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
-    } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `yuke could not change the model: ${String(error)}`);
-    } finally {
-      busy = false;
-    }
-  };
+    });
 
   /**
    * The handle of the session of this pane. A pane without a session uses the saved choice, else a picker. Return
@@ -391,29 +411,19 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         try {
           return await settingsOf(false);
         } catch (error) {
-          if (!mount.signal.aborted) ctx.notify("error", `The models did not load: ${String(error)}`);
+          fail("The models did not load", error);
           return undefined;
         }
       });
     } catch (error) {
       // The failure of a new session goes to the caller.
       if (id === undefined) throw error;
-      if (!mount.signal.aborted) ctx.notify("error", `The session ${id} did not open: ${String(error)}`);
+      fail(`The session ${id} did not open`, error);
       return undefined;
     }
   };
 
-  const send = async (): Promise<void> => {
-    if (busy) return;
-    busy = true;
-    try {
-      await chatComposer.send();
-    } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `yuke could not send the message: ${String(error)}`);
-    } finally {
-      busy = false;
-    }
-  };
+  const send = (): Promise<void> => exclusive("yuke could not send the message", () => chatComposer.send());
 
   /** Recall a waiting message or show an older message. A failed recall or a message that a turn took gives a notice. */
   const olderMessage = async (): Promise<void> => {
@@ -421,15 +431,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const result = await chatComposer.olderMessage();
       if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "The turn already has the message");
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `yuke could not get the message back: ${String(error)}`);
+      fail("yuke could not get the message back", error);
     }
   };
 
   /** Put the image of the clipboard at the caret. */
-  const pasteImage = async (): Promise<void> => {
-    if (busy) return;
-    busy = true;
-    try {
+  const pasteImage = (): Promise<void> =>
+    exclusive("yuke could not attach the image", async () => {
       const image = await tui.clipboard.readImage();
       if (mount.signal.aborted) return;
       if (image === undefined) {
@@ -437,12 +445,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         return;
       }
       await chatComposer.attachImage(image);
-    } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `yuke could not attach the image: ${String(error)}`);
-    } finally {
-      busy = false;
-    }
-  };
+    });
 
   /** The read-only answer for the session of the pane. */
   const locked = (): ChatReadOnly | undefined =>
@@ -491,7 +494,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         onSubmit: (text) => ctx.get("sessions").rename(id, text),
       });
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `The session ${id} did not load: ${String(error)}`);
+      fail(`The session ${id} did not load`, error);
     } finally {
       busy = false;
       if (!ctx.signal.aborted) tui.requestFrame();
@@ -503,7 +506,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const saved = chatSession.id;
   if (saved !== undefined) {
     chatSession.open(saved).catch((error: unknown) => {
-      if (!mount.signal.aborted) ctx.notify("error", `The session ${saved} did not open: ${String(error)}`);
+      fail(`The session ${saved} did not open`, error);
     });
   }
 
@@ -546,51 +549,35 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
           child.close();
           composerViews.delete(entry);
         };
-        entry.stop.signal.addEventListener("abort", stop, { once: true });
-        mount.signal.addEventListener(
-          "abort",
-          () => {
-            entry.stop.signal.removeEventListener("abort", stop);
-            child.close();
-          },
-          { once: true },
-        );
-        const created = startView(
-          ctx.name,
-          (own) => entry.create(own, chatPaneFields),
-          child,
-          (_source, text) => ctx.notify("error", text),
-        );
-        composerViews.set(entry, created as ComposerView | undefined);
+        entry.stop.signal.addEventListener("abort", stop, { once: true, signal: mount.signal });
+        mount.signal.addEventListener("abort", () => child.close(), { once: true });
+        composerViews.set(entry, startPluginView(entry.create, child));
       }
-      const shown = composerViews.get(entry);
-      const height = shown === undefined ? 0 : Math.min(shown.heightFor(width), left);
-      if (shown === undefined || height <= 0) return [];
+      const view = composerViews.get(entry);
+      const height = view === undefined ? 0 : Math.min(view.heightFor(width), left);
+      if (view === undefined || height <= 0) return [];
       left -= height;
-      return [{ view: shown, height }];
+      return [{ view, height }];
     });
   };
   // The view of the empty pane with the factory that made it, so a new factory makes a new view.
-  let empty: { readonly create: (mount: Mount, pane: ChatPane) => View; readonly view: View | undefined } | undefined;
-  let emptyMount: Mount | undefined;
-  mount.signal.addEventListener("abort", () => emptyMount?.close(), { once: true });
+  let empty:
+    | {
+        readonly create: (mount: Mount, pane: ChatPane) => View;
+        readonly view: View | undefined;
+        readonly mount: Mount;
+      }
+    | undefined;
+  mount.signal.addEventListener("abort", () => empty?.mount.close(), { once: true });
   /** The view of the empty pane: from the current factory, made once per factory. */
   const emptyView = (): View | undefined => {
     const create = chat.emptyView();
     if (empty?.create !== create) {
-      emptyMount?.close();
-      emptyMount = undefined;
+      empty?.mount.close();
       empty = undefined;
       if (create === undefined) return undefined;
       const child = createMount(() => {});
-      emptyMount = child;
-      const view = startView(
-        ctx.name,
-        (own) => create(own, chatPaneFields),
-        child,
-        (_source, text) => ctx.notify("error", text),
-      );
-      empty = { create, view };
+      empty = { create, view: startPluginView(create, child), mount: child };
     }
     return empty?.view;
   };
@@ -834,7 +821,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else if (back === undefined) chatSession.handle?.cancelTurn();
       else {
         show(back).catch((error: unknown) => {
-          if (!mount.signal.aborted) ctx.notify("error", `The session ${back} did not open: ${String(error)}`);
+          fail(`The session ${back} did not open`, error);
         });
       }
     },
