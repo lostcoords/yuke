@@ -3,7 +3,9 @@
  * widget registers its support with `registerWidget`. Each layout publishes the placed widgets, and each watch gets
  * each mount once.
  */
+
 import { failureOf } from "yuke:internal/failure";
+import { Stack } from "yuke:internal/stack";
 import type {
   Decoration,
   KeyEvent,
@@ -29,38 +31,11 @@ export interface WidgetHost {
 
 type KeyPhase = "beforeDefault" | "beforeKeymap";
 
-/** A value that the newest `set` gives. The remover of a `set` takes only its own value away, so the one before shows. */
-class Layers<T> {
-  readonly #entries: { readonly value: T }[] = [];
-  readonly #none: T;
-
-  constructor(none: T) {
-    this.#none = none;
-  }
-
-  get value(): T {
-    return this.#entries.at(-1)?.value ?? this.#none;
-  }
-
-  /** Add a layer of `value`. The remover gives `true` when it changed the value that shows. */
-  set(value: T): () => boolean {
-    const entry = { value };
-    this.#entries.push(entry);
-    return () => {
-      const at = this.#entries.indexOf(entry);
-      if (at < 0) return false;
-      const shown = this.#entries.at(-1) === entry;
-      this.#entries.splice(at, 1);
-      return shown;
-    };
-  }
-}
-
 /** The part of one extension, and its dispose. */
 interface Part<P> {
-  readonly contexts: Layers<readonly string[]>;
-  readonly appearance: Layers<TextAppearance>;
-  readonly decorations: Layers<readonly Decoration<P>[]>;
+  readonly contexts: Stack<readonly string[]>;
+  readonly appearance: Stack<TextAppearance>;
+  readonly decorations: Stack<readonly Decoration<P>[]>;
   disposed: boolean;
   dispose: () => void;
 }
@@ -102,9 +77,9 @@ export class TextSupport<P, E> {
   /** A new extension. The abort of `signal` disposes it. With an aborted signal, each call of it does nothing. */
   extend(signal: AbortSignal): TextExtension<P, E> {
     const part: Part<P> = {
-      contexts: new Layers([]),
-      appearance: new Layers({}),
-      decorations: new Layers([]),
+      contexts: new Stack(),
+      appearance: new Stack(),
+      decorations: new Stack(),
       disposed: signal.aborted,
       dispose: () => {
         if (part.disposed) return;
@@ -117,7 +92,7 @@ export class TextSupport<P, E> {
         removeWhere(this.#mice, ours);
         removeWhere(this.#pastes, ours);
         removeWhere(this.#listeners, ours);
-        if (part.contexts.value.length > 0) this.#host?.contextsChanged();
+        if ((part.contexts.top()?.length ?? 0) > 0) this.#host?.contextsChanged();
         this.#host?.requestFrame();
       },
     };
@@ -134,7 +109,7 @@ export class TextSupport<P, E> {
     return {
       setContexts: (atoms: readonly string[]): (() => void) => {
         if (part.disposed) return () => {};
-        const remove = part.contexts.set(Object.freeze([...atoms]));
+        const remove = part.contexts.add(Object.freeze([...atoms]));
         this.#host?.contextsChanged();
         this.#host?.requestFrame();
         return () => {
@@ -145,7 +120,7 @@ export class TextSupport<P, E> {
       },
       setAppearance: (appearance: TextAppearance): (() => void) => {
         if (part.disposed) return () => {};
-        const remove = part.appearance.set(Object.freeze({ ...appearance }));
+        const remove = part.appearance.add(Object.freeze({ ...appearance }));
         this.#host?.requestFrame();
         return () => {
           if (!part.disposed && remove()) this.#host?.requestFrame();
@@ -153,7 +128,7 @@ export class TextSupport<P, E> {
       },
       setDecorations: (decorations: readonly Decoration<P>[]): (() => void) => {
         if (part.disposed) return () => {};
-        const remove = part.decorations.set(
+        const remove = part.decorations.add(
           Object.freeze(decorations.map((decoration) => Object.freeze({ ...decoration }))),
         );
         this.#host?.requestFrame();
@@ -183,17 +158,17 @@ export class TextSupport<P, E> {
 
   /** The context atoms of the extensions, in the order of the extensions. */
   contexts(): string[] {
-    return this.#parts.flatMap((part) => part.contexts.value);
+    return this.#parts.flatMap((part) => part.contexts.top() ?? []);
   }
 
   /** `base` with the fields of each extension over it, the newest last. */
   appearance(base: TextAppearance = {}): TextAppearance {
-    return Object.assign({}, base, ...this.#parts.map((part) => part.appearance.value));
+    return Object.assign({}, base, ...this.#parts.map((part) => part.appearance.top() ?? {}));
   }
 
   /** The decorations of the extensions, the newest last, so a widget that draws them in order lets the newest win. */
   decorations(): Decoration<P>[] {
-    return this.#parts.flatMap((part) => part.decorations.value);
+    return this.#parts.flatMap((part) => part.decorations.top() ?? []);
   }
 
   /** Give a key to the handlers of `phase`, the newest first. `true` when one takes it. */

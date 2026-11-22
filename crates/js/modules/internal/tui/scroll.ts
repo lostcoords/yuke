@@ -3,6 +3,7 @@
  * one width, and prefix heights find the first visible item. Only recent items keep their rows. The top item and its
  * row offset stay across a prepend, an update, and a resize. A list that follows the tail stays at the bottom.
  */
+import { Listeners } from "yuke:internal/listeners";
 import { registerHost, type WidgetHost } from "yuke:internal/tui/widgets";
 import type {
   Canvas,
@@ -47,7 +48,7 @@ export class ScrollList<T extends object> implements View, ScrollControl {
   /** The oldest render comes first. */
   readonly #rendered = new Map<T, Rendered>();
   #renderedRows = 0;
-  readonly #listeners = new Set<(state: ScrollState) => void>();
+  readonly #listeners = new Listeners<[ScrollState]>();
   #items: readonly T[] = [];
   #entries: Entry<T>[] = [];
   /** The rows before each entry, and the total at the end. */
@@ -176,12 +177,7 @@ export class ScrollList<T extends object> implements View, ScrollControl {
 
   /** Give each later change of the state to `listener`, until the remover runs. */
   addChangeListener(listener: (state: ScrollState) => void): () => void {
-    // A wrapper makes each registration its own, so a remover removes only its own one.
-    const registered = (state: ScrollState): void => listener(state);
-    this.#listeners.add(registered);
-    return () => {
-      this.#listeners.delete(registered);
-    };
+    return this.#listeners.add(listener);
   }
 
   layout(size: Size): readonly Placement[] {
@@ -385,7 +381,6 @@ export class ScrollList<T extends object> implements View, ScrollControl {
   }
 
   #emit(): void {
-    const state = this.state;
-    for (const listener of [...this.#listeners]) listener(state);
+    this.#listeners.call(this.state);
   }
 }

@@ -9,6 +9,7 @@ import type {
 } from "yuke:chat";
 import { EMPTY } from "yuke:internal/chat/composer";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
+import { Listeners } from "yuke:internal/listeners";
 import { type Canvas, measure, strokeOf, type TextEditor, type View } from "yuke:tui";
 
 /** The most rows of the list. */
@@ -35,7 +36,7 @@ const ROWS = 6;
 export class ChatCompletions {
   readonly #editor: TextEditor;
   readonly #options: ChatCompletionsOptions;
-  readonly #listeners = new Set<() => void>();
+  readonly #listeners = new Listeners();
   /** The list of the last answer, or `undefined` while no provider gave one. */
   #list: CompletionList | undefined;
   #ask: AbortController | undefined;
@@ -61,8 +62,7 @@ export class ChatCompletions {
 
   /** Call `listener` when a list comes later than the change of the draft, so the owner asks for a frame. */
   addChangeListener(listener: () => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
+    return this.#listeners.add(listener);
   }
 
   /** The view of the list. A place with fewer rows than `rows` scrolls the list to the selected item. */
@@ -134,7 +134,7 @@ export class ChatCompletions {
               return;
             }
             this.#list = list;
-            for (const listener of [...this.#listeners]) listener();
+            this.#listeners.call();
           },
           (error: unknown) => {
             if (context.signal.aborted) return;

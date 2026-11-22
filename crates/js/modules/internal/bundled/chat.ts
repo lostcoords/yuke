@@ -25,6 +25,7 @@ import {
 import { slashCompletions } from "yuke:internal/chat/commands";
 import { clipped } from "yuke:internal/chat/rows";
 import { failureOf } from "yuke:internal/failure";
+import { Listeners } from "yuke:internal/listeners";
 import { Stack } from "yuke:internal/stack";
 import type { PluginContext } from "yuke:plugins";
 import { env } from "yuke:process";
@@ -186,7 +187,7 @@ interface PaneWatcher {
 
 export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const tui = ctx.get("tui");
-  const listeners = new Set<(view: View) => void>();
+  const listeners = new Listeners<[View]>();
   // A disposer can run after this plugin stops, and a stopped `tui` throws.
   const repaint = (): void => {
     if (!ctx.signal.aborted) tui?.requestFrame();
@@ -238,10 +239,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       }
     },
     sessionIdOf: (view) => panes.get(view)?.session(),
-    addChangeListener: (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
+    addChangeListener: (listener) => listeners.add(listener),
     addComposerView: (place, create) => {
       const entry = { place, create, stop: new AbortController() };
       composerViews.add(entry);
@@ -317,7 +315,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     },
     composerViews: (place) => [...composerViews].filter((entry) => entry.place === place),
     moved: (view) => {
-      for (const listener of listeners) listener(view);
+      listeners.call(view);
     },
     opened: (actions) => {
       for (const entry of paneWatchers) startWatcher(entry, actions);

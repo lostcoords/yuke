@@ -56,3 +56,24 @@ test("the remover of a set deletes its item, and an older remover leaves a newer
 
   assertEquals([afterOld, tui.status.list()], [["INSERT"], []]);
 });
+
+test("a listener added twice and removed once stays, and a listener that an earlier one removes gets no call", () => {
+  using frame = createFrame({ width: 20, height: 2 });
+  const tui = frame.surface("demo").tui;
+  const calls: string[] = [];
+  const twice = (): void => {
+    calls.push("twice");
+  };
+  tui.status.addChangeListener(twice);
+  const removeSecond = tui.status.addChangeListener(twice);
+  removeSecond();
+  let removeLate = (): void => {};
+  tui.status.addChangeListener(() => removeLate());
+  removeLate = tui.status.addChangeListener(() => {
+    calls.push("late");
+  });
+
+  tui.status.set("mode", item("NORMAL", "left", 0));
+
+  assertEquals(calls, ["twice"]);
+});

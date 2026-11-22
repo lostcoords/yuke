@@ -1,6 +1,7 @@
 /** `ChatSession` of the chat: the session that one chat view shows, with its transcript and its pages of history. */
 
 import type { ChatSessionOptions } from "yuke:chat";
+import { Listeners } from "yuke:internal/listeners";
 import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
 import type { SessionId, SessionSettings } from "yuke:protocol";
 import { Transcript } from "yuke:transcript";
@@ -18,7 +19,7 @@ const PAGE = 100;
 export class ChatSession {
   readonly #sessions: Sessions;
   readonly #signal: AbortSignal;
-  readonly #listeners = new Set<() => void>();
+  readonly #listeners = new Listeners();
   #id: SessionId | undefined;
   #handle: SessionHandle | undefined;
   #transcript = new Transcript();
@@ -226,8 +227,7 @@ export class ChatSession {
    * Call `listener` after each change: an open, an event, the end of the handle, or a page.
    */
   addChangeListener(listener: () => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
+    return this.#listeners.add(listener);
   }
 
   /** Switch to `id`, or to no session, and its transcript, and end the hold of the session before. */
@@ -244,6 +244,6 @@ export class ChatSession {
   }
 
   #changed(): void {
-    for (const listener of this.#listeners) listener();
+    this.#listeners.call();
   }
 }

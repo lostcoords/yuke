@@ -6,6 +6,7 @@
 import type { ChatWorkingOptions, ChatWorkingTextOptions } from "yuke:chat";
 import { clipped } from "yuke:internal/chat/rows";
 import type { ChatSession } from "yuke:internal/chat/session";
+import { Listeners } from "yuke:internal/listeners";
 import type { Transcript, TurnFailure } from "yuke:transcript";
 import { measure, spinner } from "yuke:tui";
 
@@ -56,7 +57,7 @@ export function elapsed(ms: number): string {
 export class ChatWorking {
   readonly #chat: ChatSession;
   readonly #now: () => number;
-  readonly #listeners = new Set<() => void>();
+  readonly #listeners = new Listeners();
   // The start of the running turn and the end of the wait of a scheduled retry, on the clock `now`.
   #start: number | undefined;
   #retryAt: number | undefined;
@@ -106,8 +107,7 @@ export class ChatWorking {
 
   /** Call `listener` after each change of `active`. */
   addChangeListener(listener: () => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
+    return this.#listeners.add(listener);
   }
 
   /** Count from the first running state of a handle, and count a new retry down from its event. */
@@ -128,6 +128,6 @@ export class ChatWorking {
     if (failure !== this.#failure && failure?.kind === "retryScheduled") this.#retryAt = this.#now() + failure.afterMs;
     this.#failure = failure;
     if (this.active === active) return;
-    for (const listener of this.#listeners) listener();
+    this.#listeners.call();
   }
 }

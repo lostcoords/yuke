@@ -7,6 +7,7 @@
 import type { ChatQuestion, ChatQuestionsOptions } from "yuke:chat";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
 import type { ChatSession } from "yuke:internal/chat/session";
+import { Listeners } from "yuke:internal/listeners";
 import { sourceName } from "yuke:internal/source-name";
 import type { Frozen } from "yuke:plugins";
 import type { InteractionId, InteractionResponse, Question, QuestionAnswer } from "yuke:protocol";
@@ -252,7 +253,7 @@ function ask(
 export class ChatQuestions {
   readonly #chat: ChatSession;
   readonly #options: ChatQuestionsOptions;
-  readonly #listeners = new Set<() => void>();
+  readonly #listeners = new Listeners();
   // The first open request and its view. The other requests wait in order. A sent answer waits for the close.
   #current: { readonly id: InteractionId; readonly asked: ChatQuestion; answered: boolean } | undefined;
 
@@ -276,8 +277,7 @@ export class ChatQuestions {
 
   /** Call `listener` after each change of `current`. */
   addChangeListener(listener: () => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
+    return this.#listeners.add(listener);
   }
 
   /** Answer the shown request once. A failed answer, as after an answer of another client, goes to `onError`. */
@@ -311,6 +311,6 @@ export class ChatQuestions {
             ),
             answered: false,
           };
-    for (const listener of this.#listeners) listener();
+    this.#listeners.call();
   }
 }

@@ -2,12 +2,12 @@
  * The items of the status bar: plain data that plugins and the core set, by the key `<plugin>:<key>`. The core draws
  * none of them: a bar plugin reads them and draws them.
  */
+import { Listeners } from "yuke:internal/listeners";
 import type { StatusEntry, StatusItem } from "yuke:tui";
 
 export class StatusItems {
   readonly #items = new Map<string, StatusItem>();
-  /** Each listener registration is its own entry, so a disposer removes only its own one. */
-  readonly #listeners = new Set<{ readonly listener: () => void }>();
+  readonly #listeners = new Listeners();
   readonly #changed: () => void;
 
   /** `changed` asks for a frame after each change. */
@@ -67,15 +67,11 @@ export class StatusItems {
 
   /** Give each later change to `listener`, and return the remover. */
   addChangeListener(listener: () => void): () => void {
-    const entry = { listener };
-    this.#listeners.add(entry);
-    return () => {
-      this.#listeners.delete(entry);
-    };
+    return this.#listeners.add(listener);
   }
 
   #change(): void {
     this.#changed();
-    for (const entry of [...this.#listeners]) entry.listener();
+    this.#listeners.call();
   }
 }

@@ -2,6 +2,7 @@
  * The notices of the host and the faults of the plugins. The core draws none: a listener, such as the toasts, shows
  * them. The history serves a listener that starts late.
  */
+import { Listeners } from "yuke:internal/listeners";
 import type { NoticeLevel, SessionId } from "yuke:protocol";
 import type { Notice } from "yuke:tui";
 
@@ -11,7 +12,7 @@ const HISTORY = 100;
 export class Notices {
   readonly #entries: Notice[] = [];
   /** Each registration is its own entry, so a disposer removes only its own one. */
-  readonly #listeners = new Set<{ readonly listener: (notice: Notice) => void }>();
+  readonly #listeners = new Listeners<[Notice]>();
 
   /**
    * Add a notice and give it to each listener. A notice with the level, source, text, and session of the last one
@@ -34,7 +35,7 @@ export class Notices {
       this.#entries.push(notice);
       if (this.#entries.length > HISTORY) this.#entries.shift();
     }
-    for (const entry of [...this.#listeners]) entry.listener(notice);
+    this.#listeners.call(notice);
   }
 
   /** The kept notices, the oldest first. */
@@ -44,10 +45,6 @@ export class Notices {
 
   /** Give each later notice to `listener`, and return the disposer. */
   addListener(listener: (notice: Notice) => void): () => void {
-    const entry = { listener };
-    this.#listeners.add(entry);
-    return () => {
-      this.#listeners.delete(entry);
-    };
+    return this.#listeners.add(listener);
   }
 }

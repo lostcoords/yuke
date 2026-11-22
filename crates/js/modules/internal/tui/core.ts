@@ -6,6 +6,7 @@
 
 import { announce } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
+import { Listeners } from "yuke:internal/listeners";
 import type { TermStyle } from "yuke:internal/native";
 import { Stack } from "yuke:internal/stack";
 import type { TermEvent } from "yuke:internal/term";
@@ -88,7 +89,7 @@ export class Core {
   readonly #quitGuards = new Set<{ readonly guard: QuitGuard }>();
   /** The start event came without a snapshot and found no default pane. The next default pane makes the start pane. */
   #startWaits = false;
-  readonly #focusListeners = new Set<{ readonly listener: (change: FocusChange) => void }>();
+  readonly #focusListeners = new Listeners<[FocusChange]>();
   readonly #inputHandlers = new Set<{ readonly handler: (event: InputEvent) => boolean }>();
 
   constructor(driver: Driver) {
@@ -161,11 +162,7 @@ export class Core {
 
   /** Give each later change of `tui.focusedView` to `listener`. */
   addFocusListener(listener: (change: FocusChange) => void): () => void {
-    const entry = { listener };
-    this.#focusListeners.add(entry);
-    return () => {
-      this.#focusListeners.delete(entry);
-    };
+    return this.#focusListeners.add(listener);
   }
 
   /** Give each input event to `handler` before the scene and the keymap. A `true` answer takes the event. */
@@ -303,7 +300,7 @@ export class Core {
   }
 
   #focusChanged(change: FocusChange): void {
-    for (const entry of [...this.#focusListeners]) entry.listener(change);
+    this.#focusListeners.call(change);
   }
 
   #addCommands(): void {
