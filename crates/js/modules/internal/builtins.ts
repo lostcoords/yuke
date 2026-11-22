@@ -38,7 +38,7 @@ defineTool({
     required: ["path"],
   },
   concurrency: "parallel",
-  hints: { subject: { argument: "path", kind: "file" }, preview: "none" },
+  hints: { title: "Read", subject: { argument: "path", kind: "file" }, preview: "none" },
   async execute(args, context) {
     const read = await readLines(args.path, context.folder, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
     if ("image" in read) return { text: "The tool read the image.", media: [read.image] };
@@ -63,7 +63,7 @@ defineTool({
     required: ["path", "content"],
   },
   concurrency: "serial",
-  hints: { subject: { argument: "path", kind: "file" } },
+  hints: { title: "Write", subject: { argument: "path", kind: "file" } },
   async execute(args, context) {
     const options = { folder: context.folder, signal: context.signal };
     // The tool makes the missing parent folders, so the model can write a new file in a new folder.
@@ -88,7 +88,7 @@ defineTool({
     required: ["path", "old_string", "new_string"],
   },
   concurrency: "serial",
-  hints: { subject: { argument: "path", kind: "file" } },
+  hints: { title: "Edit", subject: { argument: "path", kind: "file" } },
   async execute(args, context) {
     const { path, old_string: oldString, new_string: newString, replace_all: replaceAll = false } = args;
     if (oldString.length === 0) throw new Error("Set old_string to a nonempty string.");
@@ -226,7 +226,7 @@ defineTool({
     required: ["command"],
   },
   concurrency: "serial",
-  hints: { subject: { argument: "command", kind: "text" }, preview: "tail" },
+  hints: { title: "Exec", subject: { argument: "command", kind: "text" }, preview: "tail" },
   async execute(args, context) {
     const command = args.command;
     if (command.trim().length === 0) throw new Error("Set command to a nonempty string.");
@@ -284,7 +284,7 @@ defineTool({
     required: ["id"],
   },
   concurrency: "serial",
-  hints: { subject: { argument: "id", kind: "text" } },
+  hints: { title: "Stop", subject: { argument: "id", kind: "text" } },
   async execute(args, context) {
     const id = args.id;
     const call = callOf(context);

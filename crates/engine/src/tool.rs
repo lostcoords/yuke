@@ -132,17 +132,17 @@ pub struct ToolContent {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolHints {
-    /// The name of the summary line in place of the tool name.
+    /// The name that the head line shows in place of the tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// The argument of the call that the summary line shows.
+    /// The argument of the call that the head line shows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<Subject>,
     /// The part of the output that a folded call shows.
     pub preview: Preview,
 }
 
-/// The argument of a call that its summary line shows.
+/// The argument of a call that its head line shows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]

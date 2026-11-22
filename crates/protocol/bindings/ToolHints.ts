@@ -7,11 +7,11 @@ import type { Subject } from "./Subject.ts";
  */
 export type ToolHints = { 
 /**
- * The name of the summary line in place of the tool name.
+ * The name that the head line shows in place of the tool name.
  */
 title?: string, 
 /**
- * The argument of the call that the summary line shows.
+ * The argument of the call that the head line shows.
  */
 subject?: Subject, 
 /**

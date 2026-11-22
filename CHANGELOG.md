@@ -13,6 +13,8 @@ Each release has one section. The release job publishes the section of the tag a
 - `yuke:test`: `FrameTest` has `rows()`, `click()`, and `drag()`.
 - `Transcript.jobs` holds the running background jobs of the session.
 - The chat pane no longer fails when its session closes while a page of history loads.
+- The built-in tools show a title in the chat: `Read`, `Write`, `Edit`, `Exec`, and `Stop`. A plugin tool shows one
+  with `hints.title`.
 
 ## 0.1.1
 

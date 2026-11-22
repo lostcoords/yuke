@@ -131,12 +131,15 @@ type StringArgument<S extends ObjectSchema> = string extends keyof S["properties
     }[keyof S["properties"]] &
       string;
 
-/** How a chat shows the calls of a tool. The model never sees the hints. `yuke:protocol` has them as stored. */
+/**
+ * How a frontend shows the calls of a tool. The model never sees the hints. `ToolHints` of `yuke:protocol` has them as
+ * stored, with the default `preview`.
+ */
 export interface ToolDisplayHints<S extends ObjectSchema = ObjectSchema> {
-  /** The name of the summary line in place of the tool name. */
+  /** The name that the head line shows in place of the tool name. */
   readonly title?: string | undefined;
   /**
-   * The string argument that the summary line shows, and what it names. A chat can open a `file`, relative to the
+   * The string argument that the head line shows, and what it names. A frontend can open a `file`, relative to the
    * folder of the call, or a `uri`.
    */
   readonly subject?: { readonly argument: StringArgument<S>; readonly kind: "text" | "file" | "uri" } | undefined;
@@ -200,7 +203,7 @@ export interface Tool<S extends ObjectSchema = ObjectSchema> {
    * the model rarely needs. The default is `false`.
    */
   readonly deferLoading?: boolean | undefined;
-  /** How a chat shows the calls of the tool. */
+  /** How a frontend shows the calls of the tool. */
   readonly hints?: ToolDisplayHints<S> | undefined;
   readonly execute: (
     this: void,

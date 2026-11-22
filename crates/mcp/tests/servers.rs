@@ -148,7 +148,7 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
             .find(|(definition, _)| definition.name == name)
             .unwrap_or_else(|| panic!("the server gives no tool {name}"))
     };
-    // A tool title, else an annotation title, is the title of the summary line.
+    // A tool title, else an annotation title, is the title of the head line.
     assert_eq!(tool("mcp__test__echo").1.hints().title, Some("Echo".to_owned()));
     assert_eq!(tool("mcp__test__picture").1.hints().title, Some("Picture".to_owned()));
     assert_eq!(tool("mcp__test__fail").1.hints().title, None);

@@ -2,7 +2,7 @@
 import type { SubjectKind } from "./SubjectKind.ts";
 
 /**
- * The argument of a call that its summary line shows.
+ * The argument of a call that its head line shows.
  */
 export type Subject = { 
 /**

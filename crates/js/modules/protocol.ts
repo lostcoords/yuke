@@ -1500,7 +1500,7 @@ export type StoredEvent = {
 seq: EventNumber, } & ({ "kind": "commit" } & CommitEvent | { "kind": "settings" } & SessionSettings);
 
 /**
- * The argument of a call that its summary line shows.
+ * The argument of a call that its head line shows.
  */
 export type Subject = { 
 /**
@@ -1634,11 +1634,11 @@ durationMs?: number, };
  */
 export type ToolHints = { 
 /**
- * The name of the summary line in place of the tool name.
+ * The name that the head line shows in place of the tool name.
  */
 title?: string, 
 /**
- * The argument of the call that the summary line shows.
+ * The argument of the call that the head line shows.
  */
 subject?: Subject, 
 /**

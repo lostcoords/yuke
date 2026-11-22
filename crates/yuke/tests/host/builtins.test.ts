@@ -240,7 +240,7 @@ test("edit of a file that is not UTF-8 fails and keeps its bytes", async () => {
 });
 
 // The hints of the built-in tools follow the same public path as a plugin tool.
-test("the built-in tools show their path or command as the subject, and read and exec pick their preview", async () => {
+test("the built-in tools show a title and their path or command as the subject, and read and exec pick their preview", async () => {
   await writeTextFile(`${folder()}/a.txt`, "a\n");
   await using host = await createHost({
     plugins: [],
@@ -259,8 +259,8 @@ test("the built-in tools show their path or command as the subject, and read and
 
   const hints = session.transcript.entries.flatMap((entry) => (entry.kind === "tool" ? [entry.hints] : []));
   assertEquals(hints, [
-    { subject: { argument: "path", kind: "file" }, preview: "none" },
-    { subject: { argument: "command", kind: "text" }, preview: "tail" },
-    { subject: { argument: "path", kind: "file" }, preview: "head" },
+    { title: "Read", subject: { argument: "path", kind: "file" }, preview: "none" },
+    { title: "Exec", subject: { argument: "command", kind: "text" }, preview: "tail" },
+    { title: "Write", subject: { argument: "path", kind: "file" }, preview: "head" },
   ]);
 });
