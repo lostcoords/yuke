@@ -1,18 +1,24 @@
 /**
- * The bundled plugin `files`: the `@` completion of the paths in the folder of a chat session. A word that starts with
- * `@` lists the files and folders that match it. A Git folder lists what `git ls-files` gives, so ignored files stay
- * out. Another folder lists a walk that skips hidden entries, `node_modules`, and `target`. The draft keeps the path as
- * plain text, and the model reads the file with its tools. A path with whitespace goes in double quotes.
+ * The bundled plugin `files`: the completion of paths in a chat draft. A word that starts with `@` lists the files and
+ * folders of the session folder that match it. A Git folder lists what `git ls-files` gives, so ignored files stay
+ * out. Another folder lists a walk that skips hidden entries, `node_modules`, and `target`.
+ *
+ * An `@` word that starts as a path, `./`, `../`, `~/`, or `/`, lists the entries of its folder. This reaches the
+ * files outside the session folder. The draft keeps the path as plain text, and the model reads
+ * the file with its tools. A path with whitespace goes in double quotes.
  */
 
 import type { CompletionItem, CompletionList } from "yuke:chat";
-import { readDir } from "yuke:fs";
+import { readDir, stat } from "yuke:fs";
 import type { PluginContext } from "yuke:plugins";
-import { Command } from "yuke:process";
+import { Command, env } from "yuke:process";
 import { fuzzyMatch } from "yuke:tui";
 
 /** An `@` word at the start of the draft or after whitespace, up to the caret: an open quote with a path, or a word. */
 const MENTION = /(?:^|\s)@(?:"([^"]*)|(\S*))$/;
+
+/** A path that names its folder: `./`, `../`, `~/`, or `/`. */
+const PATH = /^(?:\.{1,2}\/|~\/|\/)/;
 
 /** The list keeps the best of the matches. */
 const MOST_ITEMS = 50;
@@ -120,7 +126,61 @@ function listOf(entries: readonly Entry[], query: string, from: number): Complet
   };
 }
 
+/** The entries of a listed folder, folders first. */
+interface Listing {
+  readonly time: number;
+  readonly ready: Promise<readonly Entry[]>;
+}
+
+/** The entries of `folder`, folders first, then by name. A link counts as what it points to. */
+async function folderEntries(folder: string): Promise<Entry[]> {
+  const entries: Entry[] = [];
+  for await (const entry of readDir(folder)) {
+    // A name with a line break cannot stay in a draft line, and a quote cannot hold a quote.
+    if (/[\r\n]/.test(entry.name) || (/\s/.test(entry.name) && entry.name.includes('"'))) continue;
+    const isFolder = entry.isSymlink
+      ? await stat(`${folder}/${entry.name}`).then(
+          (info) => info.isDirectory,
+          () => false,
+        )
+      : entry.isDirectory;
+    entries.push({ path: entry.name, folder: isFolder });
+  }
+  return entries.sort((a, b) => Number(b.folder) - Number(a.folder) || (a.path < b.path ? -1 : 1));
+}
+
+/**
+ * The list of the folder of `path`: the entries whose names start with the text after its last `/`. A hidden entry
+ * needs a name that starts with `.`.
+ */
+function folderListOf(entries: readonly Entry[], path: string, from: number): CompletionList {
+  const slash = path.lastIndexOf("/");
+  const folder = path.slice(0, slash + 1);
+  const name = path.slice(slash + 1);
+  const items = entries
+    .filter((entry) => entry.path.startsWith(name) && (name.startsWith(".") || !entry.path.startsWith(".")))
+    .slice(0, MOST_ITEMS)
+    .map((entry): CompletionItem => {
+      const full = `${folder}${entry.path}${entry.folder ? "/" : ""}`;
+      const quoted = /\s/.test(full);
+      const label = quoted ? `@"${full}"` : `@${full}`;
+      // A folder takes no space and keeps its quote open, so the list goes on into it.
+      return { label, insert: entry.folder ? (quoted ? label.slice(0, -1) : label) : `${label} ` };
+    });
+  return { from, items };
+}
+
 export function apply(ctx: PluginContext): undefined {
+  const listings = new Map<string, Listing>();
+  /** The entries of `folder`. A listing serves the asks of `FRESH_MS`, so each key of a name does not read again. */
+  const listingOf = (folder: string): Promise<readonly Entry[]> => {
+    const now = Date.now();
+    const known = listings.get(folder);
+    if (known !== undefined && now - known.time < FRESH_MS) return known.ready;
+    const ready = folderEntries(folder);
+    listings.set(folder, { time: now, ready });
+    return ready;
+  };
   const indexes = new Map<string, Index>();
   /** The index of `workspace`. A stale index answers while the next one builds. */
   const indexOf = (workspace: string): Index => {
@@ -146,6 +206,23 @@ export function apply(ctx: PluginContext): undefined {
       if (word === null) return undefined;
       const query = word[1] ?? word[2] ?? "";
       const from = context.caret - word[0].trimStart().length;
+      if (PATH.test(query)) {
+        const folder = query.slice(0, query.lastIndexOf("/") + 1);
+        const home = env.get("HOME");
+        const real = folder.startsWith("~/")
+          ? home === undefined
+            ? undefined
+            : `${home}${folder.slice(1)}`
+          : folder.startsWith("/")
+            ? folder
+            : `${context.folder}/${folder}`;
+        if (real === undefined) return undefined;
+        // A folder that does not exist, or that yuke cannot read, gives no list.
+        return listingOf(real).then(
+          (entries) => folderListOf(entries, query, from),
+          () => undefined,
+        );
+      }
       const index = indexOf(context.folder);
       if (index.entries !== undefined) return listOf(index.entries, query, from);
       return index.ready.then((entries) => listOf(entries, query, from));

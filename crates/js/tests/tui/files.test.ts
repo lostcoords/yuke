@@ -128,3 +128,48 @@ test("a path with a quote stays plain, and a path with whitespace and a quote st
 
   assertEquals(await complete(files, "@b.m", root), { from: 0, items: [['@a"b.md', '@a"b.md ']] });
 });
+
+test("an @ word that starts as a path lists the entries of its folder", async () => {
+  const root = folder();
+  await write(root, ["a.md", ".hidden", "sub/b.md", "my dir/c.md"]);
+  const files = provider();
+
+  assertEquals(
+    [
+      await complete(files, "see @./", root),
+      await complete(files, "@./.h", root),
+      await complete(files, "@../a", `${root}/sub`),
+      await complete(files, `@${root}/a`, "/"),
+      await complete(files, "@./my", root),
+    ],
+    [
+      {
+        from: 4,
+        items: [
+          ['@"./my dir/"', '@"./my dir/'],
+          ["@./sub/", "@./sub/"],
+          ["@./a.md", "@./a.md "],
+        ],
+      },
+      { from: 0, items: [["@./.hidden", "@./.hidden "]] },
+      { from: 0, items: [["@../a.md", "@../a.md "]] },
+      { from: 0, items: [[`@${root}/a.md`, `@${root}/a.md `]] },
+      { from: 0, items: [['@"./my dir/"', '@"./my dir/']] },
+    ],
+  );
+});
+
+test("a path without @ and an @ path to a missing folder list nothing", async () => {
+  const root = folder();
+  await write(root, ["notes.md"]);
+  const files = provider();
+
+  assertEquals(
+    [
+      await complete(files, "./no", root),
+      await complete(files, "~/", root),
+      await complete(files, "@./missing/", root),
+    ],
+    [undefined, undefined, undefined],
+  );
+});
