@@ -197,13 +197,13 @@ declare module "yuke:test" {
         readonly name: string;
         // `any` lets a plugin keep the option type of its exports.
         // biome-ignore lint/suspicious/noExplicitAny: the options of each plugin have their own type.
-        readonly apply?: PluginApply<any>;
+        readonly apply?: PluginApply<any> | undefined;
         // biome-ignore lint/suspicious/noExplicitAny: the options of each plugin have their own type.
-        readonly session?: PluginSession<any>;
+        readonly session?: PluginSession<any> | undefined;
         /** The schema of `options`, as the `optionsSchema` export of an entry. */
-        readonly optionsSchema?: ObjectSchema;
-        readonly uses?: readonly string[];
-        readonly provides?: readonly string[];
+        readonly optionsSchema?: ObjectSchema | undefined;
+        readonly uses?: readonly string[] | undefined;
+        readonly provides?: readonly string[] | undefined;
       }
     | {
         /**
@@ -218,12 +218,12 @@ declare module "yuke:test" {
       }
   ) & {
     /** The options of the plugin, as `config.json` gives them. */
-    readonly options?: Readonly<Record<string, unknown>>;
+    readonly options?: Readonly<Record<string, unknown>> | undefined;
     /**
      * The data folder of the plugin, for a test that saves its files before the load. A relative folder starts in the
      * working folder of `yuke test`. The default is a new folder of the host.
      */
-    readonly dataDir?: string;
+    readonly dataDir?: string | undefined;
   };
 
   /** One scripted answer of the fake model. Make it with `reply`. */
@@ -249,13 +249,13 @@ declare module "yuke:test" {
 
   /** The options of an answer: the input tokens of its usage, for a test of the context window. */
   export interface ReplyOptions {
-    readonly inputTokens?: number;
+    readonly inputTokens?: number | undefined;
   }
 
   /** The options of an answer with calls. */
   export interface CallsOptions extends ReplyOptions {
     /** The text of the answer before its calls. */
-    readonly text?: string;
+    readonly text?: string | undefined;
   }
 
   /** The makers of the scripted answers. */
@@ -304,27 +304,29 @@ declare module "yuke:test" {
      * the plugin, and the frame shows each notice of the host. Without it, `ctx.get("tui")` is `undefined`, as in
      * `yuke --rpc`. Create the frame before the host, so that the host closes first.
      */
-    readonly frame?: FrameTest;
+    readonly frame?: FrameTest | undefined;
     /**
      * The replies of the fake model of the sessions, in order. Each request takes the next reply. The host writes the
      * reply in the stream format of the protocol of the request. A request after the last reply fails. A reply without
      * a request fails the test at the close of the host.
      */
-    readonly replies?: readonly Reply[];
+    readonly replies?: readonly Reply[] | undefined;
     /**
      * The answers to each request, one per question. `undefined` cancels the request. Without the function, each
      * request gets `undefined`, as with no client. A promise keeps the request open until it settles.
      */
-    readonly onQuestion?: (
-      question: TestQuestion,
-    ) => readonly QuestionAnswer[] | undefined | Promise<readonly QuestionAnswer[] | undefined>;
+    readonly onQuestion?:
+      | ((
+          question: TestQuestion,
+        ) => readonly QuestionAnswer[] | undefined | Promise<readonly QuestionAnswer[] | undefined>)
+      | undefined;
     /**
      * The answer to each request of a plugin to the client. The plugin gets a JSON copy of the return, and
      * `undefined` gives `null`. A throw of a `ClientRequestError` is the error answer. Another throw or rejection
      * fails the test. Without the function, each request rejects at once, as with no client. A promise keeps the
      * request open until it settles.
      */
-    readonly onClientRequest?: (request: ExtensionRequestParams) => unknown;
+    readonly onClientRequest?: ((request: ExtensionRequestParams) => unknown) | undefined;
   }
 
   /**
@@ -366,11 +368,11 @@ declare module "yuke:test" {
      * The context window of the round. `null` gives a round with no known window. Without it, the round has the
      * window of the model of the session.
      */
-    readonly contextWindow?: number | null;
-    readonly inputTokens?: number;
-    readonly system?: string;
-    readonly tools?: readonly ToolDefinition[];
-    readonly settings?: RequestSettings;
+    readonly contextWindow?: number | null | undefined;
+    readonly inputTokens?: number | undefined;
+    readonly system?: string | undefined;
+    readonly tools?: readonly ToolDefinition[] | undefined;
+    readonly settings?: RequestSettings | undefined;
   }
 
   /** The event of each hook point for `runHook`, as plain data. */
@@ -382,19 +384,19 @@ declare module "yuke:test" {
       readonly result: {
         readonly text: string;
         readonly isError: boolean;
-        readonly media?: readonly ToolMedia[];
-        readonly display?: readonly DisplayBlock[];
+        readonly media?: readonly ToolMedia[] | undefined;
+        readonly display?: readonly DisplayBlock[] | undefined;
       };
     };
     readonly "round.before": TestRound;
     readonly "round.retry": TestRound & {
       readonly failure: { readonly kind: RoundFailureKind };
-      readonly retries?: number;
+      readonly retries?: number | undefined;
     };
     readonly "round.after": {
       readonly text: string;
-      readonly finishReason?: FinishReason;
-      readonly continues?: number;
+      readonly finishReason?: FinishReason | undefined;
+      readonly continues?: number | undefined;
     };
     readonly "input.before": {
       readonly source: InputSource;
@@ -447,7 +449,7 @@ declare module "yuke:test" {
 
   /** The options of an operation of a session. An abort of `signal` cancels it, and it rejects with the reason. */
   export interface OperationOptions {
-    readonly signal?: AbortSignal;
+    readonly signal?: AbortSignal | undefined;
   }
 
   /** A session of the host. */
