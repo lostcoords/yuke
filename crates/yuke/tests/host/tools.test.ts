@@ -291,32 +291,18 @@ test("an error result keeps its text and its media", async () => {
   );
 });
 
-test("media bytes reach the store as the view held them at the return", async () => {
-  class Own extends Uint8Array<ArrayBuffer> {
-    override slice(): Uint8Array<ArrayBuffer> {
-      return this;
-    }
-  }
+test("the media bytes of a view reach the store as the range of the view", async () => {
   const { host, session } = await opened(
-    tool("drawn", (_args, context) => {
+    tool("drawn", () => {
       const view = new Uint8Array([9, 1, 2, 9]).subarray(1, 3);
-      context.signal.addEventListener("abort", () => view.fill(7));
       return { text: "drawn", media: [{ bytes: view, mimeType: "image/png" }] };
-    }),
-    tool("own", (_args, context) => {
-      const bytes = new Own(new ArrayBuffer(2));
-      bytes.set([1, 2]);
-      context.signal.addEventListener("abort", () => bytes.fill(7));
-      return { text: "own", media: [{ bytes, mimeType: "image/png" }] };
     }),
   );
   await using _host = host;
 
   const drawn = await session.call("drawn", {});
-  const own = await session.call("own", {});
 
-  assertEquals([drawn.isError, own.isError], [false, false]);
-  assertEquals([plain(drawn.media), plain(own.media)], [[["image/png", [1, 2]]], [["image/png", [1, 2]]]]);
+  assertEquals([drawn.isError, plain(drawn.media)], [false, [["image/png", [1, 2]]]]);
 });
 
 // The answer commit saves the hints and the folder before the call runs, so the saved transcript shows them too.

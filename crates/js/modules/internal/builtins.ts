@@ -90,22 +90,24 @@ defineTool({
   concurrency: "serial",
   hints: { title: "Edit", subject: { argument: "path", kind: "file" } },
   async execute(args, context) {
-    const { path, old_string: oldString, new_string: newString, replace_all: replaceAll = false } = args;
+    const { path, old_string: oldString, new_string: newString, replace_all: replaceAll } = args;
     if (oldString.length === 0) throw new Error("Set old_string to a nonempty string.");
     if (oldString === newString) throw new Error("Set new_string to a value that differs from old_string.");
 
     const options = { folder: context.folder, signal: context.signal };
     // A replaced byte would reach the file at the write, so the read is fatal.
-    const parts = (await readTextFile(path, { ...options, fatal: true })).split(oldString);
+    const before = await readTextFile(path, { ...options, fatal: true });
+    const parts = before.split(oldString);
     const count = parts.length - 1;
     if (count === 0) throw new Error("The file has no match for old_string. Read the file and copy the exact text.");
     if (count > 1 && !replaceAll) {
       throw new Error("old_string matches more than one place. Add context to old_string, or set replace_all to true.");
     }
-    await writeTextFile(path, parts.join(newString), options);
+    const after = parts.join(newString);
+    await writeTextFile(path, after, options);
     return {
       text: count === 1 ? "The tool replaced 1 match." : `The tool replaced ${count} matches.`,
-      display: [{ kind: "diff", path, patch: patchOf(parts, oldString, newString) }],
+      display: [{ kind: "diff", path, patch: patchOf(before, after, parts, oldString, newString) }],
     };
   },
 });
@@ -113,20 +115,31 @@ defineTool({
 /** The lines of context around each change of a patch. */
 const CONTEXT = 3;
 
+/** The old lines `first..last` and the new lines `start..end` of one change. An empty range has its end before its start. */
+interface Change {
+  first: number;
+  last: number;
+  start: number;
+  end: number;
+}
+
 /**
- * The unified hunks of the replacement of each `oldString` between `parts` by `newString`. A match changes the lines from
- * its start to the line after its end. Lines that stay equal at the edges of a change show as context, and the hunks of
- * near changes merge.
+ * The unified hunks from `before` to `after`, which replaces each `oldString` between `parts` by `newString`. A match
+ * changes the lines from its start to the line after its end. Lines that stay equal at the edges of a change show as
+ * context, and the hunks of near changes merge.
  */
-function patchOf(parts: readonly string[], oldString: string, newString: string): string {
-  const before = parts.join(oldString);
-  const after = parts.join(newString);
+function patchOf(
+  before: string,
+  after: string,
+  parts: readonly string[],
+  oldString: string,
+  newString: string,
+): string {
   const oldLines = linesOf(before);
   const newLines = linesOf(after);
   /** The index of the line that holds `offset` of `text`, or of the line after the text at its end. */
   const lineAt = (text: string, offset: number): number => text.slice(0, offset).split("\n").length - 1;
-  // Each change holds the old lines `first..last` and the new lines `start..end`. An empty range has `last < first`.
-  const changes: { first: number; last: number; start: number; end: number }[] = [];
+  const changes: Change[] = [];
   let offset = 0;
   for (const [index, part] of parts.slice(0, -1).entries()) {
     offset += part.length;
@@ -163,18 +176,18 @@ function patchOf(parts: readonly string[], oldString: string, newString: string)
       change.end -= 1;
     }
   }
+  // Two changes with no more than 2 * CONTEXT + 1 lines between them share one hunk, so no context line repeats.
+  const groups: [Change, ...Change[]][] = [];
+  for (const change of changes) {
+    const group = groups.at(-1);
+    if (group !== undefined && change.first - (group.at(-1) as Change).last <= 2 * CONTEXT + 1) group.push(change);
+    else groups.push([change]);
+  }
   const hunks: string[] = [];
-  let index = 0;
-  while (index < changes.length) {
-    const group = changes.slice(index, index + 1);
-    index += 1;
-    while (index < changes.length && (changes[index]?.first ?? 0) - (group.at(-1)?.last ?? 0) <= 2 * CONTEXT + 1) {
-      group.push(changes[index] as (typeof changes)[number]);
-      index += 1;
-    }
-    const head = group[0] as (typeof changes)[number];
+  for (const group of groups) {
+    const head = group[0];
     const first = Math.max(0, head.first - CONTEXT);
-    const last = Math.min(oldLines.length - 1, (group.at(-1)?.last ?? 0) + CONTEXT);
+    const last = Math.min(oldLines.length - 1, (group.at(-1) as Change).last + CONTEXT);
     const rows: string[] = [];
     let line = first;
     let added = 0;

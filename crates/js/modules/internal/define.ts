@@ -1,9 +1,8 @@
 import { checkArguments } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
 import { hostOperation } from "yuke:internal/events";
-import { type Answer, type Registration, register, type ToolOwner } from "yuke:internal/native";
-import { mediaCopy } from "yuke:internal/values";
-import type { Infer, ObjectSchema, Tool, ToolContext, ToolExecuteResult } from "yuke:tools";
+import { type Registration, register, type ToolOwner } from "yuke:internal/native";
+import type { Infer, ObjectSchema, Tool, ToolContext } from "yuke:tools";
 
 /** The jobs of a built-in tool, which uses none of them. */
 const NO_JOBS: ToolContext["jobs"] = {
@@ -21,19 +20,14 @@ export function defineTool<const S extends ObjectSchema>(
 ): Registration {
   const execute = tool.execute;
   const inputSchema = tool.inputSchema;
-  // Rust validates the hints. The default of `preview` is here because the stored form requires it.
-  const hints = {
-    ...(tool.hints?.title === undefined ? {} : { title: tool.hints.title }),
-    ...(tool.hints?.subject === undefined ? {} : { subject: tool.hints.subject }),
-    preview: tool.hints?.preview ?? "head",
-  } as const;
+  // Rust validates each field and fills the defaults.
   const description = {
     name: tool.name,
     description: tool.description,
     inputSchema: JSON.stringify(inputSchema),
     concurrency: tool.concurrency,
-    deferLoading: tool.deferLoading ?? false,
-    hints,
+    deferLoading: tool.deferLoading,
+    hints: tool.hints,
     owner,
   };
   return register(description, (request) =>
@@ -42,22 +36,11 @@ export function defineTool<const S extends ObjectSchema>(
       const context: ToolContext = { sessionId, callId, folder, signal, output, jobs: jobsOf(signal) };
       bindCall(context, call);
       try {
-        return answerOf(await execute(checkArguments(inputSchema, args) as Infer<S>, context));
+        const result = await execute(checkArguments(inputSchema, args) as Infer<S>, context);
+        return typeof result === "string" ? { text: result } : result;
       } finally {
         abort("The tool call has ended");
       }
     }, "The tool call was cancelled"),
   );
-}
-
-/** The result of `execute` with its defaults filled. Rust validates the fields. */
-function answerOf(result: ToolExecuteResult): Answer {
-  if (typeof result === "string") return { text: result, isError: false, media: [], display: [] };
-  return {
-    text: result.text,
-    isError: result.isError ?? false,
-    // A copy of the bytes now: Rust reads the answer after the abort of the call, and a listener can change the bytes.
-    media: (result.media ?? []).map(mediaCopy),
-    display: result.display ?? [],
-  };
 }

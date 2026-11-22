@@ -139,6 +139,7 @@ pub struct ToolHints {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<Subject>,
     /// The part of the output that a folded call shows.
+    #[serde(default)]
     pub preview: Preview,
 }
 
@@ -320,8 +321,6 @@ pub struct Toolset {
     /// One handler for each definition, at the same index. The definitions stay one slice, so a request without a
     /// deferred tool borrows them without a copy.
     handlers: Vec<Box<dyn Tool>>,
-    /// The hints of each handler, at the same index.
-    hints: Vec<ToolHints>,
     /// The working folder of the tools, for a frontend that opens a relative path of a call. The engine does not read
     /// it.
     folder: Option<String>,
@@ -341,7 +340,6 @@ impl Toolset {
         Toolset {
             definitions: Vec::new(),
             handlers: Vec::new(),
-            hints: Vec::new(),
             folder: None,
         }
     }
@@ -356,13 +354,15 @@ impl Toolset {
         self.folder.as_deref()
     }
 
+    /// The handler of the tool `name`, if the toolset has one.
+    fn handler(&self, name: &str) -> Option<&dyn Tool> {
+        let index = self.definitions.iter().position(|definition| definition.name == name)?;
+        Some(self.handlers[index].as_ref())
+    }
+
     /// The hints of the tool `name`, or the default hints for a name that no tool has.
     pub(crate) fn hints_of(&self, name: &str) -> ToolHints {
-        self.definitions
-            .iter()
-            .position(|definition| definition.name == name)
-            .map(|index| self.hints[index].clone())
-            .unwrap_or_default()
+        self.handler(name).map(Tool::hints).unwrap_or_default()
     }
 
     /// Offer `definition` to the model. A call with that name runs `tool`.
@@ -377,7 +377,6 @@ impl Toolset {
             return Err(ToolNameError::Duplicate(definition.name));
         }
         self.definitions.push(definition);
-        self.hints.push(tool.hints());
         self.handlers.push(Box::new(tool));
         Ok(())
     }
@@ -400,20 +399,17 @@ impl Toolset {
 
     /// The concurrency of the tool of `name`. A name without a tool runs nothing, so it does not wait for other calls.
     pub(crate) fn concurrency(&self, name: &str) -> Concurrency {
-        match self.definitions.iter().position(|tool| tool.name == name) {
-            Some(index) => self.handlers[index].concurrency(),
-            None => Concurrency::Parallel,
-        }
+        self.handler(name).map_or(Concurrency::Parallel, Tool::concurrency)
     }
 
     /// Run `call`, and return its outcome and the duration of its handler. The tool sees `context`.
     pub(crate) async fn call(&self, call: &ToolCall, context: &ToolContext<'_>) -> Finished {
-        let Some(index) = self.definitions.iter().position(|tool| tool.name == call.name) else {
+        let Some(tool) = self.handler(&call.name) else {
             return ToolResult::error(&call.call_id, format!("Unknown tool: {}", call.name)).into();
         };
 
         let started = Instant::now();
-        let result = self.handlers[index].call(&call.arguments, context).await;
+        let result = tool.call(&call.arguments, context).await;
         let duration = Some(started.elapsed());
         let outcome = match result {
             Ok(content) => ToolOutcome {

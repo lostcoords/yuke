@@ -35,16 +35,14 @@ interface Draft {
   tail: string | undefined;
 }
 
-/** The hints of a call whose tool gave none, or before the host handles it. */
+/** The hints of a call before its answer saves them. */
 const NO_HINTS: Frozen<ToolHints> = Object.freeze({ preview: "head" });
 
 /** The display of a result without one. One object, so an entry keeps its object across a re-fold. */
 const NO_DISPLAY: Frozen<DisplayBlock[]> = Object.freeze([]);
 
-/** The fields of a tool entry before the host handles the call. */
-const UNHANDLED = {
-  hints: NO_HINTS,
-  folder: undefined,
+/** The fields of a tool entry before its call runs. */
+const NOT_RUN = {
   startedAt: undefined,
   durationMs: undefined,
   output: "",
@@ -228,16 +226,7 @@ export class Transcript {
         this.#dropDraft();
         for (const key of this.#calls) {
           const entry = this.#at(key);
-          if (entry?.kind === "tool")
-            this.#set({
-              ...entry,
-              status: "waiting",
-              startedAt: undefined,
-              durationMs: undefined,
-              output: "",
-              result: undefined,
-              display: NO_DISPLAY,
-            });
+          if (entry?.kind === "tool") this.#set({ ...entry, status: "waiting", ...NOT_RUN });
         }
         break;
       case "draftStarted":
@@ -276,8 +265,16 @@ export class Transcript {
             draft.tail = undefined;
             draft.keys.set(model.blockId, key);
             if (model.content.kind === "toolCall") {
-              const name = model.content.name;
-              this.#put({ kind: "tool", id: key, name, arguments: "", status: "preparing", ...UNHANDLED });
+              this.#put({
+                kind: "tool",
+                id: key,
+                name: model.content.name,
+                arguments: "",
+                status: "preparing",
+                hints: NO_HINTS,
+                folder: undefined,
+                ...NOT_RUN,
+              });
             } else
               this.#put({ kind: "text", id: key, text: "", refusal: model.content.kind === "refusal", draft: true });
           }
@@ -309,8 +306,8 @@ export class Transcript {
         if (update.kind === "toolStarted") this.#set({ ...entry, status: "running", startedAt: Date.now() });
         else if (update.kind === "toolOutput") this.#set({ ...entry, output: entry.output + update.text });
         else {
-          const display = update.display.length === 0 ? NO_DISPLAY : update.display;
           const durationMs = update.durationMs;
+          const display = update.display;
           this.#set({ ...entry, status: "done", startedAt: undefined, durationMs, result: update.result, display });
         }
         break;
@@ -370,15 +367,16 @@ export class Transcript {
           id: key,
           ...called(block),
           status: "waiting",
-          ...UNHANDLED,
-          ...(shown === undefined ? {} : { hints: shown.hints, folder: shown.folder }),
+          hints: shown?.hints ?? NO_HINTS,
+          folder: shown?.folder,
+          ...NOT_RUN,
         });
       } else if (block.kind === "toolResult") {
         // The results come in the order of the calls. A result whose call is on an older page waits for that page.
         const entry = this.#at(this.#calls.shift());
-        const shown = commit.display?.results.find((result) => result.blockIndex === index);
-        const display = shown?.blocks ?? NO_DISPLAY;
         if (entry?.kind === "tool") {
+          const shown = commit.display?.results.find((result) => result.blockIndex === index);
+          const display = shown?.blocks ?? NO_DISPLAY;
           const durationMs = shown?.durationMs;
           let result = this.#results.get(block);
           if (result === undefined) {
@@ -425,11 +423,7 @@ export class Transcript {
     if (entry.kind === "end" && previous?.kind === "end" && previous.answer !== entry.answer) return entry;
     if (previous === undefined || entry.kind !== "tool" || entry.status === "waiting") return previous ?? entry;
     // One saved event gives a result object, its display, and its duration, so the result stands for all three.
-    const same =
-      previous.kind === "tool" &&
-      previous.result === entry.result &&
-      previous.hints === entry.hints &&
-      previous.output === "";
+    const same = previous.kind === "tool" && previous.result === entry.result && previous.hints === entry.hints;
     return same ? previous : entry;
   }
 

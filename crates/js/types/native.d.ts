@@ -10,7 +10,6 @@ declare module "yuke:internal/native" {
     Block,
     CheckPluginsParams,
     CheckPluginsResult,
-    DisplayBlock,
     EventNumber,
     ExtensionEventParams,
     FindPluginsParams,
@@ -41,10 +40,9 @@ declare module "yuke:internal/native" {
     SetApiKeyParams,
     StoredEvent,
     SyncPluginsResult,
-    ToolHints,
   } from "yuke:protocol";
   import type { Frame, ModelRequest, TestCallResult } from "yuke:test";
-  import type { ToolMedia } from "yuke:tools";
+  import type { ObjectSchema, ToolDisplayHints, ToolExecuteResult, ToolMedia } from "yuke:tools";
   import type { Cursor } from "yuke:tui";
 
   /** What the start function of a tool gets for one call. */
@@ -60,13 +58,8 @@ declare module "yuke:internal/native" {
     readonly call: CallHost;
   }
 
-  /** The checked result of a call. */
-  export interface Answer {
-    readonly text: string;
-    readonly isError: boolean;
-    readonly media: readonly ToolMedia[];
-    readonly display: readonly DisplayBlock[];
-  }
+  /** The result of a call. Rust checks it and fills the defaults. */
+  export type Answer = Exclude<ToolExecuteResult, string>;
 
   /** A started job: its id and its log file. */
   export interface StartedJob {
@@ -124,15 +117,15 @@ declare module "yuke:internal/native" {
   }
 
   /** Register a tool for its owner, or for every session without an owner. The last definition or name removal wins. */
-  export function register(
+  export function register<S extends ObjectSchema>(
     tool: {
       readonly name: string;
       readonly description: string;
       /** The JSON text of the schema of the arguments. */
       readonly inputSchema: string;
       readonly concurrency: "serial" | "parallel";
-      readonly deferLoading: boolean;
-      readonly hints: ToolHints;
+      readonly deferLoading: boolean | undefined;
+      readonly hints: ToolDisplayHints<S> | undefined;
       readonly owner: ToolOwner | undefined;
     },
     start: (request: CallRequest) => Operation<Answer>,

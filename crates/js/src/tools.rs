@@ -185,19 +185,17 @@ impl Registry {
     pub(crate) fn add(&self, owner: Option<ToolOwner>, change: ToolChange) -> Result<Registration, String> {
         check_tool_name(change.name()).map_err(|error| error.to_string())?;
         let mut tools = self.tools.borrow_mut();
-        let replaced = if matches!(change, ToolChange::Define { .. }) {
-            owner.as_ref().and_then(|owner| {
-                tools
-                    .iter()
-                    .rev()
-                    .find(|tool| tool.visible_in(owner.open) && tool.change.name() == change.name())
-                    .filter(|tool| matches!(tool.change, ToolChange::Define { .. }))
-                    .and_then(|tool| tool.owner.as_ref())
-                    .filter(|previous| previous.plugin != owner.plugin)
-                    .map(|previous| previous.plugin.clone())
-            })
-        } else {
-            None
+        // Only a definition of a plugin replaces the visible definition of another plugin.
+        let replaced = match (&change, &owner) {
+            (ToolChange::Define { .. }, Some(owner)) => tools
+                .iter()
+                .rev()
+                .find(|tool| tool.visible_in(owner.open) && tool.change.name() == change.name())
+                .filter(|tool| matches!(tool.change, ToolChange::Define { .. }))
+                .and_then(|tool| tool.owner.as_ref())
+                .filter(|previous| previous.plugin != owner.plugin)
+                .map(|previous| previous.plugin.clone()),
+            _ => None,
         };
         let id = self.last_id.get() + 1;
         self.last_id.set(id);
@@ -451,9 +449,9 @@ impl ScriptTool {
     ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         Ok(ToolContent {
             text: answer.text,
-            media: store_media(&*self.host, answer.media, folder).await?,
-            is_error: answer.is_error,
-            display: answer.display.0,
+            media: store_media(&*self.host, answer.media.unwrap_or_default(), folder).await?,
+            is_error: answer.is_error.unwrap_or_default(),
+            display: answer.display.map(|Json(display)| display).unwrap_or_default(),
         })
     }
 }
@@ -553,14 +551,14 @@ impl<'js, T: DeserializeOwned> FromJs<'js> for Json<T> {
     }
 }
 
-/// The checked result of a call.
+/// The checked result of a call. A missing field takes its default.
 #[derive(Debug, FromJs)]
 #[qjs(rename_all = "camelCase")]
 struct Answer {
     text: String,
-    is_error: bool,
-    media: Vec<MediaFile>,
-    display: Json<Vec<DisplayBlock>>,
+    is_error: Option<bool>,
+    media: Option<Vec<MediaFile>>,
+    display: Option<Json<Vec<DisplayBlock>>>,
 }
 
 /// A media item of a result.

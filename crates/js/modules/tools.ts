@@ -101,7 +101,7 @@ export type ToolMedia = {
       readonly bytes?: never;
     }
   | {
-      /** The bytes. yuke copies them when `execute` returns. */
+      /** The bytes. Do not change them after you give them to yuke. */
       readonly bytes: Uint8Array;
       readonly path?: never;
     }

@@ -41,6 +41,8 @@ export function toolItem(entry: ToolEntry, open: boolean, duration: string | und
   const body = bodyOf(entry);
   if (body !== undefined) {
     const preview = entry.result?.isError === true ? "head" : entry.hints.preview;
+    // The output of a running call still grows, so its preview names no count of hidden lines.
+    const live = entry.result === undefined;
     sections.push({
       id: body.id,
       kind: "text",
@@ -49,19 +51,17 @@ export function toolItem(entry: ToolEntry, open: boolean, duration: string | und
         if (open) return body.rows(width);
         if (preview === "none") return [];
         if (!body.plain) return previewRows(body.rows(width), preview);
-        return plainPreview(body.text, width, preview, body.id === "output");
+        return plainPreview(body.text, width, preview, live);
       },
     });
   }
   const band = bandOf(entry);
   if (band === undefined) return item(entry.id, ...sections);
-  return item(
-    entry.id,
-    ...sections.map((section) => ({
-      ...section,
-      render: (width: number) => bandedRows(section.render?.(width) ?? [], width, band),
-    })),
-  );
+  const banded = sections.map((section) => ({
+    ...section,
+    render: (width: number) => bandedRows(section.render?.(width) ?? [], width, band),
+  }));
+  return item(entry.id, ...banded);
 }
 
 /** The band behind each row of an unfinished call or a failed call. A call that ended well has none. */
@@ -80,6 +80,8 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
   const state = entry.status === "running" && duration !== undefined ? undefined : stateOf(entry);
   const end = [state, duration].map((part) => (part === undefined ? "" : ` · ${part}`)).join("");
   const value = subjectOf(entry);
+  // Only a file or a URI subject is a link. Raw arguments are not a link.
+  const link = (entry.hints.subject?.kind ?? "text") === "text" ? undefined : value;
   // The head line fills one row, so a long subject costs no more than a short one.
   const source = value === undefined ? name : `${name} ${value.slice(0, HEAD_SUBJECT)}`;
   // Each line end unit becomes one space, so the shown text keeps the offsets of its source.
@@ -97,7 +99,6 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
       const from = name.length + 1;
       const segments: Segment[] = [];
       if (shown.length > from) {
-        const link = entry.hints.subject === undefined || entry.hints.subject.kind === "text" ? undefined : value;
         segments.push({ text: name, style: STYLE.title, source: { kind: "text", from: 0, to: name.length } });
         segments.push({ text: " ", source: { kind: "text", from: name.length, to: from } });
         segments.push({ text: shown.slice(from), style: STYLE.subject, link, source: { kind, from, to: head.length } });

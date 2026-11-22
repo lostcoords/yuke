@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use rquickjs::convert::Coerced;
 use rquickjs::{Ctx, Function, Object, Persistent};
-use yuke_engine::Concurrency;
+use yuke_engine::{Concurrency, ToolHints};
 
 use tokio::sync::mpsc;
 use yuke_protocol::{ExtensionEventParams, NoticeParams, SessionId};
@@ -60,9 +60,11 @@ pub(super) fn add<'js>(
                     name: tool.get("name")?,
                     description: tool.get("description")?,
                     input_schema: tool.get("inputSchema")?,
-                    defer_loading: tool.get("deferLoading")?,
+                    defer_loading: tool.get::<_, Option<bool>>("deferLoading")?.unwrap_or_default(),
                 };
-                let Json(hints) = tool.get("hints")?;
+                let hints = tool
+                    .get::<_, Option<Json<ToolHints>>>("hints")?
+                    .map_or_else(ToolHints::default, |Json(hints)| hints);
                 registry
                     .add(
                         tool.get("owner")?,
