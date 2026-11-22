@@ -254,7 +254,6 @@ test("with a frame, the terminal gets each notice of the host", async () => {
       },
     ],
   });
-  await waitForSettled();
 
   assertEquals(
     notices?.().map((notice) => [notice.source, notice.level, notice.text]),

@@ -95,7 +95,7 @@ async function opened(replies: readonly Reply[], answer?: () => QuestionAnswer[]
   const host = await createHost({
     plugins: [{ name: "agents", apply: plugin.apply, session: plugin.session }],
     replies,
-    ...(answer === undefined ? {} : { answer }),
+    ...(answer === undefined ? {} : { onQuestion: answer }),
   });
   const parent = await host.openSession();
   return { host, parent, ...plugin };
@@ -160,6 +160,8 @@ test("a question of the child reaches the parent, and its answer returns to the 
     host.questions.map((question) => question.sessionId),
     [parent.id],
   );
+  // The second request is the child's, after the answer of the parent returned to its tool.
+  assertEquals(host.requests[1]?.messages.at(-1)?.text.includes('"values":["Yes"]'), true);
   assertEquals(
     newest(host),
     '<system_notification plugin="agents">explorer explore the store: completed.\nIt said yes.</system_notification>',
@@ -192,7 +194,6 @@ test("ctrl+b moves a foreground child: the call answers, the child goes on, and 
 
   handle.moveJobsToBackground();
   const result = await running;
-  await waitForSettled();
   const jobs = handle.jobs().map((job) => [job.id, job.state]);
   state.open();
   await waitForSettled();

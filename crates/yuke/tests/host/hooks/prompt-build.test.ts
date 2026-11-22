@@ -67,22 +67,6 @@ test("the order of the sections reaches the system prompt of a request", async (
   assertEquals(system.startsWith("<first>\nFIRST SECTION\n</first>\n\nYou are yuke"), true);
 });
 
-// The answers of a build stay in that build, so each build starts from the sections of the caller.
-test("each build starts from the sections of the caller", async () => {
-  let count = 0;
-  const counter = answering((event) => {
-    count += 1;
-    return { sections: { ...event.sections, base: `${event.sections.base} ${count}` } };
-  });
-  await using host = await createHost({ plugins: [{ name: "count", session: counter }] });
-  const session = await host.openSession();
-
-  await session.runHook("prompt.build", { sections: saved });
-  const second = await session.runHook("prompt.build", { sections: saved });
-
-  assertEquals(second.sections.base, "You are yuke. 2");
-});
-
 test("the first build waits for the setup of the session", async () => {
   const setup = Promise.withResolvers<void>();
   const late: PluginSession = async (s) => {

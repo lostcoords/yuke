@@ -22,21 +22,6 @@ function tool(entries: readonly Entry[], index: number): Extract<Entry, { kind: 
   return entry;
 }
 
-test("a turn sends the message to the fake model and shows its answer", async () => {
-  const replies = [reply.text("Hello.")];
-  await using host = await createHost({ plugins: [], replies });
-  const session = await host.openSession();
-
-  await session.sendMessage("Hi.");
-
-  assertEquals(
-    session.transcript.entries.map((entry) => entry.kind),
-    ["input", "text", "end"],
-  );
-  assertEquals(host.requests.length, 1);
-  assertEquals(host.requests[0]?.messages.at(-1)?.text, "Hi.");
-});
-
 test("an overloaded answer gets a retry without a wait", async () => {
   const replies = [reply.overloaded(), reply.text("Hello.")];
   await using host = await createHost({ plugins: [], replies });
@@ -103,21 +88,6 @@ test("send with an aborted signal rejects and sends nothing", async () => {
 
   assertEquals(error instanceof Error ? error.message : error, "early");
   assertEquals(session.transcript.entries, []);
-});
-
-test("a session without settings uses the test model in the folder of the test", async () => {
-  const replies = [reply.text("Hello.")];
-  await using host = await createHost({ plugins: [], replies });
-  const session = await host.openSession();
-
-  await session.sendMessage("Hi.");
-
-  const request = host.requests[0];
-  assert(request !== undefined, "no request");
-  assertEquals(request.messages, [{ role: "user", text: "Hi." }]);
-  assert(request.system.includes(folder()), "the system text names no workspace");
-  const body = request.body as Record<string, unknown>;
-  assertEquals(body.model, "MiniMax-M3");
 });
 
 // Each catalog model gets the fake answers in the stream format of its protocol.

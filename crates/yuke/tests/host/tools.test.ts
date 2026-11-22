@@ -224,19 +224,19 @@ test("a cancel aborts the signal, and the tool still answers", async () => {
   assertEquals(reason, "AbortError");
 });
 
-test("the signal aborts when the call ends, and the context names the folder", async () => {
+test("the signal aborts when the call ends", async () => {
   let kept: AbortSignal | undefined;
   const { host, session } = await opened(
     tool("keep", (_args, context) => {
       kept = context.signal;
-      return context.folder;
+      return "x";
     }),
   );
   await using _host = host;
 
-  const result = await session.call("keep", {});
+  await session.call("keep", {});
 
-  assertEquals([result.text, kept?.aborted], [folder(), true]);
+  assertEquals(kept?.aborted, true);
 });
 
 test("a call gets the id of its session, its call id, and its folder", async () => {

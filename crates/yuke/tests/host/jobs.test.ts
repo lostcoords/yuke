@@ -122,7 +122,6 @@ test("the stop tool aborts the signal, waits for the end, and drops the report",
   assertEquals(await pending, "explorer stopped.");
   // The stop answered after the end, so the list no longer holds the job.
   assertEquals(handle.jobs(), []);
-  await waitForSettled();
   assertEquals(session.transcript.entries, []);
   assertEquals(host.requests.length, 0);
 });
@@ -332,7 +331,6 @@ test("a job in a call stays hidden, and its report answers the call and not the 
   const movable = handle.canMoveJobsToBackground();
   work.finish(REPORT);
   const result = await call;
-  await waitForSettled();
 
   assertEquals([listed, movable], [[], true]);
   assertEquals(result.text, REPORT.text);
@@ -348,7 +346,6 @@ test("a throw of the work rejects the call that waits and frees the id", async (
   };
 
   const result = await session.call("work", {});
-  await waitForSettled();
   await s.jobs.start({ id: "explorer", label: "again" }, () => undefined);
 
   assertEquals([result.isError, result.text], [true, "the store is gone"]);
@@ -383,7 +380,6 @@ test("a move answers the call, keeps the signal quiet at its end, and the report
 
   handle.moveJobsToBackground();
   const result = await call;
-  await waitForSettled();
   const listed = handle.jobs().map((job) => job.id);
   const aborted = work.signal.aborted;
   const movable = handle.canMoveJobsToBackground();
@@ -429,7 +425,6 @@ test("a stop after a move aborts the signal and drops the report", async () => {
 
   assertEquals(await pending, "explorer stopped.");
   assertEquals(aborted, true);
-  await waitForSettled();
   assertEquals(host.requests.length, 0);
 });
 
@@ -456,7 +451,6 @@ test("the option background runs the work without the call", async () => {
   tool.background = true;
 
   const result = await session.call("work", {});
-  await waitForSettled();
   const listed = handle.jobs().map((job) => job.id);
   work.finish(REPORT);
   await waitForSettled();

@@ -28,11 +28,7 @@ const OLD_SUMMARY: Block = { kind: "userText", text: "<context_summary>\nold\n</
 
 /** A host with the plugin `compaction` whose side requests go to a fake model with `replies`. */
 async function compacting(replies: readonly Reply[]) {
-  const host = await createHost({
-    plugins: [{ bundled: "compaction" }],
-    replies,
-    onQuestion: () => undefined,
-  });
+  const host = await createHost({ plugins: [{ bundled: "compaction" }], replies });
   return { host, session: await host.openSession() };
 }
 

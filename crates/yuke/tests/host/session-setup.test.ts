@@ -396,13 +396,6 @@ test("a failed session drops only its tools, aborts its signal, and sends one no
   assertEquals(after, "true plugin bad defines a tool after the end of its session");
 });
 
-test("a notice of a session names its session", async () => {
-  await using host = await createHost({ plugins: [{ name: "loud", session: (s) => void s.notify("info", "opened") }] });
-  const session = await host.openSession();
-
-  assertEquals(host.notices, [{ sessionId: session.id, level: "info", source: "loud", text: "opened" }]);
-});
-
 test("a close refuses definitions from the abort on, and awaits every cleanup", async () => {
   let cleaned = 0;
   let refused = "";

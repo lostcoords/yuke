@@ -290,10 +290,7 @@ for (const [name, answer, expected] of [
     const redact: PluginSession = (s) => {
       s.addHook("tool.after", () => answer);
     };
-    await using host = await createHost({
-      plugins: [{ name: "redact", session: redact }],
-      onQuestion: () => undefined,
-    });
+    await using host = await createHost({ plugins: [{ name: "redact", session: redact }] });
     const session = await host.openSession();
 
     const result = await session.runHook("tool.after", { call, result: { ...original, display: [diff] } });
