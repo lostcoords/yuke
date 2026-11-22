@@ -1,6 +1,6 @@
 /** A mount: one close path for a pane, an overlay, or a root. */
 import { failureOf } from "yuke:internal/failure";
-import type { Mount, View, ViewFactory } from "yuke:tui";
+import type { Mount, View } from "yuke:tui";
 
 /**
  * A mount whose first `close()` aborts its signal, then runs `closed`. Later calls do nothing, so each close path (a
@@ -22,12 +22,12 @@ export function createMount(closed: () => void): Mount {
  * The view that `create` makes for `mount`, or `undefined` when the factory throws or closes its own mount. A throw
  * closes the mount and reports one fault as `owner`.
  */
-export function startView(
+export function startView<V extends View>(
   owner: string,
-  create: ViewFactory,
+  create: (mount: Mount) => V,
   mount: Mount,
   report: (source: string, text: string) => void,
-): View | undefined {
+): V | undefined {
   try {
     const view = create(mount);
     // A factory that closed its own mount wants no view.

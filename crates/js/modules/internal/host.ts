@@ -17,9 +17,7 @@ import {
 import { give } from "yuke:internal/plugins";
 import { sessionsOf } from "yuke:internal/sessions";
 import { folder } from "yuke:internal/test";
-import { coreOf } from "yuke:internal/tui/frame";
 import { setSurfaces } from "yuke:internal/tui/host";
-import { createSurface } from "yuke:internal/tui/surface";
 import { jsonCopy } from "yuke:internal/values";
 import { ClientRequestError, type Frozen, type SessionHandleEvent } from "yuke:plugins";
 import type { ExtensionRequestParams, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
@@ -95,8 +93,12 @@ export async function createHost(options: HostOptions): Promise<Host> {
   const stop = new AbortController();
   const frame = options.frame;
   if (frame !== undefined) {
-    const core = coreOf(frame);
-    setSurfaces((owner, signal) => createSurface(core, owner, signal));
+    // Each plugin gets a surface of the frame, and the stop of the plugin closes it.
+    setSurfaces((owner, signal) => {
+      const surface = frame.surface(owner);
+      signal.addEventListener("abort", () => surface.close(), { once: true });
+      return surface.tui;
+    });
     // The terminal shows each notice of the host, so the frame gets each one too.
     addListener("test", stop.signal, "notice", (notice) => frame.notice(notice));
   }

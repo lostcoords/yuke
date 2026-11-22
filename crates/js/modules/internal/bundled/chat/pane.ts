@@ -322,7 +322,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       (own) => create(own, chatPaneFields),
       child,
       (_source, text) => ctx.notify("error", text),
-    ) as V | undefined;
+    );
 
   /** Run `task` as the one action of the pane, unless another one runs. A failure gives the notice `text`. */
   const exclusive = async (text: string, task: () => Promise<void>): Promise<void> => {
