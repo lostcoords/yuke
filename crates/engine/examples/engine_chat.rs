@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         source: std::sync::Arc::new(yuke_ai::Credential::ApiKey(key.into())),
         context_window: None,
     };
-    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("engine-example"))?;
+    let http = yuke_http::Client::new(yuke_http::http::HeaderValue::from_static("engine-example"));
 
     let driver = Driver::new(&http, &model, &TokioTimer);
     let mut context = Vec::new();

@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         wire: Wire::OpenaiChat(ChatWire::default()),
         tool_search: false,
     };
-    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("ai-example"))?;
+    let http = yuke_http::Client::new(yuke_http::http::HeaderValue::from_static("ai-example"));
 
     let blocks = [Block::user_text("Explain Rust in one sentence.")];
     let settings = RequestSettings::new().max_output_tokens(512);

@@ -71,13 +71,9 @@ impl Place {
             variable,
             transport: transport.into(),
             exchange: Arc::new(ScriptedExchange::default()),
-            fetch: Arc::new(
-                yuke_http::Client::new(yuke_http::ClientOptions {
-                    idle_timeout: None,
-                    user_agent: "yuke-test".to_owned(),
-                })
-                .unwrap(),
-            ),
+            fetch: Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
+                "yuke-test",
+            ))),
             interface: None,
             internal_imports: false,
             test: None,

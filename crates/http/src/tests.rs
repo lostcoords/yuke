@@ -13,12 +13,8 @@ const TEST_USER_AGENT: &str = "http-test/0";
 
 const BODY: &str = "data: one\n\ndata: two\n\n";
 
-fn client(idle_timeout: Option<Duration>) -> Client {
-    Client::new(ClientOptions {
-        idle_timeout,
-        user_agent: TEST_USER_AGENT.to_owned(),
-    })
-    .unwrap()
+fn client() -> Client {
+    Client::new(HeaderValue::from_static(TEST_USER_AGENT))
 }
 
 /// A `POST` of `{}` to `/messages` on the local server at `port`.
@@ -26,6 +22,15 @@ fn post(port: u16) -> Request {
     Request {
         body: vec![Bytes::from_static(b"{}")],
         ..Request::new(Method::POST, format!("http://127.0.0.1:{port}/messages"))
+    }
+}
+
+/// `request` with the idle timeout `idle_timeout` and the deadline `deadline`.
+fn limited(request: Request, idle_timeout: Option<Duration>, deadline: Option<std::time::Instant>) -> Request {
+    Request {
+        idle_timeout,
+        deadline,
+        ..request
     }
 }
 
@@ -39,9 +44,9 @@ struct Out {
 }
 
 /// Send `request`, and read the whole body.
-async fn run(client: &Client, request: Request, deadline: Option<std::time::Instant>) -> Out {
+async fn run(client: &Client, request: Request) -> Out {
     let mut out = Out::default();
-    let mut body = match client.send(request, deadline).await {
+    let mut body = match client.send(request).await {
         Ok(response) => {
             out.status = Some(response.status);
             out.headers = response.headers;
@@ -64,10 +69,15 @@ async fn run(client: &Client, request: Request, deadline: Option<std::time::Inst
     out
 }
 
-/// Run one server and one `POST` on a private loopback port.
-async fn exchange(server: Server, client: &Client, deadline: Option<std::time::Instant>) -> (Seen, Out) {
+/// Run one server and one `POST` with `idle_timeout` and `deadline` on a private loopback port.
+async fn exchange(
+    server: Server,
+    client: &Client,
+    idle_timeout: Option<Duration>,
+    deadline: Option<std::time::Instant>,
+) -> (Seen, Out) {
     let (port, served) = listen(server).await;
-    let out = run(client, post(port), deadline).await;
+    let out = run(client, limited(post(port), idle_timeout, deadline)).await;
     (served.await.unwrap(), out)
 }
 
@@ -92,7 +102,7 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
     }
     request.body = vec![Bytes::from_static(b"{\"a\":"), Bytes::new(), Bytes::from_static(b"1}")];
 
-    let out = run(&client(None), request, None).await;
+    let out = run(&client(), request).await;
     let seen = served.await.unwrap();
 
     assert_eq!((seen.method.as_str(), seen.target.as_str()), ("PUT", "/items?x=1"));
@@ -113,7 +123,7 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
 #[tokio::test]
 async fn the_client_owns_the_framing_and_the_user_agent_of_a_request_wins() {
     // A wrong length makes both sides wait for bytes, so the idle timeout ends such a failure.
-    let client = client(Some(Duration::from_secs(1)));
+    let client = client();
     let mut seen = Vec::new();
     for (method, body) in [
         (Method::GET, ""),
@@ -134,7 +144,8 @@ async fn the_client_owns_the_framing_and_the_user_agent_of_a_request_wins() {
             .headers
             .insert(TRANSFER_ENCODING, HeaderValue::from_static("gzip"));
         request.body = vec![Bytes::from(body)];
-        assert_eq!(run(&client, request, None).await.error, None);
+        request.idle_timeout = Some(Duration::from_secs(1));
+        assert_eq!(run(&client, request).await.error, None);
         seen.push(served.await.unwrap());
     }
 
@@ -155,7 +166,8 @@ async fn a_redirect_and_a_compressed_body_reach_the_caller_as_they_are() {
             headers: vec![("location", "http://other.example/x")],
             ..Server::default()
         },
-        &client(None),
+        &client(),
+        None,
         None,
     )
     .await;
@@ -171,7 +183,8 @@ async fn a_redirect_and_a_compressed_body_reach_the_caller_as_they_are() {
             headers: vec![("content-encoding", "gzip")],
             ..Server::default()
         },
-        &client(None),
+        &client(),
+        None,
         None,
     )
     .await;
@@ -187,7 +200,7 @@ async fn stalled_body_hits_idle_timeout() {
         stall: true,
         ..Server::default()
     };
-    let (_, out) = exchange(server, &client(Some(Duration::from_millis(50))), None).await;
+    let (_, out) = exchange(server, &client(), Some(Duration::from_millis(50)), None).await;
     assert_eq!(out.error, Some(Error::IdleTimeout));
     assert_eq!(out.status, Some(StatusCode::OK));
 }
@@ -199,7 +212,7 @@ async fn silent_peer_hits_idle_timeout() {
         silent: true,
         ..Server::default()
     };
-    let (_, out) = exchange(server, &client(Some(Duration::from_millis(50))), None).await;
+    let (_, out) = exchange(server, &client(), Some(Duration::from_millis(50)), None).await;
     assert_eq!(out.error, Some(Error::IdleTimeout));
 }
 
@@ -211,7 +224,7 @@ async fn request_deadline_wins_over_longer_idle_timeout() {
             stall: true,
             ..Server::default()
         };
-        let (_, out) = exchange(server, &client(idle), Some(after(50))).await;
+        let (_, out) = exchange(server, &client(), idle, Some(after(50))).await;
         assert_eq!(out.error, Some(Error::RequestTimeout));
         assert_eq!(out.status, Some(StatusCode::OK));
     }
@@ -228,7 +241,10 @@ async fn stalled_handshake_is_a_connect_timeout() {
         drop(stream);
     });
     let request = Request::new(Method::POST, format!("https://127.0.0.1:{port}/messages"));
-    let error = client(Some(Duration::from_millis(50))).send(request, None).await.err();
+    let error = client()
+        .send(limited(request, Some(Duration::from_millis(50)), None))
+        .await
+        .err();
     assert_eq!(error, Some(Error::ConnectTimeout));
     peer.abort();
 }
@@ -240,7 +256,7 @@ async fn silent_peer_hits_request_deadline() {
         silent: true,
         ..Server::default()
     };
-    let (_, out) = exchange(server, &client(None), Some(after(50))).await;
+    let (_, out) = exchange(server, &client(), None, Some(after(50))).await;
     assert_eq!(out.error, Some(Error::RequestTimeout));
 }
 
@@ -265,7 +281,7 @@ async fn malformed_or_truncated_body_fails() {
             raw_response: Some(bytes),
             ..Server::default()
         };
-        let (_, out) = exchange(server, &client(None), None).await;
+        let (_, out) = exchange(server, &client(), None, None).await;
         assert_eq!(out.error, Some(cause), "{}", String::from_utf8_lossy(bytes));
         assert_eq!(out.status, Some(StatusCode::OK));
     }
@@ -283,15 +299,16 @@ async fn a_dropped_send_or_body_closes_the_connection() {
         };
         // The server returns only once the client closed the connection.
         let (port, served) = listen(server).await;
-        let client = client(Some(Duration::from_secs(30)));
+        let client = client();
+        let request = || limited(post(port), Some(Duration::from_secs(30)), None);
         if body_wait {
-            let mut response = client.send(post(port), None).await.unwrap();
+            let mut response = client.send(request()).await.unwrap();
             assert_eq!(response.status, StatusCode::OK);
             let read = tokio::time::timeout(Duration::from_millis(50), response.body.chunk()).await;
             assert!(read.is_err(), "the stalled body returned a chunk");
             drop(response);
         } else {
-            let sent = tokio::time::timeout(Duration::from_millis(50), client.send(post(port), None)).await;
+            let sent = tokio::time::timeout(Duration::from_millis(50), client.send(request())).await;
             assert!(sent.is_err(), "the silent peer answered a head");
         }
         tokio::time::timeout(Duration::from_secs(5), served)
@@ -303,7 +320,7 @@ async fn a_dropped_send_or_body_closes_the_connection() {
 
 #[tokio::test]
 async fn one_client_sends_concurrently() {
-    let client = client(Some(Duration::from_secs(5)));
+    let client = client();
     let gate = Arc::new(tokio::sync::Barrier::new(8));
     let mut ports = Vec::new();
     let mut servers = tokio::task::JoinSet::new();
@@ -327,14 +344,14 @@ async fn one_client_sends_concurrently() {
         Duration::from_secs(5),
         Box::pin(async {
             let (first, second, third, fourth, fifth, sixth, seventh, eighth) = tokio::join!(
-                run(&client, post(ports[0]), None),
-                run(&client, post(ports[1]), None),
-                run(&client, post(ports[2]), None),
-                run(&client, post(ports[3]), None),
-                run(&client, post(ports[4]), None),
-                run(&client, post(ports[5]), None),
-                run(&client, post(ports[6]), None),
-                run(&client, post(ports[7]), None),
+                run(&client, post(ports[0])),
+                run(&client, post(ports[1])),
+                run(&client, post(ports[2])),
+                run(&client, post(ports[3])),
+                run(&client, post(ports[4])),
+                run(&client, post(ports[5])),
+                run(&client, post(ports[6])),
+                run(&client, post(ports[7])),
             );
             let outputs = [first, second, third, fourth, fifth, sixth, seventh, eighth];
             let mut served = Vec::new();
@@ -362,7 +379,10 @@ async fn one_client_sends_concurrently() {
 /// Send to `url` with an idle timeout of 5 seconds, and return the error.
 async fn send_error(url: &str) -> Option<Error> {
     let request = Request::new(Method::POST, url);
-    client(Some(Duration::from_secs(5))).send(request, None).await.err()
+    client()
+        .send(limited(request, Some(Duration::from_secs(5)), None))
+        .await
+        .err()
 }
 
 // Each case fails before the request leaves, and the error names the step that failed.
@@ -407,10 +427,10 @@ async fn missing_root_certificates_fail_only_https() {
         }
         return;
     }
-    let client = client(None);
+    let client = client();
     for _ in 0..2 {
         let request = Request::new(Method::POST, "https://127.0.0.1:9/messages");
-        let error = client.send(request, None).await.err();
+        let error = client.send(request).await.err();
         assert_eq!(error, Some(Error::TlsSetupFailed));
     }
     let server = Server {
@@ -418,7 +438,7 @@ async fn missing_root_certificates_fail_only_https() {
         body: BODY.into(),
         ..Server::default()
     };
-    let (_, out) = exchange(server, &client, None).await;
+    let (_, out) = exchange(server, &client, None, None).await;
     assert_eq!(out.error, None);
 }
 
@@ -429,7 +449,7 @@ fn ssl_cert_dir_names_the_exact_roots() {
     const FOLDER_CHILD: &str = "HTTP_TEST_FOLDER_CHILD";
 
     if let Ok(expected) = std::env::var(FOLDER_CHILD) {
-        assert_eq!(client(None).tls().is_ok(), expected == "roots");
+        assert_eq!(client().tls().is_ok(), expected == "roots");
         return;
     }
     let base = std::env::temp_dir().join(format!("yuke-http-roots-{}", std::process::id()));
@@ -527,7 +547,7 @@ async fn ssl_cert_file_decides_whether_a_handshake_succeeds() {
         body: vec![Bytes::from_static(b"{}")],
         ..Request::new(Method::POST, format!("https://127.0.0.1:{port}/messages"))
     };
-    let out = run(&client(None), request, None).await;
+    let out = run(&client(), request).await;
     if expected == "trusted" {
         assert_eq!(out.error, None);
         assert_eq!(out.status, Some(StatusCode::OK));
@@ -536,12 +556,6 @@ async fn ssl_cert_file_decides_whether_a_handshake_succeeds() {
         assert_eq!(out.error, Some(Error::CertificateRejected));
     }
     server.await.unwrap();
-}
-
-#[test]
-fn invalid_user_agent_is_rejected() {
-    let options = ClientOptions::new("bad\r\n");
-    assert!(matches!(Client::new(options), Err(UserAgentError)));
 }
 
 #[test]

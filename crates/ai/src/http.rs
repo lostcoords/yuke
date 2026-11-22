@@ -3,6 +3,7 @@
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use bytes::Bytes;
 use yuke_http::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, HeaderName};
@@ -13,6 +14,9 @@ use crate::Header;
 use crate::transport::{
     Body, BoxBody, BoxFuture, Exchange, ExchangeAnswer, ExchangeRequest, Fault, Head, Outgoing, Transport, next_chunk,
 };
+
+/// The longest wait for a provider: for the head of its answer, and for each chunk of the body.
+const IDLE_TIMEOUT: Duration = Duration::from_mins(5);
 
 impl Transport for Client {
     fn open<'a>(
@@ -75,10 +79,14 @@ async fn round_trip(
     plan: Plan<'_>,
     deadline: Option<std::time::Instant>,
 ) -> Result<(Head, BoxBody), Fault> {
-    let mut request = yuke_http::Request::new(Method::POST, plan.url);
-    request.headers = headers(&plan)?;
-    request.body = plan.body;
-    let response = client.send(request, deadline).await.map_err(fault_of)?;
+    let request = yuke_http::Request {
+        headers: headers(&plan)?,
+        body: plan.body,
+        idle_timeout: Some(IDLE_TIMEOUT),
+        deadline,
+        ..yuke_http::Request::new(Method::POST, plan.url)
+    };
+    let response = client.send(request).await.map_err(fault_of)?;
     let status = response.status.as_u16();
     // The client never follows a redirect, so the key never reaches another origin.
     if (300..400).contains(&status) {

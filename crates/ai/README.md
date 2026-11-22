@@ -32,8 +32,9 @@ All protocols work without default features. Supply a custom [`Transport`](src/t
 
 ## Defaults
 
-The caller can change each default: `yuke_http::ClientOptions::new`, [`ResponseLimits::default`](src/response.rs),
-and [`retry::Policy::default`](src/retry.rs).
+The caller can change each default: [`ResponseLimits::default`](src/response.rs) and
+[`retry::Policy::default`](src/retry.rs). A provider request waits at most 5 minutes for the head and for each chunk
+of the body.
 
 ## Examples
 

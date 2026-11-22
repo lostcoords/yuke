@@ -10,7 +10,7 @@ async fn check_with(server: Server, current: &str, channel: Channel) -> (Result<
         pages: origin.clone(),
         api: origin,
     };
-    let client = Client::new(ClientOptions::new("yuke-test")).unwrap();
+    let client = Client::new(header::HeaderValue::from_static("yuke-test"));
     let found = check(&client, &hosts, current, channel).await;
     (found, seen.await.unwrap().target)
 }

@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("OPENAI_API_KEY")?;
     let target = yuke_ai::catalog::resolve("openai/gpt-6-astra")?;
     let credential = yuke_ai::Credential::ApiKey(key.into());
-    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("ai-example"))?;
+    let http = yuke_http::Client::new(yuke_http::http::HeaderValue::from_static("ai-example"));
 
     let blocks = [Block::user_text("Explain Rust in one sentence.")];
     let settings = RequestSettings::new().max_output_tokens(4096).effort(Effort::Low);

@@ -253,13 +253,9 @@ fn options(folder: &Path, processes: Rc<Processes>) -> Options {
         processes,
         models: Rc::new(NoModels),
         sessions: Rc::new(NoSessions),
-        http: Arc::new(
-            yuke_http::Client::new(yuke_http::ClientOptions {
-                idle_timeout: None,
-                user_agent: "yuke-js-test".to_owned(),
-            })
-            .unwrap(),
-        ),
+        http: Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
+            "yuke-js-test",
+        ))),
         interface: None,
         internal_imports: false,
         test_host: None,

@@ -71,7 +71,7 @@ pub(crate) struct Machine {
     pub(crate) transport: Arc<dyn Transport>,
     /// Sends the requests of the logins.
     pub(crate) exchange: Arc<dyn Exchange>,
-    /// Sends the requests of `fetch` in the plugins. It has no idle timeout, so only the signal stops a slow fetch.
+    /// Sends the requests of `fetch` in the plugins. A fetch sets no idle timeout, so only the signal stops a slow fetch.
     pub(crate) fetch: Arc<yuke_http::Client>,
     /// The terminal interface, or `None` with no view.
     /// Each runtime of a reload draws on its display.

@@ -28,39 +28,6 @@ pub use http;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-/// How a [`Client`] waits for the peer and names itself.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ClientOptions {
-    /// The longest wait for the peer. The connect, the send, and the head share one wait. Each body read has one
-    /// wait. `None` sets no bound.
-    pub idle_timeout: Option<Duration>,
-    /// The client sends this value on each request whose headers have no `user-agent`. It must be a valid header
-    /// value.
-    pub user_agent: String,
-}
-
-impl ClientOptions {
-    /// Options with `user_agent` and the default idle timeout of 300 seconds.
-    pub fn new(user_agent: impl Into<String>) -> Self {
-        ClientOptions {
-            idle_timeout: Some(Duration::from_secs(300)),
-            user_agent: user_agent.into(),
-        }
-    }
-}
-
-/// The error that [`Client::new`] returns when the user agent is not a valid header value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UserAgentError;
-
-impl fmt::Display for UserAgentError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("the user agent is not a valid header value")
-    }
-}
-
-impl std::error::Error for UserAgentError {}
-
 /// One request. The client owns the framing headers:
 /// - It sets `host` and `connection: close`.
 /// - It removes `content-length` and `transfer-encoding`. It sets `content-length` for a body, or for a `POST`, a
@@ -77,16 +44,23 @@ pub struct Request {
     /// The body, in parts that the client sends in order, so a large body needs no copy. A request with no body has no
     /// parts.
     pub body: Vec<Bytes>,
+    /// The longest wait for the peer. The connect, the send, and the head share one wait. Each body read has one
+    /// wait. `None` sets no bound.
+    pub idle_timeout: Option<Duration>,
+    /// The end of the whole request, up to the end of the body. `None` sets no bound.
+    pub deadline: Option<std::time::Instant>,
 }
 
 impl Request {
-    /// A request of `method` to `url`, with no header and no body.
+    /// A request of `method` to `url`, with no header, no body, and no time bound.
     pub fn new(method: Method, url: impl Into<String>) -> Self {
         Request {
             method,
             url: url.into(),
             headers: HeaderMap::new(),
             body: Vec::new(),
+            idle_timeout: None,
+            deadline: None,
         }
     }
 }
@@ -99,6 +73,8 @@ impl fmt::Debug for Request {
             .field("url", &self.url)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field("body", &self.body.iter().map(Bytes::len).sum::<usize>())
+            .field("idle_timeout", &self.idle_timeout)
+            .field("deadline", &self.deadline)
             .finish()
     }
 }
@@ -178,9 +154,10 @@ impl std::error::Error for Error {}
 /// - On other platforms, the roots come from the paths in `SSL_CERT_FILE` or `SSL_CERT_DIR`, else from the system bundle
 ///   file.
 /// - The key exchange offers the hybrid post-quantum group `X25519MLKEM768` first.
+///
+/// One client serves the whole process, so each request shares its TLS configuration.
 #[derive(Debug)]
 pub struct Client {
-    idle_timeout: Option<Duration>,
     user_agent: HeaderValue,
     /// The TLS configuration, which the first successful `https` send builds. A failed build is not kept, so the next
     /// send builds again.
@@ -188,34 +165,30 @@ pub struct Client {
 }
 
 impl Client {
-    /// Creates a client with `options`. The first `https` send builds the TLS configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserAgentError`] if the user agent is not a valid header value.
-    pub fn new(options: ClientOptions) -> Result<Self, UserAgentError> {
-        let user_agent = HeaderValue::try_from(options.user_agent).map_err(|_| UserAgentError)?;
-        Ok(Client {
-            idle_timeout: options.idle_timeout,
+    /// Creates a client that sends `user_agent` on each request whose headers have no `user-agent`. The first `https`
+    /// send builds the TLS configuration.
+    pub fn new(user_agent: HeaderValue) -> Self {
+        Client {
             user_agent,
             tls: OnceLock::new(),
-        })
+        }
     }
 
-    /// Send `request` on a new connection, and return the response at its head. `deadline` bounds the request up to
-    /// the end of the body.
+    /// Send `request` on a new connection, and return the response at its head. The idle timeout and the deadline of
+    /// `request` bound the request up to the end of the body.
     ///
     /// # Errors
     ///
     /// Returns an [`Error`] if no response head arrives.
-    pub async fn send(&self, request: Request, deadline: Option<std::time::Instant>) -> Result<Response, Error> {
+    pub async fn send(&self, request: Request) -> Result<Response, Error> {
         // The deadline counts from here, before any preparation.
-        let deadline = deadline.map(Instant::from_std);
+        let deadline = request.deadline.map(Instant::from_std);
+        let idle_timeout = request.idle_timeout;
         let target = Target::parse(&request.url)?;
         let http_request = self.build(&target, request)?;
 
         // Connect, send, and the head wait share the idle deadline, so a silent peer never holds the call.
-        let bound = earlier(self.idle_timeout.map(|idle| Instant::now() + idle), deadline);
+        let bound = earlier(idle_timeout.map(|idle| Instant::now() + idle), deadline);
         let head = match bound {
             None => send(self.connect(&target).await?, http_request).await,
             Some((at, timed_out)) => {
@@ -235,7 +208,7 @@ impl Client {
             body: Body {
                 connection: Some(connection),
                 incoming,
-                idle_timeout: self.idle_timeout,
+                idle_timeout,
                 deadline,
                 timer: None,
                 armed: None,

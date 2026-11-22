@@ -31,7 +31,7 @@ use clap::{Parser, Subcommand};
 
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
-use yuke_engine::{CancellationToken, TurnEnd, chain_text};
+use yuke_engine::{CancellationToken, TurnEnd};
 use yuke_protocol::{CheckPluginsResult, LockedPlugin, PluginLog, PluginTarget, ReasoningSelection, SessionId};
 
 use crate::app::{Machine, progress, say, warn};
@@ -42,6 +42,12 @@ use crate::providers::Providers;
 
 /// The user agent of each HTTP request of yuke.
 const USER_AGENT: &str = concat!("yuke/", env!("YUKE_VERSION"));
+
+/// The HTTP client of yuke. One client serves the whole process.
+fn http_client() -> yuke_http::Client {
+    // The check of the value runs at compile time.
+    yuke_http::Client::new(const { yuke_http::http::HeaderValue::from_static(USER_AGENT) })
+}
 
 /// The longest wait of `yuke --rpc` for the client to read the last messages after the end of its input.
 const DRAIN_LIMIT: Duration = Duration::from_secs(5);
@@ -571,20 +577,14 @@ async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<
 /// The facts of this machine: its environment, its folders, and an HTTP transport.
 fn machine() -> Result<Machine, String> {
     let (paths, home) = environment_paths()?;
-    let options = yuke_http::ClientOptions::new(USER_AGENT);
-    let http = Arc::new(yuke_http::Client::new(options.clone()).map_err(|error| chain_text(&error))?);
-    let fetch = yuke_http::Client::new(yuke_http::ClientOptions {
-        idle_timeout: None,
-        ..options
-    })
-    .map_err(|error| chain_text(&error))?;
+    let http = Arc::new(http_client());
     Ok(Machine {
         paths,
         home,
         variable: Box::new(|name| std::env::var_os(name)),
         transport: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Transport>,
-        exchange: http,
-        fetch: Arc::new(fetch),
+        exchange: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Exchange>,
+        fetch: http,
         interface: None,
         internal_imports: false,
         test: None,

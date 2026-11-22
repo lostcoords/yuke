@@ -1,6 +1,5 @@
 //! Loopback tests of the provider rules over [`Client`]: one real server and one real client per test.
 
-use yuke_http::ClientOptions;
 use yuke_http::testing::{Seen, Server, listen};
 
 use super::*;
@@ -63,11 +62,7 @@ async fn run_client(client: &Client, port: u16) -> ClientOut {
 }
 
 fn client() -> Client {
-    Client::new(ClientOptions {
-        idle_timeout: None,
-        user_agent: TEST_USER_AGENT.to_owned(),
-    })
-    .unwrap()
+    Client::new(HeaderValue::from_static(TEST_USER_AGENT))
 }
 
 /// Run one server and one client request on a private loopback port.
@@ -79,24 +74,22 @@ async fn exchange(server: Server, client: &Client) -> (Seen, ClientOut) {
 
 #[tokio::test]
 async fn streams_sse_body() {
-    for client in [client(), Client::new(ClientOptions::new(TEST_USER_AGENT)).unwrap()] {
-        let server = Server {
-            status: 200,
-            body: CANNED_SSE.into(),
-            ..Server::default()
-        };
-        let (seen, out) = exchange(server, &client).await;
-        assert_eq!(out.err, None);
-        assert_eq!(out.head.unwrap().status, 200);
-        assert_eq!(out.bytes, CANNED_SSE.as_bytes());
-        assert_eq!(seen.values("user-agent"), [TEST_USER_AGENT]);
-        assert_eq!(seen.values("accept-language"), ["en", "es"]);
-        assert_eq!(seen.values("x-note"), ["café"]);
-        assert_eq!(seen.values("content-type"), ["application/json"]);
-        assert_eq!(seen.values("accept"), ["text/event-stream"]);
-        assert_eq!(seen.values("accept-encoding"), ["identity"]);
-        assert_eq!(seen.method, "POST");
-    }
+    let server = Server {
+        status: 200,
+        body: CANNED_SSE.into(),
+        ..Server::default()
+    };
+    let (seen, out) = exchange(server, &client()).await;
+    assert_eq!(out.err, None);
+    assert_eq!(out.head.unwrap().status, 200);
+    assert_eq!(out.bytes, CANNED_SSE.as_bytes());
+    assert_eq!(seen.values("user-agent"), [TEST_USER_AGENT]);
+    assert_eq!(seen.values("accept-language"), ["en", "es"]);
+    assert_eq!(seen.values("x-note"), ["café"]);
+    assert_eq!(seen.values("content-type"), ["application/json"]);
+    assert_eq!(seen.values("accept"), ["text/event-stream"]);
+    assert_eq!(seen.values("accept-encoding"), ["identity"]);
+    assert_eq!(seen.method, "POST");
 }
 
 /// Run one server and one exchange of a form `body` with an answer limit of `max_answer` bytes.

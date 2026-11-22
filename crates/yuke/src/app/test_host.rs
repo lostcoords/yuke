@@ -422,10 +422,9 @@ impl TestPlace {
     ) -> Result<(TestPlace, mpsc::UnboundedReceiver<Report>), TestError> {
         let (reports, report_receiver) = mpsc::unbounded_channel();
         let host = Rc::new(AppTestHost::new(reports.clone()));
-        let fetch = Arc::new(yuke_http::Client::new(yuke_http::ClientOptions {
-            idle_timeout: None,
-            user_agent: "yuke-test".to_owned(),
-        })?);
+        let fetch = Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
+            "yuke-test",
+        )));
         let machine = Machine {
             paths: Paths {
                 config: place.join("config"),

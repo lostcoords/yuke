@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use yuke_http::http::{Method, StatusCode, header};
-use yuke_http::{Client, ClientOptions, Request, Response};
+use yuke_http::{Client, Request, Response};
 
 use crate::app::{progress, say, warn};
 
@@ -163,8 +163,11 @@ async fn check(client: &Client, hosts: &Hosts, current: &str, channel: Channel) 
 
 /// Send a `GET` of `url`, and return the response at its head.
 async fn get(client: &Client, url: String) -> Result<Response, String> {
-    let request = Request::new(Method::GET, url.clone());
-    (client.send(request, Some(Instant::now() + REQUEST_LIMIT)).await).map_err(|error| format!("{url}: {error}"))
+    let request = Request {
+        deadline: Some(Instant::now() + REQUEST_LIMIT),
+        ..Request::new(Method::GET, url.clone())
+    };
+    (client.send(request).await).map_err(|error| format!("{url}: {error}"))
 }
 
 /// Read the body of `response` to its end.
@@ -229,7 +232,7 @@ pub(crate) async fn update(
         })?,
     };
 
-    let client = Client::new(ClientOptions::new(crate::USER_AGENT)).map_err(|error| error.to_string())?;
+    let client = crate::http_client();
     // The installer finds a missing version, so only a channel needs a check.
     let found = match &version {
         Some(version) if version == current => Found::Current,

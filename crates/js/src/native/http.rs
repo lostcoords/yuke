@@ -45,7 +45,7 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, client: &Arc<yuke_h
                         Err(failure) => return Err(failure.throw(&ctx)),
                     };
                     let sent = tokio::select! {
-                        sent = client.send(request, None) => sent,
+                        sent = client.send(request) => sent,
                         () = stop.cancelled() => return Err(Failure::Cancelled.throw(&ctx)),
                     };
                     let response = sent.map_err(|error| Failure::Http(error).throw(&ctx))?;
