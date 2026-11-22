@@ -185,10 +185,11 @@ async function open(
 /** The sessions for the plugin `plugin`. Its signal ends each handle that it opened. */
 export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
   return {
-    create: (settings, options) => sessionsCreate([settings, options?.parent]),
-    fork: (id, options) => sessionsFork([id, options?.through]),
-    list: (params) => sessionsList(params ?? {}),
-    get: (id) => sessionsGet(id),
+    // Each request is async, so an argument that the native refuses rejects the promise and throws at no call.
+    create: async (settings, options) => await sessionsCreate([settings, options?.parent]),
+    fork: async (id, options) => await sessionsFork([id, options?.through]),
+    list: async (params) => await sessionsList(params ?? {}),
+    get: async (id) => await sessionsGet(id),
     async rename(id, title) {
       await sessionsRename([id, title]);
     },
@@ -196,7 +197,7 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
       await sessionsRemove(id);
     },
     open: (id, options) => open(plugin, signal, id, options),
-    events: (id, page) => sessionsEvents([id, page.before, page.limit]),
+    events: async (id, page) => await sessionsEvents([id, page.before, page.limit]),
     async closeForAll(id) {
       await sessionClose(id);
     },
@@ -205,7 +206,7 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
 
 /** The catalog of the providers and their models. */
 export const catalog: Catalog = {
-  list: (options) => catalogList(options?.all === true),
+  list: async (options) => await catalogList(options?.all === true),
 } satisfies Catalog;
 
 /** A device login that has started. The user opens the URL and enters the code. */

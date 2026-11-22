@@ -148,3 +148,44 @@ test("a child that opens again names its saved parent", async () => {
     [session.id],
   );
 });
+
+test("each request with a malformed session id rejects, and none throws at the call", async () => {
+  let sessions: Sessions | undefined;
+  await using _host = await createHost({
+    plugins: [
+      {
+        name: "holder",
+        apply: (ctx) => {
+          sessions = ctx.get("sessions");
+          return undefined;
+        },
+      },
+    ],
+  });
+  const service = sessions as Sessions;
+  const requests: [string, () => Promise<unknown>][] = [
+    ["get", () => service.get("nope")],
+    ["fork", () => service.fork("nope")],
+    ["events", () => service.events("nope", { limit: 1 })],
+    ["list", () => service.list({ parent: "nope" })],
+    ["rename", () => service.rename("nope", "title")],
+    ["open", () => service.open("nope", { tail: 0, onEvent: () => undefined })],
+  ];
+  const thrown: string[] = [];
+  const rejected: string[] = [];
+  for (const [name, request] of requests) {
+    let promise: Promise<unknown>;
+    try {
+      promise = request();
+    } catch {
+      thrown.push(name);
+      continue;
+    }
+    await promise.then(
+      () => undefined,
+      () => rejected.push(name),
+    );
+  }
+
+  assertEquals([thrown, rejected], [[], ["get", "fork", "events", "list", "rename", "open"]]);
+});
