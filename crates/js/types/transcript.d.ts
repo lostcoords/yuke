@@ -22,6 +22,8 @@ declare module "yuke:transcript" {
     InputSource,
     InteractionId,
     InteractionRequest,
+    Job,
+    JobId,
     SessionSettings,
     SessionState,
     StoredEvent,
@@ -120,6 +122,8 @@ declare module "yuke:transcript" {
     readonly pending: ReadonlyMap<InputId, Frozen<Input>>;
     /** The open interactions, by id. */
     readonly interactions: ReadonlyMap<InteractionId, Interaction>;
+    /** The running background jobs of the session, by id. A job leaves at its end. */
+    readonly jobs: ReadonlyMap<JobId, Frozen<Job>>;
     get state(): SessionState;
     get settings(): Frozen<SessionSettings> | undefined;
     /** The last failure of the running turn, until its next draft or its end. */

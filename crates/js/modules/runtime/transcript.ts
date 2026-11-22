@@ -8,6 +8,8 @@ import type {
   Input,
   InputId,
   InteractionId,
+  Job,
+  JobId,
   SessionSettings,
   SessionState,
   SessionUpdate,
@@ -69,6 +71,7 @@ export class Transcript {
   readonly entries: Entry[] = [];
   readonly pending = new Map<InputId, Frozen<Input>>();
   readonly interactions = new Map<InteractionId, Interaction>();
+  readonly jobs = new Map<JobId, Frozen<Job>>();
   #state: SessionState = "idle";
   #settings: Frozen<SessionSettings> | undefined;
   #status: TurnFailure | undefined;
@@ -125,6 +128,7 @@ export class Transcript {
     this.entries.length = 0;
     this.pending.clear();
     this.interactions.clear();
+    this.jobs.clear();
     this.#state = "idle";
     this.#settings = event.snapshot.settings;
     this.#status = undefined;
@@ -209,6 +213,10 @@ export class Transcript {
         break;
       case "interactionClosed":
         this.interactions.delete(update.interactionId);
+        break;
+      case "job":
+        if (update.job.state === "running") this.jobs.set(update.job.id, update.job);
+        else this.jobs.delete(update.job.id);
         break;
       case "retryScheduled":
         this.#status = { kind: "retryScheduled", afterMs: update.afterMs, error: update.error };

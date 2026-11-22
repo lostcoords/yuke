@@ -447,3 +447,17 @@ test("usage is the token counts of the last saved answer, and a replaced context
   transcript.apply({ kind: "snapshot", snapshot: { settings, updates: [] } });
   assertEquals([first, last, compacted, next, transcript.usage], [100, 200, undefined, 300, undefined]);
 });
+
+test("the jobs hold each running job of the snapshot and the updates, and an ended job leaves", () => {
+  const job = (id: string, state: "running" | "ended"): SessionUpdate => ({
+    kind: "job",
+    job: { id, label: id, state, kind: "plugin", plugin: "agents" },
+  });
+  const transcript = opened([job("a", "running")]);
+  transcript.apply({ kind: "update", update: job("b", "running") });
+  transcript.apply({ kind: "update", update: job("a", "ended") });
+  const live = [...transcript.jobs.keys()];
+  transcript.apply({ kind: "snapshot", snapshot: { settings, updates: [] } });
+
+  assertEquals([live, transcript.jobs.size], [["b"], 0]);
+});
