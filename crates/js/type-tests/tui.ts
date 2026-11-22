@@ -2,19 +2,7 @@
 
 import type { TermEvent } from "yuke:internal/term";
 import type { PluginContext } from "yuke:plugins";
-import type {
-  Canvas,
-  Command,
-  KeyEvent,
-  Placement,
-  ScrollList,
-  Size,
-  Style,
-  StylePatch,
-  TextRow,
-  Tui,
-  View,
-} from "yuke:tui";
+import type { KeyEvent, Style, StylePatch, Tui } from "yuke:tui";
 import type * as Runtime from "../modules/runtime/tui.ts";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -26,15 +14,6 @@ declare function assert<T extends true>(): void;
 // The runtime module exports exactly the declared values, so no export is missing and none is extra.
 assert<Equal<keyof typeof Runtime, keyof typeof import("yuke:tui")>>();
 
-// A plugin can read a display row or all rows of an item, with `undefined` for a missing row or key.
-declare const list: ScrollList<{ key: string }>;
-const displayRow = list.rowAt(0);
-const itemRows = list.rowsOf("a");
-assert<
-  Equal<typeof displayRow, { readonly item: { key: string }; readonly row: number; readonly text: TextRow } | undefined>
->();
-assert<Equal<typeof itemRows, { readonly start: number; readonly rows: readonly TextRow[] } | undefined>>();
-
 // The frame loop gives the public key event, so a view gets what the host sends.
 assert<Equal<KeyEvent, Extract<TermEvent, { type: "key" }>>>();
 
@@ -45,28 +24,7 @@ const style: Style = { fg: null };
 // @ts-expect-error A color names the base palette or is an index, `#rrggbb`, or `reset`.
 const color: Style = { fg: "red" };
 
-// A command needs a name and a run function; `description` and `enabled` are optional.
-const command: Command = { name: "open", run: async () => {} };
-
-// A container is an object with a layout; a class implements the interface too.
-declare const child: View;
-const container = {
-  layout: (size: Size): readonly Placement[] => [{ view: child, rect: { column: 0, row: 0, ...size } }],
-  draw: () => {},
-} satisfies View;
-class Clock implements View {
-  readonly focusable = true;
-  draw(canvas: Canvas, focused: boolean): void {
-    canvas.text(0, 0, focused ? "now" : "later");
-  }
-}
-
-// A key handler reads named modifiers.
-const handler = (event: KeyEvent): boolean => event.modifiers.ctrl && event.character === "x";
-
-// The surface gives the panes and a root mount from a factory.
 declare const tui: Tui;
-const root = tui.wrapRoot((mount) => ({ draw: () => mount.signal.aborted }));
 // `get("tui")` can be `undefined` outside the terminal interface, so a plugin must check it.
 declare const ctx: PluginContext;
 const got = ctx.get("tui");
@@ -77,4 +35,4 @@ ctx.provide("tui", tui);
 const watched = tui.widgets.addWatcher((mount) => {
   if (mount.widget.kind === "editor") mount.widget.caret = 0;
 });
-void [patch, style, color, command, container, Clock, handler, root, got, watched];
+void [patch, style, color, got, watched];

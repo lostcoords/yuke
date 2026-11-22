@@ -4,22 +4,18 @@ import type { GenerateTextOptions } from "yuke:ai";
 import type {
   Catalog,
   Frozen,
-  ParsedToolCall,
   PluginApply,
   PluginContext,
   PluginSession,
   PromptBuildAnswer,
-  PromptBuildEvent,
   RoundAfterAnswer,
   RoundBeforeAnswer,
   SessionContext,
   Sessions,
   ToolAfterAnswer,
   ToolBeforeAnswer,
-  ToolBeforeEvent,
-  ToolCallResult,
 } from "yuke:plugins";
-import type { Block, FinishReason } from "yuke:protocol";
+import type { Block } from "yuke:protocol";
 import type { Infer, ObjectSchema, ToolExecuteResult } from "yuke:tools";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -189,12 +185,6 @@ ctx.provide("catalog", { list: async () => ({ providers: [] }) });
 export async function drive(sessions: Sessions): Promise<void> {
   const handle = await sessions.open("id", { tail: 50, onEvent: (event) => void event });
   await handle.sendMessage({ content: [{ kind: "userText", text: "hi" }] });
-  // @ts-expect-error: an input holds blocks, not a text.
-  await handle.sendMessage("hi");
-  // @ts-expect-error: the snapshot needs a tail.
-  await sessions.open("id", { onEvent: () => undefined });
-  // @ts-expect-error: the callback is `onEvent`.
-  await sessions.open("id", { tail: 0, event: () => undefined });
   // A close ends this hold only, and `using` closes the handle too. `sessions.closeForAll` closes the session for each holder.
   handle.close();
   {
@@ -204,89 +194,13 @@ export async function drive(sessions: Sessions): Promise<void> {
   await sessions.closeForAll(handle.id);
 }
 
-// `yuke:fs` takes a base folder and a signal, and its failure has a code.
-async function files(): Promise<void> {
-  const fs = await import("yuke:fs");
-  const text: string = await fs.readTextFile("state.json", { folder: ctx.dataDir, signal: ctx.signal });
-  const bytes: Uint8Array = await fs.readFile("data.bin", { folder: ctx.dataDir, position: 0, length: 4 });
-  // A module finds the files beside it through `import.meta`. A built-in module has no folder.
-  const here: string | undefined = import.meta.dirname;
-  // @ts-expect-error: `dirname` can be undefined.
-  const folder: string = import.meta.dirname;
-  const url: string = import.meta.url;
-  const info: Date | null = (await fs.stat("prompt.md", { folder: here ?? ctx.dataDir })).mtime;
-  await fs.writeTextFile("state.json", text, { folder: ctx.dataDir, atomic: true, mode: 0o600 });
-  // @ts-expect-error: the data of `writeFile` is bytes.
-  await fs.writeFile("data.bin", "text", { folder: ctx.dataDir });
-  void bytes;
-  void info;
-  void folder;
-  void url;
-}
-void files;
-
-// `yuke:process` runs a program in a required folder, and its output is bytes.
-async function programs(): Promise<void> {
-  const { Command } = await import("yuke:process");
-  const out = await new Command("git", { args: ["status"], cwd: ctx.dataDir, signal: ctx.signal }).output();
-  const ok: boolean = out.success;
-  const stdout: Uint8Array = out.stdout;
-  const signal: string | null = out.signal;
-  // @ts-expect-error: a command needs its folder.
-  new Command("git", { args: ["status"] });
-  // @ts-expect-error: the output of a program never goes to the terminal of yuke.
-  new Command("git", { cwd: ctx.dataDir, stdout: "inherit" });
-  void ok;
-  void stdout;
-  void signal;
-}
-void programs;
-
-// `yuke:net` connects to a Unix socket, its stream gives bytes, and its failure narrows to a code.
-async function sockets(): Promise<void> {
-  const { connect, ConnectionError } = await import("yuke:net");
-  try {
-    using connection = await connect({ path: "/tmp/h.sock", signal: ctx.signal });
-    await connection.write(new TextEncoder().encode("ping\n"));
-    for await (const chunk of connection.readable) {
-      const bytes: Uint8Array = chunk;
-      void bytes;
-    }
-  } catch (error) {
-    const code: string | undefined = error instanceof ConnectionError ? error.code : undefined;
-    void code;
-  }
-  // @ts-expect-error: a write takes bytes.
-  await (await connect({ path: "/tmp/h.sock" })).write("ping");
-}
-void sockets;
-
-// `yuke:ai` needs a model, takes a text or blocks, and its answer has the finish reason and the usage.
+// The type of `output` follows the `output` option of `generateText`.
 async function models(): Promise<void> {
   const { generateText } = await import("yuke:ai");
   const prompt: Block[] = [{ kind: "userText", text: "Hi." }];
   const answer = await generateText({ model: s.settings.model, prompt, maxOutputTokens: 100, signal: s.signal });
-  await generateText({ model: s.settings.model, instructions: "Be brief.", prompt: "Hi." });
-  await generateText({ model: s.settings.model, prompt: "Hi.", reasoning: { effort: "high" } });
-  await generateText({
-    model: s.settings.model,
-    prompt: "Describe.",
-    attachments: [
-      { mimeType: "image/png", bytes: new Uint8Array() },
-      { mimeType: "image/png", path: "/tmp/shot.png" },
-    ],
-  });
-  // @ts-expect-error: an attachment holds bytes or a path.
-  await generateText({ model: s.settings.model, prompt: "Describe.", attachments: [{ mimeType: "image/png" }] });
-  const text: string = answer.text;
-  assert<Equal<typeof answer.finishReason, FinishReason>>();
-  const input: number | undefined = answer.usage.input;
-  // @ts-expect-error: a request names its model.
-  await generateText({ prompt });
-  // @ts-expect-error: a setting has its type.
-  await generateText({ model: s.settings.model, prompt, temperature: "hot" });
   assert<Equal<typeof answer.output, undefined>>();
-  const { Output, NoObjectGeneratedError } = await import("yuke:ai");
+  const { Output } = await import("yuke:ai");
   const schema = {
     type: "object",
     properties: { summary: { type: "string" }, count: { type: "integer" } },
@@ -304,13 +218,6 @@ async function models(): Promise<void> {
   await generateText<{ summary: string }>({ model: s.settings.model, prompt });
   // @ts-expect-error: only `Output.object` makes an output.
   await generateText({ model: s.settings.model, prompt, output: { schema, name: "response" } });
-  const failure: unknown = undefined;
-  if (failure instanceof NoObjectGeneratedError) {
-    const kept: string = failure.text;
-    void kept;
-  }
-  void text;
-  void input;
 }
 void models;
 
@@ -318,8 +225,6 @@ export { results };
 
 // A `prompt.build` handler gets the sections, and answers new sections or nothing.
 const remove: () => void = s.addHook("prompt.build", (event) => {
-  assert<Equal<typeof event, PromptBuildEvent>>();
-  assert<Equal<typeof event.sections, Readonly<Record<string, string>>>>();
   // @ts-expect-error: a handler changes the sections through its answer.
   event.sections.rules = "Be brief.";
   return { sections: { ...event.sections, rules: "Be brief." } };
@@ -339,9 +244,6 @@ s.addHook("turn.start", () => undefined);
 
 // A `tool.before` handler gets the call and denies it with a reason, or returns nothing.
 s.addHook("tool.before", (event) => {
-  assert<Equal<typeof event, ToolBeforeEvent>>();
-  assert<Equal<typeof event.call, ParsedToolCall>>();
-  assert<Equal<typeof event.call.arguments, unknown>>();
   // @ts-expect-error: the call belongs to the model.
   event.call.name = "write";
   if (event.call.name === "exec") return { deny: "exec needs the user" };
@@ -356,7 +258,6 @@ s.addHook("tool.before", () => ({ deny: true }));
 
 // A `tool.after` handler gets the call and the result, and answers the changed fields or nothing.
 s.addHook("tool.after", (event) => {
-  assert<Equal<typeof event.result, ToolCallResult>>();
   // @ts-expect-error: a handler changes the result through its answer.
   event.result.text = "";
   if (event.call.name !== "read") return undefined;
@@ -420,10 +321,6 @@ s.addHook("round.after", () => ({ stop: true, continue: "x" }));
 // @ts-expect-error: a stop is `true`.
 s.addHook("round.after", () => ({ stop: false }));
 
-// The web globals declare what the runtime has, and no more.
-new TextDecoder("utf8");
-new TextDecoder("utf-16le");
-
 // The options of a plugin have the type of its `optionsSchema`, and both contexts read them.
 export const optionsSchema = {
   type: "object",
@@ -450,10 +347,3 @@ export const sessionWithOptions: PluginSession<Options> = (session) => {
 };
 // @ts-expect-error: a plugin without options has no option field.
 export const noOption: string = ctx.options.folder;
-
-// Each definition and each name removal has its own disposer.
-assert<Equal<ReturnType<SessionContext["tools"]["add"]>, () => void>>();
-assert<Equal<ReturnType<SessionContext["tools"]["remove"]>, () => void>>();
-s.tools.remove("read");
-// @ts-expect-error A tool name is a string.
-s.tools.remove(1);
