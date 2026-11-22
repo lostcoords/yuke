@@ -4,16 +4,12 @@ import { readTextFile, writeTextFile } from "yuke:fs";
 import { apply } from "yuke:internal/bundled/themes";
 import { assertEquals, createFrame, type FrameTest, folder, test, waitForSettled } from "yuke:test";
 import type { Tui } from "yuke:tui";
+import { fakeContext } from "./context.ts";
 
 /** Load the plugin in `frame` on the folder `dataDir`, and give the theme author surface and the notices. */
 async function load(frame: FrameTest, dataDir: string): Promise<{ tui: Tui; notices: string[] }> {
-  const surface = frame.surface("themes");
-  const notices: string[] = [];
-  await apply({
-    get: () => surface.tui,
-    dataDir,
-    notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-  } as never);
+  const { ctx, notices } = fakeContext({ name: "themes", services: { tui: frame.surface("themes").tui }, dataDir });
+  await apply(ctx);
   return { tui: frame.surface("author").tui, notices };
 }
 

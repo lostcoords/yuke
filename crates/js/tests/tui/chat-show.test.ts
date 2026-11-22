@@ -5,6 +5,7 @@ import { apply } from "yuke:internal/bundled/chat";
 import { assertEquals, assertRejects, createFrame, test, waitForSettled } from "yuke:test";
 import type { View } from "yuke:tui";
 import { commit, composerOf, fakeSessions, loadChat, replies } from "./chat.ts";
+import { fakeContext } from "./context.ts";
 
 test("show puts another session in the pane, ends the old handle, and the draft waits for the return", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
@@ -151,14 +152,8 @@ test("each pane keeps its own draft of a session that it leaves", async () => {
 });
 
 test("without the terminal interface the service shows no pane", async () => {
-  const provided = new Map<string, unknown>();
-  await apply({
-    get: (name: string) => (name === "tui" ? undefined : fakeSessions()),
-    provide: (name: string, value: unknown) => provided.set(name, value),
-    options: {},
-    signal: new AbortController().signal,
-    notify() {},
-  } as never);
+  const { ctx, provided } = fakeContext({ name: "chat", services: { sessions: fakeSessions() } });
+  await apply(ctx);
   const service = provided.get("chat") as ChatService;
   const error = String(await assertRejects(() => service.show("s1")));
   assertEquals(

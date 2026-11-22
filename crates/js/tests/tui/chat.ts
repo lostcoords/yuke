@@ -15,8 +15,9 @@ import type {
   SessionUpdate,
   StoredEvent,
 } from "yuke:protocol";
-import { createFrame, type FrameTest, folder } from "yuke:test";
+import { createFrame, type FrameTest } from "yuke:test";
 import { type MouseEvent, TextEditor, TextView } from "yuke:tui";
+import { fakeContext } from "./context.ts";
 
 const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
 
@@ -246,30 +247,16 @@ export async function loadChat(
   options: { readonly emptyView?: boolean } = {},
 ) {
   const surface = frame.surface("chat");
-  const notices: string[] = [];
-  const services: Record<string, unknown> = { tui: surface.tui, sessions, catalog };
-  const provided = new Map<string, unknown>();
-  const facts = new Map<string, Set<(data: unknown) => void>>();
-  await apply({
-    get: (name: string) => services[name],
-    provide: (name: string, value: unknown) => provided.set(name, value),
-    addListener: (event: string, listener: (data: unknown) => void) => {
-      const listeners = facts.get(event) ?? new Set();
-      facts.set(event, listeners.add(listener));
-      return () => listeners.delete(listener);
-    },
-    options,
+  const { ctx, notices, provided, fact } = fakeContext({
+    name: "chat",
+    services: { tui: surface.tui, sessions, catalog },
     signal: surface.signal,
-    dataDir: folder(),
-    notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-  } as never);
+    options,
+  });
+  await apply(ctx);
   const transcript = (): TextView =>
     surface.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
   const chat = provided.get("chat") as ChatService;
-  /** Send the event `event` with its data to the listeners of the chat. */
-  const fact = (event: string, data: unknown): void => {
-    for (const listener of facts.get(event) ?? []) listener(data);
-  };
   return { tui: surface.tui, surface, opened: sessions.opened, notices, transcript, chat, fact };
 }
 

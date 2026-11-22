@@ -2,7 +2,8 @@
 
 import { apply } from "yuke:internal/bundled/login";
 import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
-import { assertEquals, createFrame, type FrameTest, folder, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
+import { fakeContext } from "./context.ts";
 
 /** A provider `id` in `state`. */
 function provider(id: string, state: ProviderState): ProviderInfo {
@@ -24,7 +25,6 @@ const CODE = "ABCD-1234";
 
 /** Load the plugin in `frame` on fake services. A test ends a login with `end`. */
 function load(frame: FrameTest, providers: readonly ProviderInfo[] = PROVIDERS) {
-  const notices: string[] = [];
   const calls: string[] = [];
   const signals: AbortSignal[] = [];
   let refusal: string | undefined;
@@ -53,15 +53,8 @@ function load(frame: FrameTest, providers: readonly ProviderInfo[] = PROVIDERS) 
   };
   const catalog = { list: async (options: { all?: boolean }) => ({ providers, all: options.all }) };
   const surface = frame.surface("login");
-  const services: Record<string, unknown> = { tui: surface.tui, catalog };
-  apply(
-    {
-      get: (name: string) => services[name],
-      dataDir: folder(),
-      notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-    } as never,
-    auth,
-  );
+  const { ctx, notices } = fakeContext({ name: "login", services: { tui: surface.tui, catalog } });
+  apply(ctx, auth);
   frame.start();
   return {
     notices,

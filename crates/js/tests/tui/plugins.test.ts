@@ -5,6 +5,7 @@ import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:internal/sessions";
 import type { FailedPlugin, FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
+import { fakeContext } from "./context.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
 const NEW = "8d02e77".padEnd(40, "0");
@@ -106,15 +107,8 @@ function manager(fake: Fake = {}) {
 
 /** Load the plugin `plugins` into `frame` with `plugins` as its manager. Give its notices. */
 function load(frame: FrameTest, plugins: PluginManager): string[] {
-  const tui = frame.surface("plugins").tui;
-  const notices: string[] = [];
-  apply(
-    {
-      get: (name: string) => (name === "tui" ? tui : undefined),
-      notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-    } as never,
-    plugins,
-  );
+  const { ctx, notices } = fakeContext({ name: "plugins", services: { tui: frame.surface("plugins").tui } });
+  apply(ctx, plugins);
   frame.start();
   return notices;
 }

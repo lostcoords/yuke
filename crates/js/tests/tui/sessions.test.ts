@@ -4,6 +4,7 @@ import { apply } from "yuke:internal/bundled/sessions";
 import type { SessionRow, SessionState } from "yuke:protocol";
 import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
+import { fakeContext } from "./context.ts";
 
 /** A saved session `id` of the folder `folder` with the title `title`, `minutes` old. */
 function row(id: string, folder: string, title: string | undefined, state: SessionState, minutes: number): SessionRow {
@@ -28,12 +29,11 @@ async function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
     row("s3", "/home/other", "refactor sqlgen", "idle", 2 * 24 * 60),
   );
   const chat = await loadChat(frame, sessions);
-  const notices: string[] = [];
-  const services: Record<string, unknown> = { tui: frame.surface("sessions").tui, sessions, chat: chat.chat };
-  apply({
-    get: (name: string) => services[name],
-    notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-  } as never);
+  const { ctx, notices } = fakeContext({
+    name: "sessions",
+    services: { tui: frame.surface("sessions").tui, sessions, chat: chat.chat },
+  });
+  apply(ctx);
   frame.start();
   return { chat, sessions, notices };
 }

@@ -5,6 +5,7 @@ import type { SessionRow } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { fakeSessions, loadChat } from "./chat.ts";
+import { fakeContext } from "./context.ts";
 
 function session(title: string | undefined): SessionRow {
   return {
@@ -51,12 +52,11 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
     [[["s1", "new title"]], "new title", "draft", 0, false],
   );
 
-  const notices: string[] = [];
-  const surface = frame.surface("sessions");
-  applySessions({
-    get: (name: string) => (name === "tui" ? surface.tui : name === "sessions" ? sessions : chat.chat),
-    notify: (_level: string, text: string) => notices.push(text),
-  } as never);
+  const { ctx, notices } = fakeContext({
+    name: "sessions",
+    services: { tui: frame.surface("sessions").tui, sessions, chat: chat.chat },
+  });
+  applySessions(ctx);
   assertEquals(chat.tui.commands.run("sessions:open"), true);
   await waitForSettled();
   frame.paste("new title");
