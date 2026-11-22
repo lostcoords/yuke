@@ -21,8 +21,7 @@ export function apply(ctx: PluginContext): undefined {
     name: "open",
     slash: "sessions",
     description: "Show a recent session in the pane",
-    run: () =>
-      open(ctx, tui).catch((error: unknown) => ctx.notify("error", `The sessions did not load: ${String(error)}`)),
+    run: () => open(ctx, tui),
   });
   return undefined;
 }

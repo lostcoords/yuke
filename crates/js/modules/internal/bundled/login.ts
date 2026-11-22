@@ -188,20 +188,19 @@ async function runLogout(ctx: PluginContext, auth: Auth, tui: Tui, args: unknown
 export function apply(ctx: PluginContext, auth: Auth = credentials): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
-  const failed = (error: unknown): void => ctx.notify("error", String(error));
   tui.commands.add({
     name: "login",
     slash: "login",
     argumentHint: "[provider]",
     description: "Connect a provider with an API key or a login",
-    run: (args) => runLogin(ctx, auth, tui, args).catch(failed),
+    run: (args) => runLogin(ctx, auth, tui, args),
   });
   tui.commands.add({
     name: "logout",
     slash: "logout",
     argumentHint: "[provider]",
     description: "Remove what yuke stored for a provider",
-    run: (args) => runLogout(ctx, auth, tui, args).catch(failed),
+    run: (args) => runLogout(ctx, auth, tui, args),
   });
   return undefined;
 }

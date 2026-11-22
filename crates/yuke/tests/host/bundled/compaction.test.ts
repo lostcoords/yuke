@@ -161,7 +161,7 @@ for (const [name, answer, reason] of [
       answer,
     ]);
 
-    assertEquals([plan.replace, notices.at(-1)], [undefined, ["warn", `The compaction failed: ${reason}`]]);
+    assertEquals([plan.replace, notices.at(-1)], [undefined, ["warn", `The compaction failed: Error: ${reason}`]]);
   });
 }
 

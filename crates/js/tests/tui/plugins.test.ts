@@ -235,7 +235,7 @@ test("a failed action gives a notice and leaves the title", async () => {
   const after = await press(frame, "s");
 
   assertEquals(rowOf(after, "Plugins"), " Plugins · 6");
-  assertEquals(notices, ["error Syncing failed: the remote is gone"]);
+  assertEquals(notices, ["error Syncing failed: Error: the remote is gone"]);
 });
 
 test("a adds the one new plugin of a repository, and an empty URL says why", async () => {
@@ -382,7 +382,7 @@ test("a check that fails closes the review and gives one error notice", async ()
   const after = await press(frame, "c");
 
   assertEquals(shows(after, "Checking"), false);
-  assertEquals(notices, ["error The check failed: the remote is gone"]);
+  assertEquals(notices, ["error The check failed: Error: the remote is gone"]);
 });
 
 test("the arrow and page keys scroll a long review", async () => {

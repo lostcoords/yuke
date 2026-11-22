@@ -37,17 +37,9 @@ export function apply(ctx: PluginContext, plugins: PluginManager = manager): und
     name: "open",
     slash: "plugins",
     description: "Show your plugins, and sync, update, add, or remove them",
-    run: () =>
-      open(ctx, tui, plugins).catch((error: unknown) =>
-        ctx.notify("error", `The plugins did not load: ${messageOf(error)}`),
-      ),
+    run: () => open(ctx, tui, plugins),
   });
   return undefined;
-}
-
-/** The text of `error` without the name of its class. */
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** The first seven digits of `commit`. */
@@ -257,12 +249,12 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     } catch (error) {
       status = "";
       const label = `${doing.charAt(0).toUpperCase()}${doing.slice(1)}`;
-      if (!dialog.signal.aborted) ctx.notify("error", `${label} failed: ${messageOf(error)}`);
+      if (!dialog.signal.aborted) ctx.notify("error", `${label} failed: ${String(error)}`);
     }
     try {
       list.setPlugins((await plugins.list()).plugins);
     } catch (error) {
-      ctx.notify("error", `The plugins did not load: ${messageOf(error)}`);
+      ctx.notify("error", `The plugins did not load: ${String(error)}`);
     } finally {
       spin.stop();
       running = undefined;
@@ -314,7 +306,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
           return `updated ${namesOf(chosen)} · r loads the new commits`;
         });
       },
-      (error: unknown) => ctx.notify("error", `The check failed: ${messageOf(error)}`),
+      (error: unknown) => ctx.notify("error", `The check failed: ${String(error)}`),
     );
   };
   const add = async (): Promise<void> => {
