@@ -91,7 +91,7 @@ test("each block marker still opens its block after three spaces", () => {
   assertEquals([kinds("x\n   ==="), kinds("x\n   ---")], ["heading", "heading"]);
 });
 
-test("a nested item shows at its depth, whatever its indent", () => {
+test("a nested item lines up after the mark of its parent, whatever its indent", () => {
   const source = [
     "1. **Fixes:**",
     "   - Its cached buffer.",
@@ -104,12 +104,12 @@ test("a nested item shows at its depth, whatever its indent", () => {
   ].join("\n");
   assertEquals(lines(rowsOf(source, 80)), [
     "1. Fixes:",
-    "  • Its cached buffer.",
-    "    • Drop SPARE.",
-    "    • Keep media out.",
+    "   • Its cached buffer.",
+    "     • Drop SPARE.",
+    "     • Keep media out.",
     "2. Next",
-    "  • four spaces",
-    "    • eight spaces",
+    "   • four spaces",
+    "     • eight spaces",
     "3. one space is a sibling",
   ]);
 });
@@ -124,9 +124,82 @@ test("after a blank line, a line inside an item keeps the list, and a line outsi
     [markdown.blocks().map((b) => b.kind), lines(markdown.rows(80))],
     [
       ["list", "paragraph"],
-      ["1. a", "", "  • b", "", "  more of a", "", "2. c", "", "after"],
+      ["1. a", "", "   • b", "", "   more of a", "", "2. c", "", "after"],
     ],
   );
+});
+
+test("a table, a fence, and a quote inside an item render as blocks after its mark", () => {
+  const source = [
+    "- **Versions**:",
+    "",
+    "  | Build | Example |",
+    "  |---|---|",
+    "  | stable | `0.1.1` |",
+    "",
+    "  The string tells the channel.",
+    "- Run:",
+    "  ```sh",
+    "  ls -a",
+    "  ```",
+    "  > quoted",
+    "- last",
+  ].join("\n");
+  const rows = rowsOf(source, 80);
+  assertEquals(
+    [lines(rows), has(rows, "markdown.codeBlock", "ls -a"), has(rows, "markdown.quote", "quoted")],
+    [
+      [
+        "• Versions:",
+        "",
+        "  Build  │ Example",
+        "  ───────┼────────",
+        "  stable │ 0.1.1",
+        "",
+        "  The string tells the channel.",
+        "• Run:",
+        "  ls -a",
+        "  ▏ quoted",
+        "• last",
+      ],
+      true,
+      true,
+    ],
+  );
+});
+
+test("a fence in an item of a nested item stays code, and the items after it keep their depth", () => {
+  const source = [
+    "8. **Second test.**",
+    "   - Replace it:",
+    "     ```rust",
+    "     assert_eq!(a, b);",
+    "     ```",
+    "   - That saves 6 lines.",
+    "9. Next",
+  ].join("\n");
+  const markdown = new Markdown(source);
+  assertEquals(
+    [markdown.blocks().map((b) => b.kind), lines(markdown.rows(80))],
+    [
+      ["list"],
+      ["8. Second test.", "   • Replace it:", "     assert_eq!(a, b);", "   • That saves 6 lines.", "9. Next"],
+    ],
+  );
+});
+
+test("a blank quote line splits the paragraphs of a quote, and a quote holds a list and a quote", () => {
+  assertEquals(lines(rowsOf("> one\n>\n> two\n> - item\n> > inner", 80)), [
+    "▏ one",
+    "▏ ",
+    "▏ two",
+    "▏ • item",
+    "▏ ▏ inner",
+  ]);
+});
+
+test("a copy of a nested item keeps the indent of each line and joins a wrap with a space", () => {
+  assertEquals(copyOf(rowsOf("- a\n  - bravo charlie\n  ```\n  x\n  ```", 12)), "• a\n  • bravo charlie\n  x");
 });
 
 // A link keeps its brackets and its target, so the user can copy the target. Each piece of it knows the target.
@@ -264,6 +337,10 @@ const streamParts = [
   { name: "lists and quotes", text: "- one\n- two\n\n1. first\n2. second\n\n> quoted\n> more\n\n" },
   { name: "nested lists", text: "1. a\n   - b\n     - c\nlazy\n\n   more of a\n\n2. d\n\nafter\n\n" },
   { name: "a table and a fence", text: "a | b\n:--|--:\n1 | 2\n\n```zig\nconst x = 1;\nconst y = 2;\n```\n\n" },
+  {
+    name: "blocks in an item",
+    text: "- a\n\n  | x | y |\n  |---|---|\n  | 1 | 2 |\n  ```sh\n  ls\n  ```\n- b\n\n> q\n>\n> - r\n\n",
+  },
   { name: "a rule and inline markup", text: "---\n\nlast **bold** [a](b) para\nwith a|pipe\n---|---\nx|y\n" },
 ];
 let preceding = "";
@@ -317,6 +394,8 @@ test("each segment maps back to its source at each width", () => {
     "two  spaces and\n a line feed",
     "| a | b<br>c **d<br/>e** |\n|---|---|\n| 1 | 2 |",
     "> one<br>two\n> three",
+    "- a\n  b\n\n  ```js\n  let x = 1;\n  ```\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |",
+    "> one\n>\n> - two\n>   three\n> > four",
   ];
   const wrong: string[] = [];
   for (const source of corpus) {

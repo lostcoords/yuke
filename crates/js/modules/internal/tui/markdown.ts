@@ -67,6 +67,8 @@ type Align = "left" | "center" | "right";
 interface BlockBase {
   at: number;
   end: number;
+  /** A blank line comes before the block. */
+  gap: boolean;
 }
 
 /** A table cell, with the source offset of the pipe before it when it has one. */
@@ -74,15 +76,15 @@ interface TableCell extends InlineSource {
   pipe?: number;
 }
 
-/** An item of a list, or a later paragraph of an item, which shows spaces for its mark. */
-interface ListItem extends InlineSource {
-  depth: number;
+/** An item of a list: its mark and the blocks inside it. */
+interface ListItem {
   /** An empty row comes before the item. */
   gap: boolean;
   /** The mark and the space after it. */
   marker: string;
   markAt: number;
   markEnd: number;
+  children: Block[];
 }
 
 type Block = BlockBase &
@@ -90,13 +92,13 @@ type Block = BlockBase &
     | { kind: "heading"; text: string; runs: SourceRun[] }
     | { kind: "paragraph"; text: string; runs: SourceRun[] }
     | { kind: "code"; language: string; lines: string[]; lineAt: number[] }
-    | { kind: "quote"; text: string; runs: SourceRun[]; markAt: number; markEnd: number }
+    | { kind: "quote"; children: Block[]; markAt: number; markEnd: number }
     | { kind: "rule" }
     | { kind: "list"; items: ListItem[] }
     | { kind: "table"; columns: number; rows: TableCell[][]; align: Align[]; sepAt: number; sepEnd: number }
   );
 
-/** The fields of a parsed block, without the fields of `BlockBase` that `segment` adds. */
+/** The fields of a parsed block, without the fields of `BlockBase` that `parseLines` adds. */
 type Parsed = Block extends infer B ? (B extends Block ? Omit<B, keyof BlockBase> : never) : never;
 
 interface Fence {
@@ -111,7 +113,7 @@ const FENCE_CLOSE = /^( {0,3})(`{3,}|~{3,})[ \t]*$/;
 const HEADING = /^( {0,3})(#{1,6})(?:([ \t]+)(.*?))?[ \t]*$/;
 const HR = /^( {0,3})(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const QUOTE = /^( {0,3})>([ \t]?)(.*)$/;
-// An item takes any indent, so a nested item matches. `mayStartBlock` keeps a first item within three spaces.
+// An item takes any indent, so a later item of a list matches. `mayStartBlock` keeps a first item within three spaces.
 const UL_ITEM = /^( *)([-*+])([ \t]+)(.*)$/;
 const OL_ITEM = /^( *)(\d{1,9})([.)])([ \t]+)(.*)$/;
 const SETEXT = /^( {0,3})(=+|-+)[ \t]*$/;
@@ -205,20 +207,29 @@ function segment(text: string, base: number): Block[] {
     starts.push(offset);
     offset += line.length + 1;
   }
-  starts.push(offset);
+  return parseLines(lines, starts);
+}
+
+/**
+ * The blocks of `lines`. `starts` holds the source offset of each line, so a list item and a quote parse their inner
+ * lines, without the indent or the mark, as blocks of their own.
+ */
+function parseLines(lines: readonly string[], starts: readonly number[]): Block[] {
   const start = (k: number): number => starts[k] as number;
+  /** The source offset after the last character of line `k`. */
+  const lineEnd = (k: number): number => start(k) + (lines[k] as string).length;
   const blocks: Block[] = [];
+  let gap = false;
   const push = (parsed: Parsed, first: number, last: number): void => {
-    const at = start(first);
-    // Each line but the last ends in "\n".
-    const end = start(last) - 1;
-    blocks.push({ ...parsed, at, end } as Block);
+    blocks.push({ ...parsed, at: start(first), end: lineEnd(last - 1), gap } as Block);
+    gap = false;
   };
 
   let i = 0;
   while (i < lines.length) {
     const line = lines[i] as string;
     if (line.trim() === "") {
+      gap = true;
       i++;
       continue;
     }
@@ -272,18 +283,17 @@ function segment(text: string, base: number): Block[] {
     }
 
     if (canStartBlock && QUOTE.test(line)) {
+      const inner: string[] = [];
+      const innerAt: number[] = [];
       let j = i;
-      const body: InlineSource = { text: "", runs: [] };
-      let markEnd = start(i);
       for (; j < lines.length; j++) {
         const m = QUOTE.exec(lines[j] as string);
         if (m === null) break;
-        const src = start(j) + (m[1] as string).length + 1 + (m[2] as string).length;
-        if (j === i) markEnd = src;
-        else addSource(body, " ", start(j) - 1);
-        addSource(body, m[3] as string, src);
+        inner.push(m[3] as string);
+        innerAt.push(start(j) + (m[1] as string).length + 1 + (m[2] as string).length);
       }
-      push({ kind: "quote", text: body.text, runs: body.runs, markAt: start(i), markEnd }, i, j);
+      const children = parseLines(inner, innerAt);
+      push({ kind: "quote", children, markAt: start(i), markEnd: innerAt[0] as number }, i, j);
       i = j;
       continue;
     }
@@ -291,40 +301,44 @@ function segment(text: string, base: number): Block[] {
     if (canStartBlock && (UL_ITEM.test(line) || OL_ITEM.test(line))) {
       const items: ListItem[] = [];
       const ordered = OL_ITEM.test(line);
-      // The content column of each open item, from the outermost. A line inside an item reaches its content column.
-      const open: number[] = [];
-      let gap = false;
+      let itemGap = false;
       let end = i;
-      for (let j = i; j < lines.length; j++) {
-        const sourceLine = lines[j] as string;
-        if (sourceLine.trim() === "") {
-          gap = true;
-          continue;
-        }
-        const indent = sourceLine.length - sourceLine.trimStart().length;
-        const numbered = OL_ITEM.exec(sourceLine);
-        const m = HR.test(sourceLine) ? null : (numbered ?? UL_ITEM.exec(sourceLine));
-        if (m === null && isBlockStart(sourceLine.trimStart())) break;
-        if (m === null && !gap) {
-          // A line without a blank line before it continues the paragraph of the last item.
-          const item = items.at(-1) as ListItem;
-          addSource(item, " ", start(j) - 1);
-          addSource(item, sourceLine.slice(indent), start(j) + indent);
-        } else {
-          while (indent < (open.at(-1) ?? 0)) open.pop();
-          // A new mark kind at the outer level starts a new list. After a blank line, a line outside each item ends it.
-          if (open.length === 0 && (m === null || (numbered !== null) !== ordered)) break;
-          // The last group runs to the end of the line, so its offset needs no group arithmetic.
-          const text = m === null ? sourceLine.slice(indent) : (m.at(-1) as string);
-          const src = start(j) + sourceLine.length - text.length;
-          const marker = m === null ? "  " : numbered !== null ? `${m[2]}. ` : "• ";
-          // A line without a mark is a later paragraph of the deepest item that holds it.
-          const depth = m === null ? open.length - 1 : open.length;
-          items.push({ depth, gap, marker, text, runs: oneRun(text, src), markAt: start(j), markEnd: src });
-          if (m !== null) open.push(src - start(j));
-        }
-        gap = false;
+      let j = i;
+      while (j < lines.length) {
+        const itemLine = lines[j] as string;
+        const numbered = OL_ITEM.exec(itemLine);
+        const m = HR.test(itemLine) ? null : (numbered ?? UL_ITEM.exec(itemLine));
+        // A line without a mark, or a mark of the other kind, ends the list.
+        if (m === null || (numbered !== null) !== ordered) break;
+        // The last group runs to the end of the line, so its offset needs no group arithmetic.
+        const text = m.at(-1) as string;
+        // A line inside the item reaches the column of its text.
+        const column = itemLine.length - text.length;
+        const textAt = start(j) + column;
+        const inner = [text];
+        const innerAt = [textAt];
         end = j + 1;
+        for (let k = j + 1; k < lines.length; k++) {
+          const sourceLine = lines[k] as string;
+          const blank = sourceLine.trim() === "";
+          const indent = sourceLine.length - sourceLine.trimStart().length;
+          // A line right after a line of the item, with less indent, continues the item.
+          const continues = k === end && !isBlockStart(sourceLine);
+          const cut = blank ? sourceLine.length : indent >= column ? column : continues ? indent : -1;
+          if (cut < 0) break;
+          inner.push(sourceLine.slice(cut));
+          innerAt.push(start(k) + cut);
+          if (!blank) end = k + 1;
+        }
+        // The blank lines after the item are a gap before the next item, not a part of this one.
+        inner.length = end - j;
+        innerAt.length = end - j;
+        const marker = numbered !== null ? `${m[2]}. ` : "• ";
+        const children = parseLines(inner, innerAt);
+        items.push({ gap: itemGap, marker, markAt: start(j), markEnd: textAt, children });
+        j = end;
+        while (j < lines.length && (lines[j] as string).trim() === "") j++;
+        itemGap = j > end;
       }
       push({ kind: "list", items }, i, end);
       i = end;
@@ -362,7 +376,7 @@ function segment(text: string, base: number): Block[] {
     for (; j < lines.length; j++) {
       const l = lines[j] as string;
       if (l.trim() === "" || isBlockStart(l) || isSetextHeading(lines, j)) break;
-      if (j > i) addSource(body, " ", start(j) - 1);
+      if (j > i) addSource(body, " ", lineEnd(j - 1));
       addSource(body, l, start(j));
     }
     push({ kind: "paragraph", text: body.text, runs: body.runs }, i, j);
@@ -1008,11 +1022,31 @@ function plainRow(text: string, style: string = STYLE.text): Row {
   return { segments: [{ text, style }], join: "\n" };
 }
 
+/** `row` behind `prefix`. */
+function withPrefix(row: Row, prefix: Part): Row {
+  const segments = [prefix, ...row.segments];
+  return row.width === undefined
+    ? { segments, join: row.join }
+    : { segments, join: row.join, width: row.width + widthOf(prefix.text) };
+}
+
+/** The rows of the blocks inside a list item or a quote. A blank line between two blocks shows as an empty row. */
+function renderChildren(blocks: readonly Block[], width: number, limit: number, base: string): Row[] {
+  const rows: Row[] = [];
+  for (const [index, block] of blocks.entries()) {
+    if (index > 0 && block.gap && rows.length < limit) rows.push(plainRow("", base));
+    if (rows.length >= limit) break;
+    rows.push(...renderBlock(block, width, limit - rows.length, base));
+  }
+  if (rows.length === 0 && limit > 0) rows.push(plainRow("", base));
+  return rows;
+}
+
 /**
  * The rows of `block` at `width`, at most `limit`. A replacement segment, such as a list mark, maps to the markup that
- * it stands for. The last row joins with "\n".
+ * it stands for. The last row joins with "\n". `base` is the style of plain text, which a quote changes.
  */
-function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINITY): Row[] {
+function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINITY, base: string = STYLE.text): Row[] {
   switch (block.kind) {
     case "heading": {
       const segments = resolveSegments(parseInline(block.text, STYLE.heading), block.runs);
@@ -1023,7 +1057,10 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
       );
     }
     case "paragraph":
-      return wrapSegments(resolveSegments(parseInline(block.text), block.runs), width, { limit });
+      return wrapSegments(resolveSegments(parseInline(block.text, base), block.runs), width, {
+        emptyStyle: base,
+        limit,
+      });
     case "code": {
       const rows: Row[] = [];
       for (let k = 0; k < block.lines.length && rows.length < limit; k++) {
@@ -1048,14 +1085,10 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
     }
     case "quote": {
       const source = mapping("replacement", block.markAt, block.markEnd);
-      const bar: Part = { text: "▏ ", style: STYLE.quote, source, copy: false };
-      const segments = resolveSegments(parseInline(block.text, STYLE.quote), block.runs);
-      return wrapSegments(segments, width, {
-        firstPrefix: bar,
-        restPrefix: { text: "▏ ", style: STYLE.quote, copy: false },
-        emptyStyle: STYLE.quote,
-        limit,
-      });
+      const bar = "▏ ";
+      const inner = renderChildren(block.children, Math.max(1, width - widthOf(bar)), limit, STYLE.quote);
+      const mark: Part = { text: bar, style: STYLE.quote, copy: false };
+      return inner.map((row, index) => withPrefix(row, index === 0 ? { ...mark, source } : mark));
     }
     case "rule": {
       const source = mapping("replacement", block.at, block.end);
@@ -1067,12 +1100,22 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
       for (const item of block.items) {
         if (item.gap && rows.length < limit) rows.push(plainRow(""));
         if (rows.length >= limit) break;
-        const pad = "  ".repeat(item.depth);
+        // The blocks of the item line up after its mark.
+        const pad = " ".repeat(widthOf(item.marker));
+        const indent: Part = { text: pad, style: STYLE.listMark };
+        const inner = renderChildren(item.children, Math.max(1, width - pad.length), limit - rows.length, base);
         const source = mapping("replacement", item.markAt, item.markEnd);
-        const mark: Part = { text: `${pad}${item.marker}`, style: STYLE.listMark, source };
-        const segments = resolveSegments(parseInline(item.text), item.runs);
-        const restPrefix: Part = { text: `${pad}  `, style: STYLE.listMark, copy: false };
-        rows.push(...wrapSegments(segments, width, { firstPrefix: mark, restPrefix, limit: limit - rows.length }));
+        rows.push(withPrefix(inner[0] as Row, { text: item.marker, style: STYLE.listMark, source }));
+        for (let index = 1; index < inner.length; index++) {
+          const row = inner[index] as Row;
+          if (row.segments.every((s) => s.text === "")) {
+            rows.push(row);
+            continue;
+          }
+          // An indent at the start of a copied line stays in the copy, so a copy keeps the nesting.
+          const lineStart = (inner[index - 1] as Row).join === "\n";
+          rows.push(withPrefix(row, lineStart ? indent : { ...indent, copy: false }));
+        }
       }
       return rows;
     }
@@ -1083,7 +1126,7 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
       const cells = block.rows.map((source) => {
         const row: TableCell[] = source.slice(0, block.columns);
         while (row.length < block.columns) row.push({ text: "", runs: [] });
-        return row.map((cell) => resolveSegments(parseInline(cell.text), cell.runs));
+        return row.map((cell) => resolveSegments(parseInline(cell.text, base), cell.runs));
       });
       const gap = widthOf(TABLE_GAP);
       const widths = columnWidths(cells, Math.max(1, width - gap * (block.columns - 1)));
