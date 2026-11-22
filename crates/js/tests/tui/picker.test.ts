@@ -2,7 +2,6 @@
 
 import { assert, assertEquals, createFrame, test } from "yuke:test";
 import { fuzzyMatch, Picker, type PickerOptions } from "yuke:tui";
-import { rows } from "./rows.ts";
 
 interface Command {
   readonly name: string;
@@ -68,11 +67,11 @@ test("a caller rank stays in its order, and the default rank puts the best match
     rank: (_query, items) => items.toReversed().map((item) => ({ item })),
   });
   using frame = createFrame({ width: 10, height: 3 }, () => reversed);
-  assertEquals(rows(frame.frame), ["", "gamma", "beta"]);
+  assertEquals(frame.rows(), ["", "gamma", "beta"]);
   const fuzzy = picker(["dispose", "split pane", "close"], log);
   using second = createFrame({ width: 12, height: 4 }, () => fuzzy);
   second.key("s p");
-  assertEquals(rows(second.frame).slice(1), ["split pane", "dispose", ""]);
+  assertEquals(second.rows().slice(1), ["split pane", "dispose", ""]);
 });
 
 test("the selection follows its key and goes to the first result when its key leaves", () => {

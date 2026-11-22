@@ -3,7 +3,6 @@
 import { apply } from "yuke:internal/bundled/login";
 import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
 import { assertEquals, createFrame, type FrameTest, folder, test, waitForSettled } from "yuke:test";
-import { rows } from "./rows.ts";
 
 /** A provider `id` in `state`. */
 function provider(id: string, state: ProviderState): ProviderInfo {
@@ -79,14 +78,14 @@ function load(frame: FrameTest, providers: readonly ProviderInfo[] = PROVIDERS) 
       surface.tui.commands.run(`login:${command}`, args);
       await waitForSettled();
       frame.draw();
-      return rows(frame.frame);
+      return frame.rows();
     },
   };
 }
 
 /** The row of `frame` that holds `text`. */
 function rowWith(frame: FrameTest, text: string): string | undefined {
-  return rows(frame.frame).find((row) => row.includes(text));
+  return frame.rows().find((row) => row.includes(text));
 }
 
 test("/login lists each provider with its state and leaves out a provider that takes no credential", async () => {
@@ -119,7 +118,7 @@ test("a chosen key provider opens a masked field that stores the key and shows n
   frame.key("e n v enter");
   await waitForSettled();
   frame.paste("  sk-secret\n");
-  const typed = rows(frame.frame).join("\n");
+  const typed = frame.rows().join("\n");
   const title = rowWith(frame, "API key · ENV");
   // The second enter of a double press stores nothing more.
   frame.key("enter");

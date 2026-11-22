@@ -3,8 +3,7 @@
 
 import type { InteractionRequest, InteractionResponse, Question, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import { composerOf, EMPTY, fakeSessions, loadChat, mouse, SETTINGS } from "./chat.ts";
-import { rows } from "./rows.ts";
+import { composerOf, EMPTY, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
 
 /** The update of the question `id` of the plugin `guard`. */
 function asked(id: number, request: InteractionRequest): SessionUpdate {
@@ -36,7 +35,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
   frame.paste("draft");
   sessions.push(asked(1, DELETE));
   frame.draw();
-  const shown = rows(frame.frame).slice(-7, -1);
+  const shown = frame.rows().slice(-7, -1);
   // The composer takes no message while the question shows.
   const off = chat.tui.commands
     .list()
@@ -47,14 +46,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
   await waitForSettled();
   frame.draw();
   assertEquals(
-    [
-      shown,
-      off,
-      sessions.responses,
-      sessions.inputs,
-      rows(frame.frame).at(-2),
-      chat.tui.focusedView === composerOf(chat),
-    ],
+    [shown, off, sessions.responses, sessions.inputs, frame.rows().at(-2), chat.tui.focusedView === composerOf(chat)],
     [
       [" guard · Branch", " Delete branch?", " feat/x", "❯ Yes", "  No", " ↑↓ choose · enter send · esc cancel"],
       [false, false, false],
@@ -75,7 +67,7 @@ test("a question from yuke shows its source without host:", async () => {
   sessions.push({ ...asked(1, DELETE), source: "host:mcp" } as SessionUpdate);
   frame.draw();
 
-  assertEquals(rows(frame.frame).at(-7), " mcp · Branch");
+  assertEquals(frame.rows().at(-7), " mcp · Branch");
 });
 
 test("a request of several questions shows one page each, with ticks and typed answers, and the last enter sends", async () => {
@@ -104,7 +96,7 @@ test("a request of several questions shows one page each, with ticks and typed a
   /** Whether a row of the drawn frame holds `text`. */
   const shows = (text: string) => {
     frame.draw();
-    return rows(frame.frame).some((row) => row.includes(text));
+    return frame.rows().some((row) => row.includes(text));
   };
   const first = shows("· 1/3");
   // Enter without a tick or a text keeps the page.
@@ -152,7 +144,7 @@ test("shift+tab or left goes back, and enter answers the page again", async () =
   sessions.push(asked(12, { kind: "questions", questions }));
   const shown = (): (string | undefined)[] => {
     frame.draw();
-    return [rows(frame.frame).at(-6), rows(frame.frame).at(-2)];
+    return [frame.rows().at(-6), frame.rows().at(-2)];
   };
   frame.key("enter");
   frame.paste("hi");
@@ -196,8 +188,7 @@ test("a press on the field row keeps the page keys with the question", async () 
   frame.key("down");
   frame.draw();
   // The field row is the row above the hint.
-  frame.mouse(mouse(3, 11, "press"));
-  frame.mouse(mouse(3, 11, "release"));
+  frame.click(3, 11);
   frame.key("up enter");
   assertEquals(sessions.responses, [[14, answered(["X"])]]);
 });
@@ -211,14 +202,7 @@ test("a tall question keeps its options in view and counts the lines that do not
   const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   sessions.push(asked(13, one({ question: text, options: [{ label: "Yes" }, { label: "No" }] })));
   frame.draw();
-  assertEquals(rows(frame.frame).slice(-8, -2), [
-    " guard · Q",
-    " line 1",
-    " line 2",
-    " … 8 more lines",
-    "❯ Yes",
-    "  No",
-  ]);
+  assertEquals(frame.rows().slice(-8, -2), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
 });
 
 test("a short pane keeps the first line of a tall question above its options", async () => {
@@ -231,12 +215,7 @@ test("a short pane keeps the first line of a tall question above its options", a
   const options = ["A", "B", "C", "D"].map((label) => ({ label }));
   sessions.push(asked(15, one({ question: text, options })));
   frame.draw();
-  assertEquals(rows(frame.frame).slice(-5, -1), [
-    " guard · Q",
-    " line 1",
-    "❯ A",
-    " ↑↓ choose · enter send · esc cancel",
-  ]);
+  assertEquals(frame.rows().slice(-5, -1), [" guard · Q", " line 1", "❯ A", " ↑↓ choose · enter send · esc cancel"]);
 });
 
 test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
@@ -277,11 +256,11 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   sessions.push(asked(6, DELETE));
   frame.key("enter");
   frame.draw();
-  const stays = rows(frame.frame).at(-7);
+  const stays = frame.rows().at(-7);
   sessions.push({ kind: "interactionClosed", interactionId: 6 });
   frame.draw();
   assertEquals(
-    [chat.notices, stays, rows(frame.frame).at(-2)],
+    [chat.notices, stays, frame.rows().at(-2)],
     [["error The answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
   );
 });
@@ -296,7 +275,7 @@ test("each pane of a session shows its question, and the focused pane takes the 
   await waitForSettled();
   sessions.push(asked(7, DELETE));
   frame.draw();
-  const both = rows(frame.frame).at(-3);
+  const both = frame.rows().at(-3);
   frame.key("enter");
   assertEquals(
     [both, sessions.responses],
@@ -314,7 +293,7 @@ test("a close of the session by another client drops its question, and the next 
   sessions.push(asked(10, DELETE));
   sessions.close("s1");
   frame.draw();
-  const shown = rows(frame.frame).at(-2);
+  const shown = frame.rows().at(-2);
   frame.key("enter");
   await waitForSettled();
   assertEquals([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ kind: "userText", text: "draft" }]]]);

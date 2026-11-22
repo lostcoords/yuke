@@ -2,7 +2,6 @@
 
 import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { commit, fakeSessions, fixedClock, loadChat, replies } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 const hints = { subject: { argument: "command", kind: "text" }, preview: "tail" } as const;
 
@@ -16,7 +15,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   /** Draw the frame. Return the text two rows above the rule. */
   const row = (): string => {
     frame.draw();
-    const all = rows(frame.frame);
+    const all = frame.rows();
     return all[all.findIndex((text) => text.startsWith("──")) - 2] ?? "";
   };
   /** The row without its spinner glyph, which changes with each frame of the spinner. */
@@ -24,7 +23,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   const idle = row();
   sessions.push({ kind: "state", state: "running" });
   const start = phase();
-  const gap = rows(frame.frame)[rows(frame.frame).findIndex((text) => text.startsWith("──")) - 1];
+  const gap = frame.rows()[frame.rows().findIndex((text) => text.startsWith("──")) - 1];
   frame.advance(1080);
   const later = phase();
   const call = { callId: "c1", name: "exec", arguments: '{"command":"cargo test"}' };
@@ -34,13 +33,13 @@ test("a running turn shows its phase and time above an empty row before the rule
     }),
   );
   const tool = phase();
-  const pendingCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
+  const pendingCommand = frame.rows().find((text) => text.includes("exec cargo test"));
   sessions.push({ kind: "toolStarted", position: { eventNumber: 3, blockIndex: 0 }, call });
   const running = phase();
-  const runningCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
+  const runningCommand = frame.rows().find((text) => text.includes("exec cargo test"));
   sessions.push(commit(4, [{ kind: "toolResult", callId: "c1", content: "ok", isError: false }]));
   const done = phase();
-  const completedCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
+  const completedCommand = frame.rows().find((text) => text.includes("exec cargo test"));
   assertEquals(
     [pendingCommand, runningCommand, completedCommand],
     [" exec cargo test · waiting", " exec cargo test · running", " exec cargo test"],
@@ -50,7 +49,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   const retry = phase();
   sessions.push({ kind: "state", state: "idle" });
   frame.draw();
-  const ended = rows(frame.frame).some((text) => text.includes("to interrupt"));
+  const ended = frame.rows().some((text) => text.includes("to interrupt"));
   // The retry status stays in the transcript until the next draft, and the next turn shows no old countdown.
   sessions.push({ kind: "state", state: "running" });
   const next = phase();
@@ -80,7 +79,7 @@ test("the elapsed time of a long turn shows minutes", async () => {
   sessions.push({ kind: "state", state: "running" });
   frame.advance(185_000);
   assertEquals(
-    rows(frame.frame).some((text) => text.includes("(3m 05s · esc to interrupt)")),
+    frame.rows().some((text) => text.includes("(3m 05s · esc to interrupt)")),
     true,
   );
 });
@@ -95,7 +94,8 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
   sessions.push({ kind: "draftStarted", draftId: "d1" });
   const phase = (): string | undefined => {
     frame.draw();
-    return rows(frame.frame)
+    return frame
+      .rows()
       .find((text) => text.includes("to interrupt"))
       ?.slice(2)
       .split(" (")[0];
@@ -123,7 +123,7 @@ test("a thought without text to show draws no rows, and the working row still sh
   /** Draw the frame. Return the rows above the working row and the phase of the working row. */
   const shown = (): [string[], string | undefined] => {
     frame.draw();
-    const all = rows(frame.frame);
+    const all = frame.rows();
     const working = all.findIndex((text) => text.includes("to interrupt"));
     return [all.slice(0, working), all[working]?.slice(2).split(" (")[0]];
   };
@@ -156,7 +156,7 @@ test("a short pane gives up the empty rows before the last row of the transcript
   frame.draw();
   // The spinner glyph changes with each frame of the spinner, so the test compares the text after it.
   assertEquals(
-    rows(frame.frame).map((text, at) => (at === 1 ? text.slice(2) : text)),
+    frame.rows().map((text, at) => (at === 1 ? text.slice(2) : text)),
     [" reply 2", "Working… (0s · esc to interrupt)", "─".repeat(50), "Message…", "─".repeat(50)],
   );
 });
@@ -169,10 +169,10 @@ test("a close of the session by another client takes the working row away", asyn
   await waitForSettled();
   sessions.push({ kind: "state", state: "running" });
   frame.draw();
-  const running = rows(frame.frame).some((text) => text.includes("to interrupt"));
+  const running = frame.rows().some((text) => text.includes("to interrupt"));
   sessions.close("s1");
   frame.draw();
-  assertEquals([running, rows(frame.frame).some((text) => text.includes("to interrupt"))], [true, false]);
+  assertEquals([running, frame.rows().some((text) => text.includes("to interrupt"))], [true, false]);
 });
 
 test("the working row shows no cancel key while the command list takes esc", async () => {
@@ -184,10 +184,10 @@ test("the working row shows no cancel key while the command list takes esc", asy
   sessions.push({ kind: "state", state: "running" });
   frame.key("/ m o d e l");
   frame.draw();
-  const listed = rows(frame.frame).find((text) => text.includes("Working…"));
+  const listed = frame.rows().find((text) => text.includes("Working…"));
   frame.key("esc");
   frame.draw();
-  const hidden = rows(frame.frame).find((text) => text.includes("Working…"));
+  const hidden = frame.rows().find((text) => text.includes("Working…"));
   assertEquals([listed?.slice(2), hidden?.slice(2)], ["Working… (0s)", "Working… (0s · esc to interrupt)"]);
 });
 
@@ -216,7 +216,7 @@ async function runningExec(width: number, command: string) {
 /** The working row of `frame`. */
 function workingRow(frame: FrameTest): string {
   frame.draw();
-  return rows(frame.frame).find((text) => text.includes(" (") && /\d+s/.test(text)) ?? "";
+  return frame.rows().find((text) => text.includes(" (") && /\d+s/.test(text)) ?? "";
 }
 
 test("movable work shows the background hint after a delay, and the key asks to move it", async () => {
@@ -242,7 +242,8 @@ test("a long command stays in the transcript and leaves room for the interrupt a
 
   assertEquals(workingRow(frame).slice(2), "Working… (2s · esc to interrupt · ctrl+b to background)");
   assertEquals(
-    rows(frame.frame)
+    frame
+      .rows()
       .find((text) => text.includes("exec cargo test"))
       ?.startsWith(" exec cargo test --flag"),
     true,

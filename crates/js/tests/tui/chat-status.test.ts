@@ -7,7 +7,6 @@ import type { Job, ProviderInfo, ProviderState, StoredEvent } from "yuke:protoco
 import { assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
 import type { StatusItem } from "yuke:tui";
 import { CATALOG, commit, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 /** The status items of the chat, without the folder, which a test of its own covers. */
 function listed(chat: Awaited<ReturnType<typeof loadChat>>): readonly StatusItem[] {
@@ -155,12 +154,12 @@ test("a pane without a session shows the saved pick, and a new pick replaces it"
   frame.key("ctrl+k m");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   frame.key("down");
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("low"), true);
+  assertEquals(frame.rows().includes("low"), true);
   frame.key("down");
   frame.key("enter");
   await waitForSettled();

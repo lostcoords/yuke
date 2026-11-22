@@ -4,7 +4,6 @@ import { readTextFile, writeTextFile } from "yuke:fs";
 import { apply } from "yuke:internal/bundled/themes";
 import { assertEquals, createFrame, type FrameTest, folder, test, waitForSettled } from "yuke:test";
 import type { Tui } from "yuke:tui";
-import { rows } from "./rows.ts";
 
 /** Load the plugin in `frame` on the folder `dataDir`, and give the theme author surface and the notices. */
 async function load(frame: FrameTest, dataDir: string): Promise<{ tui: Tui; notices: string[] }> {
@@ -40,7 +39,7 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
   };
 
   open();
-  const listed = rows(frame.frame).join("\n");
+  const listed = frame.rows().join("\n");
   frame.key("down");
   const preview = tui.styles.theme;
   frame.key("esc");

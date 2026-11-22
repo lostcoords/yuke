@@ -3,7 +3,6 @@
 import type { Job, SessionUpdate } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 const JOB: Job = { id: "j1", label: "npm run dev", state: "running", kind: "process", command: "npm", log: "/tmp/j" };
 const SUBAGENT: Job = { id: "j2", label: "Read", state: "running", kind: "plugin", plugin: "agents" };
@@ -37,7 +36,7 @@ function open(
 
 const screen = (frame: ReturnType<typeof createFrame>): string[] => {
   frame.draw();
-  return rows(frame.frame);
+  return frame.rows();
 };
 
 test("a quit with no work ends at once and writes the resume command", async () => {

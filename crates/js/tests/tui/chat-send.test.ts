@@ -6,7 +6,6 @@ import type { Block, ListCatalogResult, SessionUpdate, StoredEvent } from "yuke:
 import { assert, assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
 import type { EditorState } from "yuke:tui";
 import { CATALOG, commit, composerOf, fakeSessions, loadChat, replies, SETTINGS, transcriptRows } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 /** The update of the accepted input `id` with `content`, of the user, or a notification of the plugin `ci`. */
 function accepted(id: number, content: Block[], source: "user" | "plugin" = "user"): SessionUpdate {
@@ -65,12 +64,12 @@ test("without a saved choice the first send asks for the model and level, and a 
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   frame.key("enter");
   await waitForSettled();
   frame.draw();
   assertEquals(
-    rows(frame.frame).filter((row) => row === "off" || row === "high" || row === "default"),
+    frame.rows().filter((row) => row === "off" || row === "high" || row === "default"),
     ["default", "off", "high"],
   );
   frame.key("esc");
@@ -79,7 +78,7 @@ test("without a saved choice the first send asks for the model and level, and a 
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   frame.key("enter");
   await waitForSettled();
   frame.key("down down");
@@ -111,7 +110,7 @@ for (const choice of [
     frame.key("enter");
     await waitForSettled();
     frame.draw();
-    assertEquals([rows(frame.frame).includes("p/m"), chat.notices, composerOf(chat).state.text], [true, [], "hi"]);
+    assertEquals([frame.rows().includes("p/m"), chat.notices, composerOf(chat).state.text], [true, [], "hi"]);
     frame.key("enter");
     await waitForSettled();
     frame.key("enter");
@@ -140,7 +139,7 @@ for (const failure of ["read", "parse"]) {
     frame.draw();
     assertEquals(
       [
-        rows(frame.frame).includes("p/m"),
+        frame.rows().includes("p/m"),
         chat.notices.length,
         chat.notices[0]?.startsWith("error The model choice did not load:"),
       ],
@@ -159,7 +158,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   frame.key("enter");
   await waitForSettled();
   frame.key("enter");
@@ -254,7 +253,7 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   frame.key("esc");
   await waitForSettled();
   assertEquals([sessions.created, composerOf(chat).state.text], [[], "hi"]);
@@ -262,11 +261,11 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   chat.tui.commands.run("core:close");
   await waitForSettled();
   frame.draw();
-  assertEquals([rows(frame.frame).includes("p/m"), sessions.created], [false, []]);
+  assertEquals([frame.rows().includes("p/m"), sessions.created], [false, []]);
   using other = createFrame({ width: 30, height: 6 }, undefined, { folder: "/launch" });
   const failing = await loadChat(other, fakeSessions(), { list: () => Promise.reject(new Error("offline")) });
   other.start();
@@ -299,7 +298,7 @@ test("the edges of a draft trim, and a paste over 300 characters shows a label a
   assertEquals(composerOf(chat).state.spans, []);
   frame.key("ctrl+c");
   frame.paste("b".repeat(301));
-  assertEquals(rows(frame.frame).at(-2), "[Pasted text · 301 chars]");
+  assertEquals(frame.rows().at(-2), "[Pasted text · 301 chars]");
   frame.key("enter");
   await waitForSettled();
   assertEquals(sessions.inputs.at(-1), [{ kind: "userText", text: "b".repeat(301) }]);
@@ -388,7 +387,7 @@ test("page keys scroll the transcript, and a pane of one row keeps the composer"
   frame.key("ctrl+end");
   assertEquals(chat.transcript().scroll.state.top, bottom);
   frame.resize({ width: 20, height: 1 });
-  assertEquals(rows(frame.frame), ["Message…"]);
+  assertEquals(frame.rows(), ["Message…"]);
 });
 
 test("a refusal while the user browses the messages ends the browse, so down keeps the restored draft", async () => {
@@ -429,12 +428,12 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
   frame.key("ctrl+k m");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   frame.key("down");
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("low"), true);
+  assertEquals(frame.rows().includes("low"), true);
   // A send while the picker is open does nothing.
   chat.tui.commands.run("chat:send");
   frame.key("down");
@@ -505,14 +504,11 @@ test("a slash word lists the matching commands above the composer, and enter run
   const composer = composerOf(chat);
   frame.key("/ m o d e l");
   frame.draw();
-  const listed = rows(frame.frame).slice(-4, -3);
+  const listed = frame.rows().slice(-4, -3);
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  assertEquals(
-    [listed[0]?.startsWith(" /model"), rows(frame.frame).includes("p/m"), composer.state.text],
-    [true, true, ""],
-  );
+  assertEquals([listed[0]?.startsWith(" /model"), frame.rows().includes("p/m"), composer.state.text], [true, true, ""]);
 });
 
 test("up and down move through the enabled commands, and enter runs the selected one", async () => {
@@ -553,8 +549,8 @@ test("the word of a draft that runs a command has the command style in the compo
   /** The foreground of the cell `offset` of `draft` in the composer row, the last row that shows it. */
   const fgAt = (draft: string, offset: number) => {
     composer.reset({ text: draft, selection: { anchor: draft.length, head: draft.length }, spans: [] });
-    const drawn = frame.draw();
-    const shown = rows(drawn);
+    const shown = frame.rows();
+    const drawn = frame.frame;
     const row = shown.findLastIndex((text) => text.includes(draft));
     return drawn.cells[row]?.[(shown[row] ?? "").indexOf(draft) + offset]?.style.fg;
   };
@@ -593,7 +589,7 @@ test("a question in the place of the composer hides the commands", async () => {
   await waitForSettled();
   const listed = (): boolean => {
     frame.draw();
-    return rows(frame.frame).some((line) => line.includes("/alpha"));
+    return frame.rows().some((line) => line.includes("/alpha"));
   };
   frame.key("/ a l p");
   const before = listed();
@@ -617,7 +613,7 @@ test("esc hides the commands until the draft changes, and a draft with no comman
   await waitForSettled();
   const listed = (): boolean => {
     frame.draw();
-    return rows(frame.frame).some((line) => line.includes("/model"));
+    return frame.rows().some((line) => line.includes("/model"));
   };
   frame.key("/ m o");
   frame.key("esc");
@@ -661,7 +657,7 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
   sessions.push(accepted(6, [{ kind: "userText", text: "CI failed" }], "plugin"));
   sessions.push(accepted(7, [{ kind: "userText", text: "and the docs\nthen push them" }]));
   frame.draw();
-  assertEquals(rows(frame.frame).slice(3), [
+  assertEquals(frame.rows().slice(3), [
     "",
     " fix the test",
     " and the docs th… ↑ edit",
@@ -708,7 +704,7 @@ test("up recalls the newest waiting message with its images, the next up puts th
   await waitForSettled();
   frame.draw();
   assertEquals(
-    [sessions.removals, rows(frame.frame).some((row) => row.includes("CI failed")), rows(frame.frame).at(-5)],
+    [sessions.removals, frame.rows().some((row) => row.includes("CI failed")), frame.rows().at(-5)],
     [[9, 5], false, `${" zero".padEnd(23)} ↑ edit`],
   );
   // A caret move ends a recall too.
@@ -799,7 +795,7 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
   ] as const)
     sessions.push(accepted(id, [{ kind: "userText", text: text }]));
   frame.draw();
-  const strip = rows(frame.frame).slice(0, 2);
+  const strip = frame.rows().slice(0, 2);
   sessions.state.removal = Promise.reject(new Error("disk"));
   frame.key("up");
   await waitForSettled();
@@ -911,7 +907,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
   frame.key("ctrl+v");
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).includes("p/m"), true);
+  assertEquals(frame.rows().includes("p/m"), true);
   frame.key("esc");
   await waitForSettled();
   const cancelled = [sessions.created.length, composer.state.text];

@@ -1,8 +1,7 @@
 // Shared reasoning runs in the bundled chat: one fold and source for adjacent provider blocks.
 
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import { click, commit, fakeSessions, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
-import { rows } from "./rows.ts";
+import { commit, fakeSessions, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
 
 test("one thought opens and copies every adjacent reasoning block of a saved response", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
@@ -20,7 +19,7 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
     transcriptRows(frame).filter((row) => row !== ""),
     [" Thought"],
   );
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(transcriptRows(frame).slice(0, 6), ["", " Thought", " first thought", "", " second thought", ""]);
   const view = chat.transcript();
   const thought = view.document.items.find((item) =>
@@ -36,7 +35,7 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   restored.start(snapshot);
   await waitForSettled();
   assertEquals(transcriptRows(restored).slice(0, 6), ["", " Thought", " first thought", "", " second thought", ""]);
-  click(frame, 2, 4);
+  frame.click(2, 4);
   assertEquals(
     transcriptRows(frame).filter((row) => row !== ""),
     [" Thought"],
@@ -67,7 +66,7 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [],
   );
-  assert(rows(frame.frame).some((row) => row.includes("Thinking…")));
+  assert(frame.rows().some((row) => row.includes("Thinking…")));
   sessions.push({ kind: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 0, text: "first" } });
   sessions.push({
     kind: "model",
@@ -79,7 +78,7 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [" Thinking"],
   );
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     // The tab of the second block takes four cells.

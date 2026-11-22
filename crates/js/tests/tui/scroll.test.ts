@@ -4,7 +4,6 @@
 import { Core } from "yuke:internal/tui/core";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { ScrollList, type TextRow } from "yuke:tui";
-import { rows } from "./rows.ts";
 import { fakeTerminal } from "./terminal.ts";
 
 /** An item of text that wraps at the width of the list, one row for each `width` characters. */
@@ -45,9 +44,9 @@ test("a prepend keeps the top item at its row", () => {
   ]);
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
   scroll.scrollTo(4);
-  assertEquals(rows(frame.draw()), ["b1", "b2"]);
+  assertEquals(frame.rows(), ["b1", "b2"]);
   scroll.setItems([{ key: "z", text: "z0z1z2z3z4" }, ...scroll.items]);
-  assertEquals([rows(frame.draw()), scroll.state.top], [["b1", "b2"], 9]);
+  assertEquals([frame.rows(), scroll.state.top], [["b1", "b2"], 9]);
 });
 
 test("the anchor names the top item and row, and scrollToItem puts that row at the top", () => {
@@ -67,7 +66,7 @@ test("the anchor names the top item and row, and scrollToItem puts that row at t
   );
   assertEquals([scroll.scrollToItem("b", 3), scroll.scrollToItem("x"), scroll.state.top], [false, false, 7]);
   assertEquals(scroll.scrollToItem("a", 1), true);
-  assertEquals(rows(frame.draw()), ["a1", "a2"]);
+  assertEquals(frame.rows(), ["a1", "a2"]);
 });
 
 test("a top at the first row of an item keeps that item after a prepend", () => {
@@ -78,7 +77,7 @@ test("a top at the first row of an item keeps that item after a prepend", () => 
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
   scroll.scrollTo(3);
   scroll.setItems([{ key: "z", text: "z0" }, ...scroll.items]);
-  assertEquals(rows(frame.draw()), ["b0", "b1"]);
+  assertEquals(frame.rows(), ["b0", "b1"]);
 });
 
 test("a resize keeps the row offset of the top item", () => {
@@ -89,10 +88,10 @@ test("a resize keeps the row offset of the top item", () => {
   ]);
   using frame = createFrame({ width: 4, height: 2 }, () => scroll);
   scroll.scrollTo(3);
-  assertEquals(rows(frame.draw()), ["cccc", "dddd"]);
+  assertEquals(frame.rows(), ["cccc", "dddd"]);
   // At width 2, "a" takes 4 rows, so row 1 of "b" is row 5.
   frame.resize({ width: 2, height: 2 });
-  assertEquals([scroll.state.top, rows(frame.frame)], [5, ["bb", "cc"]]);
+  assertEquals([scroll.state.top, frame.rows()], [5, ["bb", "cc"]]);
 });
 
 test("a removed top item gives its place to the next item", () => {
@@ -104,7 +103,7 @@ test("a removed top item gives its place to the next item", () => {
   using frame = createFrame({ width: 2, height: 1 }, () => scroll);
   scroll.scrollTo(3);
   scroll.setItems([scroll.items[0] as Item, scroll.items[2] as Item]);
-  assertEquals(rows(frame.draw()), ["c0"]);
+  assertEquals(frame.rows(), ["c0"]);
 });
 
 test("output below a view that does not follow sets the hint, and the bottom follows again", () => {
@@ -123,7 +122,7 @@ test("output below a view that does not follow sets the hint, and the bottom fol
   scroll.followTail();
   assertEquals([scroll.state.following, scroll.state.changedBelow], [true, false]);
   scroll.setItems([...scroll.items, { key: "d", text: "d0" }]);
-  assertEquals(rows(frame.draw()), ["c0", "d0"]);
+  assertEquals(frame.rows(), ["c0", "d0"]);
 });
 
 test("a prepend and a resize set no hint, and a same-height change below sets it", () => {
@@ -164,7 +163,7 @@ test("the wheel scrolls the list", () => {
   const { scroll } = list([{ key: "a", text: "a0a1a2a3a4a5" }]);
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
   frame.mouse({ type: "mouse", column: 0, row: 0, button: "wheeldown", action: "press", modifiers: MODIFIERS });
-  assertEquals(rows(frame.frame), ["a3", "a4"]);
+  assertEquals(frame.rows(), ["a3", "a4"]);
 });
 
 test("older pages come once for each top visit and never overlap", async () => {
@@ -218,7 +217,7 @@ test("items with no rows take no rows, and a render that throws changes nothing"
     { key: "b", text: "b0" },
   ]);
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
-  assertEquals([rows(frame.draw()), scroll.state.total], [["a0", "b0"], 2]);
+  assertEquals([frame.rows(), scroll.state.total], [["a0", "b0"], 2]);
   const broken = new ScrollList<Item>({
     items: [{ key: "a", text: "a0" }],
     id: (entry) => entry.key,

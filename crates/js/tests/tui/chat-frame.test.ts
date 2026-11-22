@@ -4,8 +4,7 @@ import { ChatDocument, type ComposerFrameContext, composerRows } from "yuke:chat
 import type { InteractionRequest } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { type Canvas, TextEditor } from "yuke:tui";
-import { click, fakeSessions, loadChat, replies } from "./chat.ts";
-import { rows } from "./rows.ts";
+import { fakeSessions, loadChat, replies } from "./chat.ts";
 
 const QUESTION: InteractionRequest = {
   kind: "questions",
@@ -30,10 +29,10 @@ test("the height, the cursor, and a click of the input follow the side insets", 
   frame.paste("abcdefghij");
   frame.draw();
   // The input has 8 columns, so the text takes two rows.
-  assertEquals(rows(frame.frame).slice(-4), ["t", "| abcdefgh", "| ij", "b"]);
+  assertEquals(frame.rows().slice(-4), ["t", "| abcdefgh", "| ij", "b"]);
   assertEquals(frame.frame.cursor?.column, 4);
   assertEquals(frame.frame.cursor?.row, 6);
-  click(frame, 3, 5);
+  frame.click(3, 5);
   frame.draw();
   assertEquals([frame.frame.cursor?.column, frame.frame.cursor?.row], [3, 5]);
 });
@@ -45,7 +44,7 @@ test("a frame without insets leaves each row to the transcript and the input", a
   frame.start();
   await waitForSettled();
   frame.draw();
-  const shown = rows(frame.frame);
+  const shown = frame.rows();
   assertEquals(shown.at(-1), "Message…");
   assertEquals(shown.at(-2), "");
   assertEquals(
@@ -68,13 +67,13 @@ test("a short pane gives up the rows below the input first, then the rows above 
     },
   });
   frame.start();
-  assertEquals(rows(frame.frame), ["t", "Message…", "b"]);
+  assertEquals(frame.rows(), ["t", "Message…", "b"]);
   frame.resize({ width: 10, height: 2 });
   frame.draw();
-  assertEquals(rows(frame.frame), ["t", "Message…"]);
+  assertEquals(frame.rows(), ["t", "Message…"]);
   frame.resize({ width: 10, height: 1 });
   frame.draw();
-  assertEquals([rows(frame.frame), inputRow], [["Message…"], 0]);
+  assertEquals([frame.rows(), inputRow], [["Message…"], 0]);
 });
 
 test("the style of a frame stays under the text of the input and the empty cells", async () => {
@@ -145,20 +144,20 @@ test("the composer stays the same widget in a frame, and the last frame wins unt
   const first = chat.chat.setComposerFrame(label("one"));
   const second = chat.chat.setComposerFrame(label("two"));
   frame.start();
-  assertEquals(rows(frame.frame)[1], "two");
+  assertEquals(frame.rows()[1], "two");
   const composer = chat.tui.widgets.list().find((mount) => mount.widget.role === "composer")?.widget;
   assertEquals(composer instanceof TextEditor, true);
   assertEquals(chat.tui.focusedView, composer);
   // A press on the frame leaves the focus on the input.
-  click(frame, 0, 1);
+  frame.click(0, 1);
   assertEquals(chat.tui.focusedView, composer);
   // The disposer of an earlier frame leaves the current one, and the disposer of the last frame gives the rules back.
   first();
   frame.draw();
-  assertEquals(rows(frame.frame)[1], "two");
+  assertEquals(frame.rows()[1], "two");
   second();
   frame.draw();
-  assertEquals(rows(frame.frame).slice(-3), ["─".repeat(10), "Message…", "─".repeat(10)]);
+  assertEquals(frame.rows().slice(-3), ["─".repeat(10), "Message…", "─".repeat(10)]);
 });
 
 test("a disposer of the chat service runs after the chat plugin stops", async () => {

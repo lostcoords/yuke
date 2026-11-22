@@ -4,7 +4,6 @@ import { apply } from "yuke:internal/bundled/toasts";
 import type { NoticeParams } from "yuke:protocol";
 import { assert, assertEquals, createFrame, type FrameTest, test } from "yuke:test";
 import { mouse } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 /** Load the toasts into `frame`. */
 function loadToasts(frame: FrameTest): void {
@@ -14,7 +13,8 @@ function loadToasts(frame: FrameTest): void {
 
 /** Give the toast part of each row of `frame`. The part starts at `column`, and the test trims it. */
 function stack(frame: FrameTest, column = 25): string[] {
-  return rows(frame.frame)
+  return frame
+    .rows()
     .map((row) => row.slice(column).trim())
     .filter((row) => row !== "");
 }
@@ -109,7 +109,7 @@ test("the history shows a source from yuke without host:", () => {
   frame.draw();
 
   assertEquals(
-    rows(frame.frame).filter((row) => row.startsWith("error ")),
+    frame.rows().filter((row) => row.startsWith("error ")),
     ["error session: the turn failed"],
   );
 });
@@ -125,7 +125,7 @@ test("the warnings and errors before the load show, and the history lists each n
   frame.notice(notice("info", "late", "bye"));
   frame.surface("demo").tui.commands.run("toasts:history");
   frame.draw();
-  const listed = rows(frame.frame).filter((row) => /^(info|error) /.test(row));
+  const listed = frame.rows().filter((row) => /^(info|error) /.test(row));
   assertEquals(
     [shown, listed],
     [

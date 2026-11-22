@@ -12,7 +12,6 @@ import {
   TextView,
   type TextViewChange,
 } from "yuke:tui";
-import { rows } from "./rows.ts";
 
 const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
 
@@ -37,22 +36,16 @@ test("a drag copies both end graphemes in either direction", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "xA👩‍💻By"])) });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
   // "A" is at cell 1, the astronaut takes cells 2 and 3, and "B" is at cell 4.
-  frame.mouse(mouse(1, 0, "press"));
-  frame.mouse(mouse(4, 0, "drag"));
-  frame.mouse(mouse(4, 0, "release"));
-  frame.mouse(mouse(4, 0, "press"));
-  frame.mouse(mouse(1, 0, "drag"));
-  frame.mouse(mouse(1, 0, "release"));
+  frame.drag({ column: 1, row: 0 }, { column: 4, row: 0 });
+  frame.drag({ column: 4, row: 0 }, { column: 1, row: 0 });
   assertEquals(frame.copies, ["A👩‍💻B", "A👩‍💻B"]);
 });
 
 test("a tab takes four cells, a wrap breaks after it, and a copy keeps it", () => {
   const view = new TextView({ document: document("d", item("i", ["a", "a\tb"], ["t", "Test (linux)\tpass\t3m9s"])) });
   using frame = createFrame({ width: 14, height: 4 }, () => view);
-  assertEquals(rows(frame.frame), ["a    b", "Test (linux)", "pass    3m9s", ""]);
-  frame.mouse(mouse(0, 0, "press"));
-  frame.mouse(mouse(5, 0, "drag"));
-  frame.mouse(mouse(5, 0, "release"));
+  assertEquals(frame.rows(), ["a    b", "Test (linux)", "pass    3m9s", ""]);
+  frame.drag({ column: 0, row: 0 }, { column: 5, row: 0 });
   assertEquals(frame.copies, ["a\tb"]);
 });
 
@@ -110,7 +103,7 @@ test("a Markdown section maps rows to its source, a replacement as a whole", () 
     },
   });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
-  assertEquals(rows(frame.frame)[0], "• bold item");
+  assertEquals(frame.rows()[0], "• bold item");
   // "b" of "bold" is at source offset 4 and shows at cell 2, after the mark "• ".
   assertEquals(
     [view.rows.point(at("i", "s", 4)), view.rows.at({ column: 2, row: 0 })],
@@ -180,8 +173,7 @@ test("a click gives activate the link of the segment under it, or none", () => {
   });
   using frame = createFrame({ width: 10, height: 1 }, () => view);
   for (const column of [5, 1]) {
-    frame.mouse(mouse(column, 0, "press"));
-    frame.mouse(mouse(column, 0, "release"));
+    frame.click(column, 0);
   }
   assertEquals(activated, [
     ["i:5", "https://docs.rs"],
@@ -196,8 +188,7 @@ test("a click without a drag activates its position and copies nothing", () => {
     onActivate: (position) => activated.push(position),
   });
   using frame = createFrame({ width: 10, height: 1 }, () => view);
-  frame.mouse(mouse(2, 0, "press"));
-  frame.mouse(mouse(2, 0, "release"));
+  frame.click(2, 0);
   assertEquals([activated, frame.copies], [[at("i", "s", 2)], []]);
 });
 
@@ -237,9 +228,7 @@ test("a plugin sees a motion with no button and marks the row under the mouse, a
     });
     return () => extension.close();
   });
-  frame.mouse(mouse(3, 0, "press"));
-  frame.mouse(mouse(5, 0, "drag"));
-  frame.mouse(mouse(5, 0, "release"));
+  frame.drag({ column: 3, row: 0 }, { column: 5, row: 0 });
   const selection = view.selection;
   frame.mouse({ ...mouse(2, 0, "motion"), button: "none" });
   const drawn = frame.draw();
@@ -297,7 +286,7 @@ test("the scroll control follows the tail and asks for older items", async () =>
     },
   });
   using frame = createFrame({ width: 10, height: 2 }, () => view);
-  assertEquals(rows(frame.frame), ["line 3", "line 4"]);
+  assertEquals(frame.rows(), ["line 3", "line 4"]);
   view.scroll.scrollTo(0);
   frame.draw();
   await waitForSettled();
@@ -351,9 +340,7 @@ test("a scroll of the view gives a scroll change", () => {
 test("a drag from a wide grapheme or inside a list mark keeps the whole of it", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "xA👩‍💻By"])) });
   using frame = createFrame({ width: 20, height: 1 }, () => view);
-  frame.mouse(mouse(2, 0, "press"));
-  frame.mouse(mouse(1, 0, "drag"));
-  frame.mouse(mouse(1, 0, "release"));
+  frame.drag({ column: 2, row: 0 }, { column: 1, row: 0 });
   const list = new Markdown("- item");
   const marked = new TextView({
     document: {
@@ -362,9 +349,7 @@ test("a drag from a wide grapheme or inside a list mark keeps the whole of it", 
     },
   });
   using second = createFrame({ width: 20, height: 1 }, () => marked);
-  second.mouse(mouse(0, 0, "press"));
-  second.mouse(mouse(1, 0, "drag"));
-  second.mouse(mouse(1, 0, "release"));
+  second.drag({ column: 0, row: 0 }, { column: 1, row: 0 });
   assertEquals([frame.copies, second.copies], [["A👩‍💻"], ["• "]]);
 });
 

@@ -5,7 +5,6 @@ import { apply } from "yuke:internal/bundled/chat";
 import { assertEquals, assertRejects, createFrame, test, waitForSettled } from "yuke:test";
 import type { View } from "yuke:tui";
 import { commit, composerOf, fakeSessions, loadChat, replies } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 test("show puts another session in the pane, ends the old handle, and the draft waits for the return", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
@@ -20,7 +19,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
   await chat.chat.show("s2");
   sessions.push(commit(3, [{ kind: "assistantText", text: "only in s2" }]), "s2");
   frame.draw();
-  const shown = rows(frame.frame).some((text) => text.includes("only in s2"));
+  const shown = frame.rows().some((text) => text.includes("only in s2"));
   const away = composerOf(chat).state.text;
   frame.paste("draft of s2");
   await chat.chat.show("s1");

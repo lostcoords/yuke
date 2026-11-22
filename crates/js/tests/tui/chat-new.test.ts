@@ -5,7 +5,6 @@ import { writeTextFile } from "yuke:fs";
 import { assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
 import type { View } from "yuke:tui";
 import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 /** Save the pick `p/m` at the level high, so a send needs no picker. */
 async function savedPick(): Promise<void> {
@@ -42,7 +41,7 @@ test("/new empties the pane, ends the old handle, and shows the header with the 
   frame.key("/ n e w enter");
   await waitForSettled();
   frame.draw();
-  const shown = rows(frame.frame).join("\n");
+  const shown = frame.rows().join("\n");
 
   assertEquals(
     [
@@ -100,7 +99,7 @@ test("ctrl+k n empties a draft", async () => {
   frame.draw();
 
   assertEquals(
-    [chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View), rows(frame.frame).at(-2)],
+    [chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View), frame.rows().at(-2)],
     [undefined, "Message…"],
   );
 });
@@ -112,13 +111,13 @@ test("a pane with a session lists /new, and a pane without a session does not", 
   await waitForSettled();
   frame.key("/ n e");
   frame.draw();
-  const listed = rows(frame.frame).some((text) => text.startsWith(" /new"));
+  const listed = frame.rows().some((text) => text.startsWith(" /new"));
   frame.key("backspace backspace backspace");
   frame.key("ctrl+k n");
   frame.key("/ n e");
   frame.draw();
 
-  assertEquals([listed, rows(frame.frame).some((text) => text.startsWith(" /new"))], [true, false]);
+  assertEquals([listed, frame.rows().some((text) => text.startsWith(" /new"))], [true, false]);
 });
 
 test("ctrl+k n during a send keeps the session and its handle", async () => {
@@ -154,7 +153,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
   frame.key("/ n e w enter");
   await waitForSettled();
   frame.draw();
-  const shown = rows(frame.frame).join("\n");
+  const shown = frame.rows().join("\n");
 
   assertEquals(
     [
@@ -217,5 +216,5 @@ test("a draft that a pane left before /new does not come back after a later retu
   await chat.chat.show("s1");
   frame.draw();
 
-  assertEquals(rows(frame.frame).at(-2), "Message…");
+  assertEquals(frame.rows().at(-2), "Message…");
 });

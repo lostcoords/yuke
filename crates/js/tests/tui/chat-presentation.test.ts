@@ -5,7 +5,7 @@ import type { Block, StoredEvent, ToolCall } from "yuke:protocol";
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import type { Transcript } from "yuke:transcript";
 import type { TextDocument, View } from "yuke:tui";
-import { click, commit, fakeSessions, fixedClock, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
+import { commit, fakeSessions, fixedClock, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
 
 const GROUP = "group";
 
@@ -82,9 +82,9 @@ test("a plugin shows three tools as one row, and a click opens and folds that ro
   await waitForSettled();
   frame.draw();
   const folded = shown(frame);
-  click(frame, 1, transcriptRows(frame).indexOf("● tools: 3"));
+  frame.click(1, transcriptRows(frame).indexOf("● tools: 3"));
   const opened = shown(frame);
-  click(frame, 1, transcriptRows(frame).indexOf("● tools: 3"));
+  frame.click(1, transcriptRows(frame).indexOf("● tools: 3"));
   assertEquals(
     [folded, opened, shown(frame)],
     [["● tools: 3"], ["● tools: 3", " read a", " read b", " read c"], ["● tools: 3"]],
@@ -97,7 +97,7 @@ test("a plugin that loads after the pane mounts changes the open pane and keeps 
   frame.start();
   await waitForSettled();
   frame.draw();
-  click(frame, 1, transcriptRows(frame).indexOf(" read a"));
+  frame.click(1, transcriptRows(frame).indexOf(" read a"));
   const before = shown(frame);
   const remove = chat.chat.setPresentation((options) => new Grouped(options));
   frame.draw();
@@ -247,7 +247,7 @@ test("a group key in the folds survives a snapshot and a restore", async () => {
   before.start();
   await waitForSettled();
   before.draw();
-  click(before, 1, transcriptRows(before).indexOf("● tools: 1"));
+  before.click(1, transcriptRows(before).indexOf("● tools: 1"));
   const snapshot = before.snapshot();
   using after = createFrame({ width: 30, height: 12 }, undefined, { folder: "/w" });
   const second = await loadChat(after, fakeSessions(reads("a")));

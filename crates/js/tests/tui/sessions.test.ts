@@ -4,7 +4,6 @@ import { apply } from "yuke:internal/bundled/sessions";
 import type { SessionRow, SessionState } from "yuke:protocol";
 import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 /** A saved session `id` of the folder `folder` with the title `title`, `minutes` old. */
 function row(id: string, folder: string, title: string | undefined, state: SessionState, minutes: number): SessionRow {
@@ -44,7 +43,7 @@ async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadCh
   chat.tui.commands.run("sessions:open");
   await waitForSettled();
   frame.draw();
-  return rows(frame.frame);
+  return frame.rows();
 }
 
 test("the list shows the sessions of the folder of the pane, and tab shows every folder", async () => {
@@ -55,7 +54,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
   frame.key("tab");
   await waitForSettled();
   frame.draw();
-  const every = rows(frame.frame);
+  const every = frame.rows();
   /** Whether one row of `all` holds every text of `texts`, in any column. */
   const shows = (all: string[], ...texts: string[]) => all.some((line) => texts.every((text) => line.includes(text)));
   assertEquals(
@@ -92,7 +91,7 @@ test("a query matches the first prompt, and else the model, the folder, or the i
   const shown = (query: string): string[] => {
     frame.paste(query);
     frame.draw();
-    const drawn = rows(frame.frame);
+    const drawn = frame.rows();
     for (const _ of query) frame.key("backspace");
     return ["fix the flaky test", "add the bar", "refactor sqlgen"].filter((text) =>
       drawn.some((line) => line.includes(text)),
@@ -119,7 +118,7 @@ test("enter shows the chosen session in the focused chat pane and closes the lis
   await waitForSettled();
   frame.draw();
   assertEquals(
-    [loaded.chat.opened.map((open) => open.id), rows(frame.frame).some((line) => line.includes("tab: every folder"))],
+    [loaded.chat.opened.map((open) => open.id), frame.rows().some((line) => line.includes("tab: every folder"))],
     [["s1", "s2"], false],
   );
 });
@@ -148,7 +147,7 @@ test("a match of the first prompt comes before a match of the folder of a newer 
   await waitForSettled();
   frame.paste("bar");
   frame.draw();
-  const drawn = rows(frame.frame);
+  const drawn = frame.rows();
   const at = (text: string) => drawn.findIndex((line) => line.includes(text));
   assertEquals([at("add the bar") >= 0, at("add the bar") < at("deploy notes")], [true, true]);
 });

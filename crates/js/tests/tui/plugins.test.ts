@@ -5,7 +5,6 @@ import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:internal/sessions";
 import type { FailedPlugin, FoundPlugin, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
-import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
 const NEW = "8d02e77".padEnd(40, "0");
@@ -124,7 +123,7 @@ function load(frame: FrameTest, plugins: PluginManager): string[] {
 async function drawn(frame: FrameTest): Promise<string[]> {
   await waitForSettled();
   frame.draw();
-  return rows(frame.frame);
+  return frame.rows();
 }
 
 /** Open the dashboard, and give the drawn rows after it settles. */

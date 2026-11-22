@@ -17,7 +17,6 @@ import type {
 } from "yuke:protocol";
 import { createFrame, type FrameTest, folder } from "yuke:test";
 import { type MouseEvent, TextEditor, TextView } from "yuke:tui";
-import { rows } from "./rows.ts";
 
 const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
 
@@ -317,16 +316,10 @@ export function fixedClock(): { now: number } & Disposable {
 
 /** The rows of the transcript of `frame` above the rule on the composer, which is the last rule but one. */
 export function transcriptRows(frame: FrameTest): string[] {
-  const shown = rows(frame.frame);
+  const shown = frame.rows();
   const close = shown.findLastIndex((row) => row.startsWith("─"));
   const rule = shown.slice(0, close).findLastIndex((row) => row.startsWith("─"));
   return shown.slice(0, rule);
-}
-
-/** Press and release the left button at `row` and `column` of `frame`. */
-export function click(frame: FrameTest, column: number, row: number): void {
-  frame.mouse(mouse(column, row, "press"));
-  frame.mouse(mouse(column, row, "release"));
 }
 
 /** The composer of the active pane of `chat`. */

@@ -4,7 +4,6 @@
 import { ChatCompletions, type CompletionProvider, type SlashCommands, slashCompletions } from "yuke:chat";
 import { assert, assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { type CommandItem, TextEditor } from "yuke:tui";
-import { rows } from "./rows.ts";
 
 /** Put a list of `height` rows above a one-row editor in `frame`, with the providers `providers`. */
 function mountProviders(frame: FrameTest, height: number, providers: readonly CompletionProvider[]) {
@@ -57,7 +56,7 @@ test("the list needs at most six rows, a shorter place scrolls to the selection,
   const needed = list.rows();
   frame.key("down down down down");
   frame.draw();
-  const scrolled = rows(frame.frame).slice(0, 3);
+  const scrolled = frame.rows().slice(0, 3);
   frame.key("h enter");
   assertEquals(
     [needed, scrolled, ran, list.editor.state.text],
@@ -80,7 +79,7 @@ test("only a command with a slash word lists, and a run that gives false keeps t
   });
   frame.key("/ a l");
   frame.draw();
-  const shown = rows(frame.frame)[0];
+  const shown = frame.rows()[0];
   const count = list.rows();
   frame.key("enter");
   assertEquals([shown, count, ran, list.editor.state.text], [" /alpha  First", 1, ["core:alpha"], "/al"]);
@@ -104,7 +103,7 @@ test("a word and text run the command with args, and only the whole word of a co
   });
   frame.key("/ m o d e space f a s t");
   frame.draw();
-  const shown = rows(frame.frame)[0];
+  const shown = frame.rows()[0];
   frame.key("enter");
   assertEquals([shown, ran, list.editor.state.text], [" /mode <name>  Pick", [["demo:pick", "fast"]], ""]);
 
@@ -189,10 +188,10 @@ test("the newest provider with an item wins, and a provider without one leaves t
   const list = mountProviders(frame, 2, [newer, older]);
   frame.key("s e e space @ d");
   frame.draw();
-  const first = rows(frame.frame)[0];
+  const first = frame.rows()[0];
   frame.key("backspace s");
   frame.draw();
-  assertEquals([first, rows(frame.frame)[0], list.rows()], [" @docs/", " @src/main.rs", 1]);
+  assertEquals([first, frame.rows()[0], list.rows()], [" @docs/", " @src/main.rs", 1]);
 });
 
 test("tab writes the item in place of the word before the caret, and the next ask lists again from there", () => {
@@ -234,7 +233,7 @@ test("a late list shows when its draft is still current, and a list for an older
   answers[2]?.(["2"]);
   await waitForSettled();
   frame.draw();
-  assertEquals([rows(frame.frame)[0], list.changes()], [" ab2", 1]);
+  assertEquals([frame.rows()[0], list.changes()], [" ab2", 1]);
 });
 
 test("a throw or a rejection of a provider is an error, and the ask goes on to the next provider", async () => {
@@ -250,7 +249,7 @@ test("a throw or a rejection of a provider is an error, and the ask goes on to t
   await waitForSettled();
   frame.draw();
   assertEquals(
-    [list.errors.map((error) => (error as Error).message), rows(frame.frame)[0]],
+    [list.errors.map((error) => (error as Error).message), frame.rows()[0]],
     [["broken", "broken", "gone"], " @x"],
   );
 });

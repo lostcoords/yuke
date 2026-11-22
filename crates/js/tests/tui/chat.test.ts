@@ -3,18 +3,17 @@
 
 import type { StoredEvent } from "yuke:protocol";
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import { click, commit, EMPTY, fakeSessions, loadChat, mouse, replies, SETTINGS, transcriptRows } from "./chat.ts";
-import { rows } from "./rows.ts";
+import { commit, EMPTY, fakeSessions, loadChat, replies, SETTINGS, transcriptRows } from "./chat.ts";
 
 test("a split opens a new empty chat with its own draft", async () => {
   using frame = createFrame({ width: 21, height: 4 });
   const chat = await loadChat(frame);
   frame.start();
-  assertEquals(rows(frame.frame), ["", "─────────────────────", "Message…", "─────────────────────"]);
+  assertEquals(frame.rows(), ["", "─────────────────────", "Message…", "─────────────────────"]);
   frame.paste("hi");
   chat.tui.commands.run("core:split-right");
   frame.paste("yo");
-  assertEquals(rows(frame.frame), ["          │", "──────────│──────────", "hi        │yo", "──────────│──────────"]);
+  assertEquals(frame.rows(), ["          │", "──────────│──────────", "hi        │yo", "──────────│──────────"]);
 });
 
 test("a reload keeps the draft of each pane and the focus", async () => {
@@ -29,7 +28,7 @@ test("a reload keeps the draft of each pane and the focus", async () => {
   await loadChat(after);
   after.start(snapshot);
   after.paste("b");
-  assertEquals(rows(after.frame).at(-2), "a         │xb");
+  assertEquals(after.rows().at(-2), "a         │xb");
 });
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
@@ -37,13 +36,11 @@ test("a drag over the transcript copies at the release, and the composer keeps t
   const chat = await loadChat(frame, fakeSessions([commit(2, [{ kind: "assistantText", text: "hello" }])]));
   frame.start();
   // Row 0 is the gap before the reply, and column 0 is its indent.
-  frame.mouse(mouse(1, 1, "press"));
-  frame.mouse(mouse(5, 1, "drag"));
-  frame.mouse(mouse(5, 1, "release"));
+  frame.drag({ column: 1, row: 1 }, { column: 5, row: 1 });
   frame.paste("x");
   frame.draw();
   assertEquals(
-    [frame.copies, chat.tui.focusedView === chat.transcript(), rows(frame.frame).at(-2)],
+    [frame.copies, chat.tui.focusedView === chat.transcript(), frame.rows().at(-2)],
     [["hello"], false, "x"],
   );
 });
@@ -148,12 +145,12 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
     " Stopped",
     " Retrying in 3s: overloaded",
   ]);
-  click(frame, 2, 3);
+  frame.click(2, 3);
   assertEquals(
     [before.includes(" the test expects 3"), transcriptRows(frame).includes(" the test expects 3")],
     [false, true],
   );
-  click(frame, 2, 3);
+  frame.click(2, 3);
   assertEquals(transcriptRows(frame), before);
 });
 
@@ -263,7 +260,7 @@ test("a failed page shows its error below the transcript and loads no more pages
   frame.draw();
   await waitForSettled();
   frame.draw();
-  assertEquals(rows(frame.frame).at(-4), " the history did not load: Error: disk");
+  assertEquals(frame.rows().at(-4), " the history did not load: Error: disk");
   assertEquals(sessions.pages.length, 1);
 });
 
@@ -275,10 +272,10 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   chat.transcript().scroll.scrollBy(-4);
   sessions.push(commit(31, [{ kind: "assistantText", text: "reply 31" }]));
   frame.draw();
-  assertEquals(rows(frame.frame).at(-4), " new output ↓");
+  assertEquals(frame.rows().at(-4), " new output ↓");
   chat.transcript().scroll.followTail();
   frame.draw();
-  assertEquals(rows(frame.frame).at(-4), "");
+  assertEquals(frame.rows().at(-4), "");
   sessions.push(commit(32, [{ kind: "assistantText", text: "reply 32" }]));
   frame.draw();
   assertEquals(transcriptRows(frame).slice(-2), [" reply 32", ""]);
@@ -292,7 +289,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   before.start();
   chat.transcript().scroll.scrollTo(0);
   before.draw();
-  click(before, 2, 1);
+  before.click(2, 1);
   chat.transcript().scroll.scrollBy(1);
   before.draw();
   const shown = transcriptRows(before);

@@ -3,7 +3,6 @@
 import { apply } from "yuke:internal/bundled/bar";
 import { assertEquals, assertThrows, createFrame, type FrameTest, test } from "yuke:test";
 import type { StatusEntry, View } from "yuke:tui";
-import { rows } from "./rows.ts";
 
 /** Load the bar into `frame` with `options`. */
 function loadBar(frame: FrameTest, options: { readonly hide?: string[]; readonly order?: string[] } = {}): void {
@@ -84,7 +83,7 @@ test("the bar takes the last row: the left side from the start and the right sid
   tui.status.set("model", item("luna", "right", 10));
   tui.status.set("jobs", item("jobs 2", "right", 1));
   frame.draw();
-  assertEquals(rows(frame.frame), ["pane", "", "NORMAL     jobs 2 · luna"]);
+  assertEquals(frame.rows(), ["pane", "", "NORMAL     jobs 2 · luna"]);
   // The items are dim, and the bar has no background.
   const last = frame.frame.cells[2] ?? [];
   assertEquals([last[0]?.style, last[7]?.style], [{ dim: true }, {}]);
@@ -99,7 +98,7 @@ test("a narrow bar drops the lowest priority first, the later item of a tie firs
   tui.status.set("model", item("luna high", "right", 10));
   const removeKeys = tui.status.set("keys", item("g", "right", -1, 9));
   frame.draw();
-  const row = (): string => rows(frame.frame).at(-1) ?? "";
+  const row = (): string => frame.rows().at(-1) ?? "";
   const twenty = row();
   frame.resize({ width: 12, height: 2 });
   const twelve = row();
@@ -118,5 +117,5 @@ test("the options hide an item and put named items in their order", () => {
   tui.status.set("jobs", item("jobs 2", "right", 1));
   tui.status.set("model", item("luna", "right", 10));
   frame.draw();
-  assertEquals(rows(frame.frame).at(-1), "                      luna · g");
+  assertEquals(frame.rows().at(-1), "                      luna · g");
 });

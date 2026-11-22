@@ -5,7 +5,6 @@ import type { SessionRow } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { fakeSessions, loadChat } from "./chat.ts";
-import { rows } from "./rows.ts";
 
 function session(title: string | undefined): SessionRow {
   return {
@@ -47,7 +46,7 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
       sessions.rows[0]?.title,
       composer.state.text,
       sessions.state.cancels,
-      rows(frame.frame).some((line) => line.includes("Rename session")),
+      frame.rows().some((line) => line.includes("Rename session")),
     ],
     [[["s1", "new title"]], "new title", "draft", 0, false],
   );
@@ -62,7 +61,7 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
   await waitForSettled();
   frame.paste("new title");
   frame.draw();
-  assertEquals([rows(frame.frame).some((line) => line.includes("○ new title")), notices], [true, []]);
+  assertEquals([frame.rows().some((line) => line.includes("○ new title")), notices], [true, []]);
 });
 
 test("a rename failure shows an error and retains the editor", async () => {
@@ -83,13 +82,13 @@ test("a rename failure shows an error and retains the editor", async () => {
   frame.draw();
 
   assertEquals(
-    [editor.state.text, rows(frame.frame).some((line) => line.includes("rename failed")), sessions.renames],
+    [editor.state.text, frame.rows().some((line) => line.includes("rename failed")), sessions.renames],
     ["new title", true, []],
   );
   frame.key("esc");
   frame.draw();
   assertEquals(
-    rows(frame.frame).some((line) => line.includes("Rename session")),
+    frame.rows().some((line) => line.includes("Rename session")),
     false,
   );
 });
@@ -110,5 +109,5 @@ test("Esc cancels rename, and an unbound pane does not expose the command", asyn
   bound.key("esc");
   await waitForSettled();
   bound.draw();
-  assertEquals([sessions.renames, rows(bound.frame).some((line) => line.includes("Rename session"))], [[], false]);
+  assertEquals([sessions.renames, bound.rows().some((line) => line.includes("Rename session"))], [[], false]);
 });

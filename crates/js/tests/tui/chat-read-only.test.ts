@@ -2,8 +2,7 @@
 
 import type { InteractionRequest, SessionUpdate } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import { click, fakeSessions, loadChat, replies } from "./chat.ts";
-import { rows } from "./rows.ts";
+import { fakeSessions, loadChat, replies } from "./chat.ts";
 
 const RULE = "─".repeat(30);
 
@@ -30,7 +29,7 @@ test("a read-only session shows its row with the key back, in place of the compo
   const { frame } = await opened();
   using _frame = frame;
 
-  assertEquals(rows(frame.frame).slice(-3), [RULE, "A child session · esc back", RULE]);
+  assertEquals(frame.rows().slice(-3), [RULE, "A child session · esc back", RULE]);
 });
 
 test("a read-only session takes no message, no recall, no image, and no cancel", async () => {
@@ -48,7 +47,7 @@ test("a read-only session takes no message, no recall, no image, and no cancel",
   frame.draw();
 
   assertEquals([sessions.inputs.length, sessions.state.cancels, sessions.state.backgrounds], [0, 0, 0]);
-  assertEquals(rows(frame.frame).at(-2), "A child session · esc back");
+  assertEquals(frame.rows().at(-2), "A child session · esc back");
 });
 
 test("a read-only session turns off the commands that change it, and keeps the commands that show it", async () => {
@@ -79,8 +78,8 @@ test("a read-only session shows no question in its pane", async () => {
   await waitForSettled();
   frame.draw();
 
-  assertEquals(rows(frame.frame).at(-2), "A child session · esc back");
-  assertEquals(rows(frame.frame).join("\n").includes("Delete?"), false);
+  assertEquals(frame.rows().at(-2), "A child session · esc back");
+  assertEquals(frame.rows().join("\n").includes("Delete?"), false);
 });
 
 test("the key back shows the session behind the pane, and the composer gets the focus and the paste", async () => {
@@ -95,7 +94,7 @@ test("the key back shows the session behind the pane, and the composer gets the 
 
   assertEquals(chat.opened.at(-1)?.id, "p1");
   assertEquals(sessions.state.cancels, 0);
-  assertEquals(rows(frame.frame).at(-2), "draft");
+  assertEquals(frame.rows().at(-2), "draft");
 });
 
 test("a selection in the transcript goes first, and the next key goes back", async () => {
@@ -120,7 +119,7 @@ test("the key back gives the composer the focus after a press on the transcript"
   const { frame, chat } = await opened();
   using _frame = frame;
 
-  click(frame, 2, 2);
+  frame.click(2, 2);
   frame.key("esc");
   await waitForSettled();
   frame.draw();
@@ -128,13 +127,13 @@ test("the key back gives the composer the focus after a press on the transcript"
   frame.draw();
 
   assertEquals(chat.opened.at(-1)?.id, "p1");
-  assertEquals(rows(frame.frame).at(-2), "draft");
+  assertEquals(frame.rows().at(-2), "draft");
 });
 
 test("the sources answer in add order, and a disposer removes only its own source", async () => {
   const { frame, chat, end } = await opened();
   using _frame = frame;
-  const row = () => rows(frame.draw()).at(-2);
+  const row = () => frame.rows().at(-2);
   // A source that gives no answer for this session leaves the next source.
   chat.chat.addReadOnly((session) => (session === "s2" ? { text: "Other", back: "p1" } : undefined));
   const second = chat.chat.addReadOnly(() => ({ text: "Second", back: "p1" }));

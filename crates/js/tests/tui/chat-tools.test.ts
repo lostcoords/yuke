@@ -2,18 +2,7 @@
 
 import type { Block, DisplayBlock, StoredEvent, ToolHints, ToolResult } from "yuke:protocol";
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import {
-  click,
-  commit,
-  fakeSessions,
-  fixedClock,
-  loadChat,
-  mouse,
-  SETTINGS,
-  themeStyle,
-  transcriptRows,
-} from "./chat.ts";
-import { rows } from "./rows.ts";
+import { commit, fakeSessions, fixedClock, loadChat, SETTINGS, themeStyle, transcriptRows } from "./chat.ts";
 
 /** The lines `<word> 1` to `<word> <count>`. */
 function lines(word: string, count: number): string {
@@ -149,9 +138,7 @@ test("a folded preview keeps a carriage return out of its last line, and a body 
     ...lines(" out", 5).split("\n"),
     "",
   ]);
-  frame.mouse(mouse(1, 11, "press"));
-  frame.mouse(mouse(20, 11, "drag"));
-  frame.mouse(mouse(20, 11, "release"));
+  frame.drag({ column: 1, row: 11 }, { column: 20, row: 11 });
   assertEquals(frame.copies, ["row 10"]);
 });
 
@@ -163,7 +150,7 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " exec cd crates/js &… · error", ""]);
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(transcriptRows(frame).slice(0, 6), [
     "",
     " exec cd crates/js &… · error",
@@ -173,9 +160,7 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
     "",
   ]);
   // A drag over the open rows copies the command with its line ends.
-  frame.mouse(mouse(1, 2, "press"));
-  frame.mouse(mouse(14, 4, "drag"));
-  frame.mouse(mouse(14, 4, "release"));
+  frame.drag({ column: 1, row: 2 }, { column: 14, row: 4 });
   assertEquals(frame.copies, [command]);
 });
 
@@ -184,11 +169,9 @@ test("a subject that fits in one row copies as it shows, and an open call does n
   const saved = calls({ name: "exec", args: { command: "npm test" }, hints: EXEC, result: ok("") });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " exec npm test", ""]);
-  frame.mouse(mouse(1, 1, "press"));
-  frame.mouse(mouse(14, 1, "drag"));
-  frame.mouse(mouse(14, 1, "release"));
+  frame.drag({ column: 1, row: 1 }, { column: 14, row: 1 });
   assertEquals(frame.copies, ["exec npm test"]);
 });
 
@@ -198,9 +181,7 @@ test("a drag over a clipped subject copies the shown text, and its source gives 
   const saved = calls({ name: "exec", args: { command }, hints: EXEC, result: ok("") });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
-  frame.mouse(mouse(1, 1, "press"));
-  frame.mouse(mouse(19, 1, "drag"));
-  frame.mouse(mouse(19, 1, "release"));
+  frame.drag({ column: 1, row: 1 }, { column: 19, row: 1 });
   assertEquals(frame.copies, ["exec cd crates/js…"]);
   const transcript = chat.transcript();
   const selection = transcript.selection;
@@ -217,7 +198,7 @@ test("a click on a clipped path copies the whole path", async () => {
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " read crates/js/mo…", ""]);
-  click(frame, 7, 1);
+  frame.click(7, 1);
   assertEquals(chat.notices, [`info Copied /tools/${path}`]);
 });
 
@@ -227,7 +208,7 @@ test("a subject with a line end that fits in one row still opens below the head 
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " exec a b", ""]);
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(transcriptRows(frame).slice(0, 5), ["", " exec a b", " a", " b", ""]);
 });
 
@@ -236,9 +217,7 @@ test("a carriage return in a subject stays out of a copy of the head line", asyn
   const saved = calls({ name: "exec", args: { command: "a\r\nb" }, hints: EXEC, result: ok("") });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  frame.mouse(mouse(1, 1, "press"));
-  frame.mouse(mouse(10, 1, "drag"));
-  frame.mouse(mouse(10, 1, "release"));
+  frame.drag({ column: 1, row: 1 }, { column: 10, row: 1 });
   assertEquals(frame.copies, ["exec a  b"]);
 });
 
@@ -261,10 +240,10 @@ test("an open call shows only its subject, and a call without a subject hint sho
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(transcriptRows(frame).slice(0, 7), ["", " write a.rs", "", ' Probe {"depth":2}', "", " Probe", ""]);
   // Raw arguments have no link, so a click on them copies nothing.
-  click(frame, 10, 3);
+  frame.click(10, 3);
   assertEquals(frame.copies, []);
 });
 
@@ -338,7 +317,7 @@ test("the tool toggle folds each shown tool when each one is open, and a hidden 
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  click(frame, 2, 1);
+  frame.click(2, 1);
   frame.draw();
   const opened = transcriptRows(frame).slice(0, 3);
   frame.key("ctrl+o");
@@ -469,9 +448,7 @@ test("a copy of live output gives its lines", async () => {
   sessions.push({ kind: "toolStarted", position, call });
   sessions.push({ kind: "toolOutput", position, text: "one\ntwo" });
   frame.draw();
-  frame.mouse(mouse(1, 2, "press"));
-  frame.mouse(mouse(4, 3, "drag"));
-  frame.mouse(mouse(4, 3, "release"));
+  frame.drag({ column: 1, row: 2 }, { column: 4, row: 3 });
   assertEquals(frame.copies, ["one\ntwo"]);
 });
 
@@ -546,9 +523,7 @@ test("the display blocks of a result share one preview, and a diff copies its li
     "",
   ]);
   // A drag from the path to the end of the last line has no numbers, no header, no ⋮, and no blank line.
-  frame.mouse(mouse(1, 3, "press"));
-  frame.mouse(mouse(8, 9, "drag"));
-  frame.mouse(mouse(8, 9, "release"));
+  frame.drag({ column: 1, row: 3 }, { column: 8, row: 9 });
   assertEquals(frame.copies, ["src/a.rs\n-old\n+new\n same\n-c\n+d"]);
   // The source offsets of the diff rows come after the Markdown block, and the source keeps each header.
   const transcript = chat.transcript();
@@ -558,9 +533,7 @@ test("the display blocks of a result share one preview, and a diff copies its li
     `src/a.rs\n${patch}`,
   );
   // A drag from the Markdown block to the end copies both blocks with the line end between them.
-  frame.mouse(mouse(1, 2, "press"));
-  frame.mouse(mouse(8, 9, "drag"));
-  frame.mouse(mouse(8, 9, "release"));
+  frame.drag({ column: 1, row: 2 }, { column: 8, row: 9 });
   assertEquals(frame.copies.at(-1), "Edited\nsrc/a.rs\n-old\n+new\n same\n-c\n+d");
 });
 
@@ -610,9 +583,7 @@ test("a wrapped line of a diff shows one number, and a copy joins its rows", asy
   using _frame = frame;
 
   assertEquals(shown.slice(1, 3), [" 7 -abcdefghi", "   jklmnop"]);
-  frame.mouse(mouse(3, 3, "press"));
-  frame.mouse(mouse(10, 4, "drag"));
-  frame.mouse(mouse(10, 4, "release"));
+  frame.drag({ column: 3, row: 3 }, { column: 10, row: 4 });
   assertEquals(frame.copies, ["-abcdefghijklmnop"]);
 });
 
@@ -620,9 +591,7 @@ test("a drag from the ⋮ copies the next hunk without a line end before it", as
   const { frame } = await diffShown("@@ -1 +1 @@\n-a\n+b\n@@ -9 +9 @@\n-c\n+d\n");
   using _frame = frame;
 
-  frame.mouse(mouse(3, 5, "press"));
-  frame.mouse(mouse(8, 7, "drag"));
-  frame.mouse(mouse(8, 7, "release"));
+  frame.drag({ column: 3, row: 5 }, { column: 8, row: 7 });
   assertEquals(frame.copies, ["-c\n+d"]);
 });
 
@@ -631,10 +600,10 @@ test("a click on a subject copies its path in the folder of the call, and a clic
   const saved = calls({ name: "read", args: { path: "src/main.rs" }, hints: READ, result: ok("fn main() {}") });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
-  click(frame, 7, 1);
+  frame.click(7, 1);
   assertEquals([frame.copies, chat.notices], [["/tools/src/main.rs"], ["info Copied /tools/src/main.rs"]]);
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " read src/main.rs", ""]);
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(transcriptRows(frame).slice(0, 4), ["", " read src/main.rs", " fn main() {}", ""]);
 });
 
@@ -650,16 +619,16 @@ test("a click on a body row, a preview row, or the count row toggles a call, and
   assertEquals(folded.slice(11, 15), [" a 10", " … 2 more lines", "", " Probe"]);
   assertEquals(folded.slice(24, 26), [" b 10", " … 2 more lines"]);
   // A click on the row that counts the rest opens the call.
-  click(frame, 3, 12);
+  frame.click(3, 12);
   assertEquals(transcriptRows(frame).slice(12, 15), [" a 11", " a 12", ""]);
   // A click on a row of the body folds it.
-  click(frame, 3, 12);
+  frame.click(3, 12);
   assertEquals(transcriptRows(frame).slice(0, 26), folded);
   // The row above the second call has no toggle, so the call stays folded.
-  click(frame, 3, 13);
+  frame.click(3, 13);
   assertEquals(transcriptRows(frame).slice(0, 26), folded);
   // A click on a row of a preview opens the call.
-  click(frame, 3, 2);
+  frame.click(3, 2);
   assertEquals(transcriptRows(frame).slice(12, 14), [" a 11", " a 12"]);
 });
 
@@ -671,9 +640,9 @@ test("a click on the text of an open thought folds it", async () => {
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  click(frame, 2, 1);
+  frame.click(2, 1);
   assertEquals(transcriptRows(frame).slice(0, 4), ["", " Thought", " why", ""]);
-  click(frame, 2, 2);
+  frame.click(2, 2);
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " Thought", ""]);
 });
 
@@ -689,12 +658,12 @@ test("a call that opens at the tail stays on its rows, and the pane follows the 
   const view = chat.transcript();
   assertEquals(view.scroll.state.following, true);
   const more = folded.indexOf(" … 30 more lines");
-  click(frame, 3, more);
+  frame.click(3, more);
   // The rows above stay, and the next rows of the output take the place of the count.
   assertEquals(transcriptRows(frame).slice(0, more), folded.slice(0, more));
   assertEquals(transcriptRows(frame)[more], " b 11");
   assertEquals(view.scroll.state.following, false);
-  click(frame, 3, more);
+  frame.click(3, more);
   assertEquals(transcriptRows(frame).slice(0, 12), folded);
   assertEquals(view.scroll.state.following, true);
   // ctrl+o keeps the pane on the tail in both directions.
@@ -717,7 +686,7 @@ test("a call that folds from a row below its hidden head line shows the head lin
   chat.transcript().scroll.scrollBy(-10);
   frame.draw();
   const row = transcriptRows(frame).indexOf(" b 30");
-  click(frame, 3, row);
+  frame.click(3, row);
   assertEquals(transcriptRows(frame).slice(0, 3), [" Probe", " b 1", " b 2"]);
 });
 
@@ -733,7 +702,7 @@ test("a call that opens in a view away from the tail leaves the rows above it in
   chat.transcript().scroll.scrollTo(0);
   frame.draw();
   const before = transcriptRows(frame).slice(0, 12);
-  click(frame, 3, 3);
+  frame.click(3, 3);
   assertEquals(transcriptRows(frame).slice(0, 12), before);
   assertEquals(transcriptRows(frame)[12], " a 11");
 });
@@ -747,8 +716,8 @@ test("a relative link of a call without a folder starts in the folder of the ses
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   assertEquals(transcriptRows(frame).slice(0, 5), ["", " read a.rs", "", " Probe", " [b](b.rs)"]);
-  click(frame, 7, 1);
-  click(frame, 2, 4);
+  frame.click(7, 1);
+  frame.click(2, 4);
   assertEquals(frame.copies, ["/w/a.rs", "/tools/b.rs"]);
 });
 
@@ -763,7 +732,7 @@ test("ctrl+o in the composer opens each tool when one is folded, else folds each
   frame.start();
   // The composer has the focus, and the key reaches the command through the context of the pane.
   frame.key("ctrl+o");
-  click(frame, 2, 1);
+  frame.click(2, 1);
   frame.key("ctrl+o");
   assertEquals(transcriptRows(frame).slice(0, 12), [
     "",
@@ -793,9 +762,9 @@ test("a link in a reply copies its target, and a relative target starts in the f
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   // The Markdown rows show the whole link, and each of its cells carries the target.
-  assertEquals(rows(frame.frame).slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);
-  click(frame, 7, 1);
-  click(frame, 3, 2);
+  assertEquals(frame.rows().slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);
+  frame.click(7, 1);
+  frame.click(3, 2);
   assertEquals(frame.copies, ["/w/src/main.rs#L40-L52", "https://docs.rs"]);
 });
 
@@ -861,9 +830,7 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   const band = themeStyle("chat.tool.pending").bg;
   assert(band !== undefined);
   const running = [1, 2].map((row) => frame.frame.cells[row]?.[29]?.style.bg);
-  frame.mouse(mouse(1, 1, "press"));
-  frame.mouse(mouse(29, 2, "drag"));
-  frame.mouse(mouse(29, 2, "release"));
+  frame.drag({ column: 1, row: 1 }, { column: 29, row: 2 });
   const copied = [...frame.copies];
   const result = { callId: "c0", content: "built", isError: false };
   sessions.push({ kind: "toolFinished", position, result, display: [] });
