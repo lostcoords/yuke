@@ -26,12 +26,17 @@ const ICON = [
   "..........gggg..........",
 ];
 
+type Rgb = readonly [number, number, number];
+
 /** The colors of the icon. They stay the same on each background. */
-const COLORS: Readonly<Record<string, readonly [number, number, number]>> = {
+const COLORS: Readonly<Record<string, Rgb>> = {
   g: [0xa8, 0xcf, 0xa0],
   e: [0x26, 0x28, 0x26],
   w: [0xf4, 0xf2, 0xeb],
 };
+
+/** The color of the pixel `pixel`, a letter of `ICON` that `COLORS` names. */
+const rgb = (pixel: string): Rgb => COLORS[pixel] as Rgb;
 
 const ICON_WIDTH = (ICON[0]?.length ?? 0) / 2;
 const ICON_ROWS = ICON.length / 3;
@@ -42,11 +47,10 @@ const GAP = 2;
 /** The fewest columns for the lines beside the icon. With fewer, the lines go below the icon. */
 const BESIDE = 24;
 
-const hex = (color: readonly [number, number, number]): `#${string}` =>
-  `#${color.map((part) => part.toString(16).padStart(2, "0")).join("")}`;
+const hex = (color: Rgb): `#${string}` => `#${color.map((part) => part.toString(16).padStart(2, "0")).join("")}`;
 
 const DIM: Style = { dim: true };
-const COMMAND: Style = { fg: hex(COLORS.g ?? [0, 0, 0]) };
+const COMMAND: Style = { fg: hex(rgb("g")) };
 
 /** The sextant of `bits`: bit `n` is the pixel `n` of a 2 x 3 cell, row by row. */
 function sextant(bits: number): string {
@@ -72,15 +76,15 @@ function sextantCell(pixels: readonly string[]): readonly [string, Style | undef
   const fg = ranked[0];
   if (fg === undefined) return [" ", undefined];
   const bg = pixels.includes(".") ? undefined : ranked[1];
-  const fgColor = COLORS[fg] ?? [0, 0, 0];
+  const fgColor = rgb(fg);
   const lit = (pixel: string): boolean => {
     if (pixel === fg) return true;
     if (pixel === "." || pixel === bg) return false;
-    const color = COLORS[pixel] ?? [0, 0, 0];
-    return bg === undefined || distance(color, fgColor) <= distance(color, COLORS[bg] ?? [0, 0, 0]);
+    const color = rgb(pixel);
+    return bg === undefined || distance(color, fgColor) <= distance(color, rgb(bg));
   };
   const bits = pixels.reduce((sum, pixel, index) => sum + (lit(pixel) ? 1 << index : 0), 0);
-  const style: Style = bg === undefined ? { fg: hex(fgColor) } : { fg: hex(fgColor), bg: hex(COLORS[bg] ?? [0, 0, 0]) };
+  const style: Style = bg === undefined ? { fg: hex(fgColor) } : { fg: hex(fgColor), bg: hex(rgb(bg)) };
   return [sextant(bits), style];
 }
 

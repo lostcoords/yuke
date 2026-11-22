@@ -5,7 +5,6 @@
 import type { Core } from "yuke:internal/tui/core";
 import { dialogView } from "yuke:internal/tui/dialog";
 import { TextEditor } from "yuke:internal/tui/editor";
-import { bottom } from "yuke:internal/tui/layout";
 import { Picker } from "yuke:internal/tui/picker";
 import { measure } from "yuke:internal/tui/text";
 import { TextView } from "yuke:internal/tui/text-view";
@@ -160,7 +159,11 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     const view = dialogView(options);
     const mount = mounted(
       core.scene.overlay(owner, () => view, {
-        place: (size) => bottom(size, rows),
+        // The rows at the bottom of the screen, cut to its height.
+        place: (size) => {
+          const height = Math.min(rows, size.height);
+          return { column: 0, row: size.height - height, width: size.width, height };
+        },
       }),
     );
     // The listener leaves `options.signal` at the close, so a long-lived signal holds no closed dialog.

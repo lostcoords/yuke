@@ -4,10 +4,8 @@
  */
 
 import { sourceName } from "yuke:internal/source-name";
-import { bottom } from "yuke:internal/tui/layout";
-import { wrap } from "yuke:internal/tui/text";
 import type { PluginContext } from "yuke:plugins";
-import { fit, type Notice, Picker, type Size, type View } from "yuke:tui";
+import { fit, type Notice, Picker, type Size, type View, wrap } from "yuke:tui";
 
 /** The screen shows at most this many toasts. A new one drops the oldest info toast, else the oldest toast. */
 const MOST = 4;
@@ -73,13 +71,10 @@ export function apply(ctx: PluginContext): undefined {
     const room = Math.max(1, width - 3);
     const title = `${sourceName(toast.notice.source)}${toast.count > 1 ? ` ×${toast.count}` : ""}`;
     const text = toast.notice.text;
-    const spans = wrap(text, room, BODY_ROWS + 1);
-    const body: string[] = [];
-    for (let at = 0; at < spans.length && body.length < BODY_ROWS; at += 3) {
-      body.push(text.slice(spans[at], spans[at + 1]));
-    }
+    const rows = wrap(text, room, BODY_ROWS + 1);
+    const body = rows.slice(0, BODY_ROWS).map((row) => text.slice(row.start, row.end));
     const last = body.length - 1;
-    if (spans.length > BODY_ROWS * 3) {
+    if (rows.length > BODY_ROWS) {
       const row = body[last] ?? "";
       body[last] = `${row.slice(0, fit(row, room - 1))}…`;
     }
@@ -153,7 +148,10 @@ export function apply(ctx: PluginContext): undefined {
             onCancel: () => mount.close(),
           }),
         {
-          place: (size) => bottom(size, HISTORY_ROWS),
+          place: (size) => {
+            const height = Math.min(HISTORY_ROWS, size.height);
+            return { column: 0, row: size.height - height, width: size.width, height };
+          },
         },
       );
     },
