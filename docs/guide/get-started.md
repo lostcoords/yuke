@@ -27,12 +27,26 @@ The default channel installs the latest stable release. To select the nightly re
 curl -fsSL https://yuke.sh/install.sh | YUKE_CHANNEL=nightly bash
 ```
 
+To install one release, such as an older one:
+
+```sh
+curl -fsSL https://yuke.sh/install.sh | YUKE_VERSION=0.1.0 bash
+```
+
 Check the installed version and commands:
 
 ```sh
 yuke --version
 yuke --help
 ```
+
+### Update yuke
+
+```sh
+yuke update
+```
+
+The command installs the newest release of your channel. Restart the open sessions after an update. See [Command line](cli.md#update-yuke).
 
 ### Uninstall yuke
 

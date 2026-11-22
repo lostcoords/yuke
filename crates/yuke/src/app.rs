@@ -1059,6 +1059,17 @@ pub(crate) fn warn(text: &str) {
     _ = writeln!(io::stderr(), "yuke: {text}");
 }
 
+/// Write `text`, the result of a command, as one line of stdout.
+pub(crate) fn say(text: &str) -> Result<(), String> {
+    writeln!(io::stdout(), "{text}").map_err(|error| format!("yuke could not write the output: {error}"))
+}
+
+/// Write `text`, a step of the work of a command, as one line of stderr, so stdout keeps only the result.
+pub(crate) fn progress(text: &str) {
+    // A step that does not show changes nothing of the work.
+    _ = writeln!(io::stderr(), "{text}…");
+}
+
 /// The store of the sessions in the data folder `data`.
 ///
 /// # Errors

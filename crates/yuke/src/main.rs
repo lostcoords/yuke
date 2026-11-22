@@ -2,7 +2,8 @@
 //! one task with no view (`-p`). `--rpc` serves stdin and stdout. `--rpc --listen` serves a Unix socket. `--rpc
 //! --connect` joins stdin and stdout to such a socket. `-p` writes the answer to stdout, and the end of the turn picks
 //! the exit status. `yuke login` logs in to a provider, and `yuke logout` removes its stored login or API key.
-//! `yuke test` runs the plugin tests, and `yuke plugin` manages the plugins of `config.json`.
+//! `yuke test` runs the plugin tests, `yuke plugin` manages the plugins of `config.json`, and `yuke update` installs
+//! another release.
 
 mod app;
 mod auth;
@@ -18,6 +19,7 @@ mod test_files;
 #[cfg(test)]
 mod testing;
 mod tui;
+mod update;
 
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
@@ -32,11 +34,14 @@ use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, TurnEnd, chain_text};
 use yuke_protocol::{CheckPluginsResult, LockedPlugin, PluginLog, PluginTarget, ReasoningSelection, SessionId};
 
-use crate::app::{Machine, warn};
+use crate::app::{Machine, progress, say, warn};
 use crate::paths::Paths;
 use crate::plugins::{Failure, manager};
 use crate::print::{Finished, SessionChoice, Task};
 use crate::providers::Providers;
+
+/// The user agent of each HTTP request of yuke.
+const USER_AGENT: &str = concat!("yuke/", env!("YUKE_VERSION"));
 
 /// The longest wait of `yuke --rpc` for the client to read the last messages after the end of its input.
 const DRAIN_LIMIT: Duration = Duration::from_secs(5);
@@ -117,6 +122,17 @@ enum Command {
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
+    },
+    /// Install the newest release of the channel of this yuke, or the release VERSION, with the installer of
+    /// yuke.sh. It works only for the yuke that the installer wrote at ~/.local/bin/yuke.
+    #[command(visible_alias = "upgrade")]
+    Update {
+        /// The release to install, such as 0.1.0. It can be older than this yuke.
+        #[arg(value_name = "VERSION", value_parser = update::version_argument, conflicts_with = "channel")]
+        version: Option<String>,
+        /// The channel to install from. The default is the channel of this yuke.
+        #[arg(long, value_enum)]
+        channel: Option<update::Channel>,
     },
 }
 
@@ -250,6 +266,9 @@ fn run() -> ExitCode {
             Some(Command::Logout { provider }) => logout(&provider).await,
             Some(Command::Test { paths }) => test(paths),
             Some(Command::Plugin { command }) => plugin(command).await,
+            Some(Command::Update { version, channel }) => {
+                update::update(version, channel, home_folder().as_deref()).await
+            }
             None => match cli.into_mode() {
                 Mode::Tui(session) => run_tui(session).await,
                 Mode::Rpc { listen } => serve_rpc(listen).await,
@@ -317,9 +336,14 @@ fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
     })
 }
 
+/// The home folder of the user, when it is an absolute path.
+fn home_folder() -> Option<PathBuf> {
+    std::env::home_dir().filter(|home| home.is_absolute())
+}
+
 /// The folders of yuke that the environment names, and the home folder of the user.
 fn environment_paths() -> Result<(Paths, Option<PathBuf>), String> {
-    let home = std::env::home_dir().filter(|home| home.is_absolute());
+    let home = home_folder();
     let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
     Ok((paths, home))
 }
@@ -327,14 +351,6 @@ fn environment_paths() -> Result<(Paths, Option<PathBuf>), String> {
 /// Run the `yuke plugin` command `command`, and print its result.
 async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
     let (paths, _) = environment_paths()?;
-    let say = |text: &str| {
-        writeln!(io::stdout(), "{text}").map_err(|error| format!("yuke could not write the output: {error}"))
-    };
-    // The steps of the work go to stderr, so stdout keeps only the result.
-    let progress = |text: &str| {
-        // A step that does not show changes nothing of the work.
-        _ = writeln!(io::stderr(), "{text}…");
-    };
     match command {
         PluginCommand::List => say(&plugin_list(&paths)?)?,
         PluginCommand::Sync { locked } => {
@@ -555,7 +571,7 @@ async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<
 /// The facts of this machine: its environment, its folders, and an HTTP transport.
 fn machine() -> Result<Machine, String> {
     let (paths, home) = environment_paths()?;
-    let options = yuke_http::ClientOptions::new(concat!("yuke/", env!("YUKE_VERSION")));
+    let options = yuke_http::ClientOptions::new(USER_AGENT);
     let http = Arc::new(yuke_http::Client::new(options.clone()).map_err(|error| chain_text(&error))?);
     let fetch = yuke_http::Client::new(yuke_http::ClientOptions {
         idle_timeout: None,
@@ -761,6 +777,26 @@ mod tests {
         assert_eq!(
             mode(&["-p", "Hi.", "--model", "a/b"]),
             Err(ErrorKind::MissingRequiredArgument)
+        );
+    }
+
+    #[test]
+    fn upgrade_is_the_update_command() {
+        let Ok(Cli {
+            command: Some(Command::Update { version, channel }),
+            ..
+        }) = parse(&["upgrade", "v0.1.0"])
+        else {
+            panic!("no update command");
+        };
+        assert_eq!((version.as_deref(), channel), (Some("0.1.0"), None));
+    }
+
+    #[test]
+    fn an_update_takes_a_version_or_a_channel_but_not_both() {
+        assert_eq!(
+            parse(&["update", "0.1.0", "--channel", "nightly"]).map(|_| ()),
+            Err(ErrorKind::ArgumentConflict)
         );
     }
 

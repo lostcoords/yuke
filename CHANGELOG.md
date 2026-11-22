@@ -2,6 +2,13 @@
 
 Each release has one section. The release job publishes the section of the tag as the notes of the release.
 
+## Unreleased
+
+- `yuke update` (also `yuke upgrade`) installs the newest release of your channel, or the release that you name.
+- The installer takes `YUKE_VERSION` to install one release.
+- The installer checks each download against `SHA256SUMS`.
+- Better Markdown in the TUI: tables, code blocks, and quotes inside list items now render.
+
 ## 0.1.1
 
 - `yuke:chat` exports the chat building blocks again: `ChatSession`, `ChatComposer`, `ChatQuestions`,

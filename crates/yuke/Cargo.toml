@@ -30,6 +30,8 @@ bytes = "1.12"
 # The login tests pause the clock of tokio.
 tokio = { version = "1.53", features = ["test-util"] }
 yuke-testing = { path = "../testing" }
+# The update tests answer the release checks with the loopback server.
+yuke-http = { path = "../http", features = ["testing"] }
 
 [lints]
 workspace = true

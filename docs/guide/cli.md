@@ -69,3 +69,19 @@ See [Test and debug](plugins.md#test-and-debug).
 `NAME` is the `name` of the `plugin.json` of the plugin. See [Plugins](plugins.md#install-plugins).
 
 After a change, run `/reload` in the open sessions.
+
+## Update yuke
+
+| Command | What it does |
+|---|---|
+| `yuke update` | Install the newest release of the current channel, `stable` or `nightly`. |
+| `yuke update --channel CHANNEL` | Install the newest release of `CHANNEL`. |
+| `yuke update VERSION` | Install the release `VERSION`, such as `0.1.0` or `v0.1.0`. |
+
+`yuke upgrade` is the same command. `VERSION` can be older than the current release. `VERSION` and `--channel` do not mix.
+
+The command downloads and runs `https://yuke.sh/install.sh`. The installer keeps your configuration.
+
+The command works only for the yuke at `~/.local/bin/yuke`, which the installer writes. A build from source has no channel. Give it `--channel` or `VERSION`.
+
+An older release may not read the sessions of a newer one, so yuke warns before it installs an older release. After an update, restart the open sessions. They use the old program until they exit.

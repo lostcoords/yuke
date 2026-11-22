@@ -30,10 +30,13 @@ mise exec -- bash tools/install.sh target/packages/yuke-aarch64-macos.tar.gz
 ```
 
 The installer writes `~/.local/bin/yuke` and `~/.local/lib/yuke` and preserves user configuration.
+With no archive, it downloads one: `YUKE_CHANNEL` selects `stable` or `nightly`, and `YUKE_VERSION` selects a tag.
+It checks the download against the `SHA256SUMS` file of the release. `yuke update` downloads and runs
+`https://yuke.sh/install.sh`.
 
 ## Releases
 
-A `vVERSION` tag runs CI, and `gh release create` publishes the four tested archives.
+A `vVERSION` tag runs CI, and `gh release create` publishes the four tested archives and their `SHA256SUMS`.
 The tag must match the `version` of `[workspace.package]` in `Cargo.toml`, and the version must not hold `-dev`.
 A hyphen suffix creates a prerelease.
 

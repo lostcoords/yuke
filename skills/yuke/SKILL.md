@@ -35,7 +35,7 @@ The profile is `$XDG_CONFIG_HOME/$YUKE_APPNAME`, by default `~/.config/yuke`. `d
 - Use only the public `yuke:*` modules. Do not import `yuke:internal/*`, and do not reach a missing name through a cast or `any`.
 - Pass `ctx.signal` or `s.signal` to async work. Return a cleanup function for work that the host does not own.
 - Do not print `auth.json`, the header values of `providers.json`, or an API key.
-- Do not edit `~/.local/lib/yuke/`. The installer replaces it at each update. Keep the `extends` path of the profile `tsconfig.json`.
+- Do not edit `~/.local/lib/yuke/`. The installer replaces it at each update, and `yuke update` runs the installer. Keep the `extends` path of the profile `tsconfig.json`.
 
 ## Names
 
