@@ -50,14 +50,16 @@ jobs:
             ' > "${RUNNER_TEMP}/notes.md"
           grep -q '[^[:space:]]' "${RUNNER_TEMP}/notes.md" || { echo "CHANGELOG.md has no section ## ${RELEASE_TAG#v}" >&2; exit 1; }
           printf '\nBuilt from commit `%s`.\n' "${GITHUB_SHA}" >> "${RUNNER_TEMP}/notes.md"
-      - name: Publish the four tested archives
+      - name: Publish the four tested archives and their checksums
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          # The installer checks the archive of its platform against this file.
+          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
           # A suffix before the build metadata, such as v1.2.0-rc.1, makes a prerelease.
           flags=()
           case "${RELEASE_TAG%%+*}" in *-*) flags=(--prerelease --latest=false) ;; esac
-          gh release create "${RELEASE_TAG}" dist/*.tar.gz --verify-tag --title "${RELEASE_TAG}" \
+          gh release create "${RELEASE_TAG}" dist/*.tar.gz dist/SHA256SUMS --verify-tag --title "${RELEASE_TAG}" \
             --notes-file "${RUNNER_TEMP}/notes.md" "${flags[@]}"

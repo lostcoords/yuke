@@ -55,7 +55,8 @@ class PackageTests(unittest.TestCase):
         self.home.mkdir()
         self.environment = {
             key: value for key, value in os.environ.items()
-            if key not in {"YUKE_APPNAME", "YUKE_CHANNEL", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"}
+            if key not in {"YUKE_APPNAME", "YUKE_CHANNEL", "YUKE_VERSION", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                           "XDG_CACHE_HOME"}
         }
         self.environment["HOME"] = str(self.home)
         self.environment["XDG_CONFIG_HOME"] = str(self.home / ".config")
@@ -104,23 +105,21 @@ class PackageTests(unittest.TestCase):
         command.chmod(0o755)
         self.environment["PATH"] = str(folder) + os.pathsep + self.environment["PATH"]
 
-    def network(self, corrupt=False):
-        self.environment["PACKAGE_FIXTURE"] = str(ARCHIVE)
-        self.environment["CORRUPT_DOWNLOAD"] = "1" if corrupt else "0"
+    def network(self, folder="latest/download", corrupt=False):
+        """Serve the package and its SHA256SUMS at the release folder `folder`."""
+        served = self.scratch / "served"
+        served.mkdir(exist_ok=True)
+        (served / "SHA256SUMS").write_text(digest(ARCHIVE) + "  " + ARCHIVE.name + "\n")
+        (served / ARCHIVE.name).write_bytes(b"corrupt download" if corrupt else ARCHIVE.read_bytes())
+        self.environment["SERVED_URL"] = "https://github.com/lostcoords/yuke/releases/" + folder + "/"
+        self.environment["SERVED_FOLDER"] = str(served)
         self.add_executable("curl", '''import os
-from pathlib import Path
 import shutil
 import sys
-args = sys.argv[1:]
-url = args[-1]
-package = Path(os.environ["PACKAGE_FIXTURE"])
-folder = "download/nightly/" if os.environ.get("YUKE_CHANNEL") == "nightly" else "latest/download/"
-if url != "https://github.com/lostcoords/yuke/releases/" + folder + package.name:
+url, prefix = sys.argv[-1], os.environ["SERVED_URL"]
+if not url.startswith(prefix):
     sys.exit("unexpected download URL: " + url)
-destination = Path(args[args.index("-o") + 1])
-shutil.copyfile(package, destination)
-if os.environ["CORRUPT_DOWNLOAD"] == "1":
-    destination.write_bytes(b"corrupt download")
+shutil.copyfile(os.path.join(os.environ["SERVED_FOLDER"], url[len(prefix):]), sys.argv[sys.argv.index("-o") + 1])
 ''')
 
     def test_archive_installs_the_binary_library_and_editor_configuration(self):
@@ -286,14 +285,32 @@ if ("result" in response) {
         self.assertEqual(digest(self.binary), digest(self.extracted / "bin/yuke"))
         (self.library / "modules/tools.ts").unlink()
         self.environment["YUKE_CHANNEL"] = "nightly"
+        self.network("download/nightly")
         self.install(piped=True)
         self.assertEqual((self.library / "modules/tools.ts").read_bytes(),
                          (self.extracted / "lib/yuke/modules/tools.ts").read_bytes())
+
+    def test_yuke_version_downloads_the_release_of_its_tag_with_or_without_the_v(self):
+        for version in ("0.1.0", "v0.1.0"):
+            with self.subTest(version=version):
+                self.environment["YUKE_VERSION"] = version
+                self.network("download/v0.1.0")
+                self.install(piped=True)
+                self.assertEqual(digest(self.binary), digest(self.extracted / "bin/yuke"))
 
     def test_corrupt_download_keeps_the_working_installation(self):
         before = self.seed_installation()
         self.network(corrupt=True)
         result = self.install(expected=1, piped=True)
+        self.assertIn(ARCHIVE.name + " does not match its checksum", result)
+        self.assertEqual(self.snapshot(), before)
+
+    # A download fails its checksum first, so only a local archive reaches the check of the archive format.
+    def test_a_corrupt_local_archive_keeps_the_working_installation(self):
+        before = self.seed_installation()
+        archive = self.scratch / ARCHIVE.name
+        archive.write_bytes(b"corrupt download")
+        result = self.install(archive, expected=1)
         self.assertIn("the download is not a yuke package", result)
         self.assertEqual(self.snapshot(), before)
 

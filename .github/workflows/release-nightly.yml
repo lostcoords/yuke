@@ -33,13 +33,15 @@ jobs:
           path: dist
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      - name: Publish the four tested nightly archives
+      - name: Publish the four tested nightly archives and their checksums
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
         run: |
+          # The installer checks the archive of its platform against this file.
+          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
           # The first nightly has no release to delete.
           gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly dist/*.tar.gz --target "${RELEASE_COMMIT}" --prerelease --latest=false \
+          gh release create nightly dist/*.tar.gz dist/SHA256SUMS --target "${RELEASE_COMMIT}" --prerelease --latest=false \
             --title "Nightly (${RELEASE_COMMIT::12})" --notes "Built from commit \`${RELEASE_COMMIT}\`."
