@@ -1,13 +1,13 @@
 import { assertEquals, createFrame, createHost, test } from "yuke:test";
 import * as nord from "../snippets/themes/nord.ts";
 import * as aware from "../snippets/themes/theme-aware.ts";
-import { withSurface } from "./context.ts";
 
 test("the documented theme colors text when selected and unload restores the default", async () => {
   using frame = createFrame({ width: 20, height: 2 });
   const tui = frame.surface("observer").tui;
   await using host = await createHost({
-    plugins: [{ name: "nord", apply: (ctx) => nord.apply(withSurface(ctx, frame.surface("nord"))) }],
+    frame,
+    plugins: [{ name: "nord", ...nord }],
   });
   tui.wrapRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "accent", { fg: "accent" }) }));
   tui.styles.setTheme("nord");
@@ -20,9 +20,10 @@ test("the documented theme listener changes its group on each theme selection", 
   using frame = createFrame({ width: 20, height: 2 });
   const tui = frame.surface("observer").tui;
   await using host = await createHost({
+    frame,
     plugins: [
-      { name: "nord", apply: (ctx) => nord.apply(withSurface(ctx, frame.surface("nord"))) },
-      { name: "aware", apply: (ctx) => aware.apply(withSurface(ctx, frame.surface("aware"))) },
+      { name: "nord", ...nord },
+      { name: "aware", ...aware },
     ],
   });
   tui.wrapRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "note", "notes.title") }));

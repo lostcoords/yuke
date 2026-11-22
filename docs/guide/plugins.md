@@ -223,7 +223,21 @@ yuke test [PATHS]...
 
 `PATHS` are test files or folders. A folder gives each `*.test.ts` file below it. Without `PATHS`, yuke searches the current folder. A path to a file that is not a `*.test.ts` file is an error. The command fails when it finds no `*.test.ts` file, and when a test fails.
 
-A test uses an isolated app and a fake model, and needs no provider credentials. `types/test.d.ts` has the test API. A type check or a test does not show how the terminal draws: start a TUI session to check that.
+A test uses an isolated app and a fake model, and needs no provider credentials. `types/test.d.ts` has the test API.
+
+`createHost` loads only the plugins that the test names. Give it a frame from `createFrame`, and each plugin gets a terminal on that frame. A bundled plugin of yuke, such as the chat, loads by its name:
+
+```ts
+import { assertEquals, createFrame, createHost, test } from "yuke:test";
+
+test("the bar shows the mode of the plugin", async () => {
+  using frame = createFrame({ width: 40, height: 3 });
+  await using _host = await createHost({ frame, plugins: [{ bundled: "bar" }, { folder: "." }] });
+  assertEquals(frame.rows().at(-1), "NORMAL");
+});
+```
+
+Create the frame before the host, so that the host closes first. A frame test draws into a grid of cells with the default theme and no real terminal: start a TUI session to check the look in your terminal.
 
 `/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end first. A reload replaces the JavaScript runtime, so module state resets and plugin jobs stop. A bad `config.json`, `plugins.lock`, or `providers.json` fails the reload, and yuke keeps the previous plugins and providers.
 

@@ -48,6 +48,7 @@ Use these names. An older name fails the type check.
 - `DisplayBlock` is in `yuke:protocol`. `yuke:chat` holds `ChatService` and the chat building blocks: `ChatSession`, `ChatComposer`, `ChatQuestions`, `ChatCompletions`, `ChatWorking`, `ChatDocument`, `slashCompletions`, and `composerRows`.
 - `ConnectionError` takes `(message, details)`, as `FileSystemError` does: `new ConnectionError("text", { code: "ENOENT" })`.
 - `yuke:test` has `folder()`: the scratch folder of one test.
+- `createHost({ frame, plugins })` gives each plugin a terminal on the frame of `createFrame`. Without `frame`, `ctx.get("tui")` is `undefined`. A bundled plugin loads as `{ bundled: "chat" }`. Do not wrap `ctx.get` to inject a terminal, and do not write a fake chat service.
 - The keys of `providers.json` are camelCase, such as `apiKeyEnv`, `baseUrl`, and `reasoningLevels`. The values of an enum stay snake_case, such as `openai_chat`. A repeated provider or model id applies in file order, and the last wins. `apiKeyEnv` is an error on `openai-codex` and `xai-grok`.
 - A plugin name is one folder name: not empty, not `.` or `..`, and with no `/` or `\`. It is the name in `plugin.json`.
 - A skill name is any text that is not empty, and its `description` is required with at most 1024 characters. A skill with a bad front matter is skipped with a warning.

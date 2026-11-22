@@ -3,10 +3,9 @@ import { assertEquals, createFrame, createHost, type FrameTest, test, waitForSet
 import * as hello from "../guide/examples/hello.js";
 import * as lifecycle from "../guide/examples/lifecycle.js";
 import * as counter from "../guide/examples/plugin.js";
-import { withSurface } from "./context.ts";
 
 function loadExample(name: string, apply: PluginApply, frame: FrameTest) {
-  return createHost({ plugins: [{ name, apply: (ctx) => apply(withSurface(ctx, frame.surface(name))) }] });
+  return createHost({ frame, plugins: [{ name, apply }] });
 }
 
 test("the first plugin sends its notice from its command and key binding", async () => {
