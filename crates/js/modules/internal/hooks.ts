@@ -6,7 +6,7 @@ import { hostOperation, hostSignal, underSignal, underStop } from "yuke:internal
 import { failureOf, stackOf } from "yuke:internal/failure";
 import { emit, notify, type Operation, type RoundNatives, removeTool, unregister } from "yuke:internal/native";
 import { type Options, sessionExports } from "yuke:internal/plugins";
-import { frozen, jsonCopy } from "yuke:internal/values";
+import { frozen, jsonCopy, mediaCopy } from "yuke:internal/values";
 import type {
   AskOptions,
   AskRequest,
@@ -136,12 +136,9 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession(request: OpenRequest): void {
-  const { open, sessionId, parent, folder, ask, settings, startJob } = request;
-  const scopes = sessionExports.map((entry) =>
-    start(open, sessionId, parent, folder, ask, request.request, settings, startJob, entry),
-  );
+  const scopes = sessionExports.map((entry) => start(request, entry));
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
-  opens.set(open, { scopes, ready });
+  opens.set(request.open, { scopes, ready });
 }
 
 /** Settles when `session` of each plugin of the open session `open` settles. It never rejects. */
@@ -257,13 +254,7 @@ export function startInputBefore(
             removed = true;
             return true;
           }
-          current = answer.replace.blocks.map((item) =>
-            !("kind" in item)
-              ? item.path !== undefined
-                ? { mimeType: item.mimeType, path: item.path }
-                : { mimeType: item.mimeType, bytes: new Uint8Array(item.bytes) }
-              : jsonCopy(item),
-          );
+          current = answer.replace.blocks.map((item) => ("kind" in item ? jsonCopy(item) : mediaCopy(item)));
           replaced = true;
           return false;
         },
@@ -556,13 +547,7 @@ function applied(result: ToolCallResult, answer: ToolAfterAnswer, originals: rea
         ? result.media
         : Object.freeze(
             answer.media.map((item) =>
-              item.id !== undefined
-                ? keptOf(item, originals)
-                : Object.freeze(
-                    item.path !== undefined
-                      ? { mimeType: item.mimeType, path: item.path }
-                      : { mimeType: item.mimeType, bytes: new Uint8Array(item.bytes) },
-                  ),
+              item.id !== undefined ? keptOf(item, originals) : Object.freeze(mediaCopy(item)),
             ),
           ),
     display: answer.display === undefined ? result.display : frozen(answer.display.map((block) => ({ ...block }))),
@@ -618,18 +603,10 @@ function requestFailureOf(error: unknown, signal: AbortSignal): unknown {
   return new ClientRequestError(message, { code: record.code, data: record.data });
 }
 
-/** Run `session(s)` of the plugin of `entry` in its own scope. */
-function start(
-  open: number,
-  sessionId: string,
-  parent: string | undefined,
-  folder: string,
-  ask: Ask,
-  send: SendRequest,
-  settings: () => SessionSettings,
-  startJob: StartJob,
-  entry: (typeof sessionExports)[number],
-): Scope {
+/** Run `session(s)` of the plugin of `entry` in its own scope, for the session of `opened`. */
+function start(opened: OpenRequest, entry: (typeof sessionExports)[number]): Scope {
+  // `request` of the open is the native that sends a request, and `sendClientRequest` names its own `request`.
+  const { open, sessionId, parent, folder, ask, request: send, settings, startJob } = opened;
   const { plugin, session, options } = entry;
   const { signal, abort } = hostSignal();
   // The end of the scope and an abort of `stop` end a wait of the plugin.
@@ -779,7 +756,7 @@ function start(
           ? send(plugin, request, data ?? null)
           : responder(
               // A copy, so the responder cannot change the data of the plugin.
-              Object.freeze({ sessionId, extension: plugin, request, data: JSON.parse(JSON.stringify(data ?? null)) }),
+              Object.freeze({ sessionId, extension: plugin, request, data: jsonCopy(data ?? null) }),
             );
       try {
         return await underSignal(ended, start);

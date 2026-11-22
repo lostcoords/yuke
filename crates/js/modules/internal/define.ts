@@ -2,6 +2,7 @@ import { checkArguments } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
 import { hostOperation } from "yuke:internal/events";
 import { type Answer, type Registration, register, type ToolOwner } from "yuke:internal/native";
+import { mediaCopy } from "yuke:internal/values";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolExecuteResult } from "yuke:tools";
 
 /** The jobs of a built-in tool, which uses none of them. */
@@ -57,9 +58,7 @@ function answerOf(result: ToolExecuteResult): Answer {
     text: result.text,
     isError: result.isError ?? false,
     // A copy of the bytes now: Rust reads the answer after the abort of the call, and a listener can change the bytes.
-    media: (result.media ?? []).map((item) =>
-      item.bytes === undefined ? item : { mimeType: item.mimeType, bytes: new Uint8Array(item.bytes) },
-    ),
+    media: (result.media ?? []).map(mediaCopy),
     display: result.display ?? [],
   };
 }

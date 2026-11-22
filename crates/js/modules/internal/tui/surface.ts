@@ -97,6 +97,12 @@ class Scope {
   }
 }
 
+/** Wait for the close of `mount`. An aborted `signal` of a dialog closes it before the wait. */
+function closed(mount: Mount): Promise<void> {
+  if (mount.signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => mount.signal.addEventListener("abort", () => resolve(), { once: true }));
+}
+
 /** The surface of the plugin `owner`, which stops with `signal`. */
 export function createSurface(core: Core, owner: string, signal: AbortSignal): Tui {
   const scope = new Scope(owner, signal, (text) => core.notices.add("error", owner, text));
@@ -157,16 +163,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         place: (size) => bottom(size, rows),
       }),
     );
-    const signal = options.signal;
-    if (signal?.aborted === true) {
-      mount.close();
-      return mount;
-    }
-    if (signal !== undefined) {
-      const close = (): void => mount.close();
-      signal.addEventListener("abort", close, { once: true });
-      mount.signal.addEventListener("abort", () => signal.removeEventListener("abort", close), { once: true });
-    }
+    // The listener leaves `options.signal` at the close, so a long-lived signal holds no closed dialog.
+    options.signal?.addEventListener("abort", () => mount.close(), { once: true, signal: mount.signal });
+    if (options.signal?.aborted === true) mount.close();
     return mount;
   });
   const select = live(
@@ -194,9 +193,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
           body: picker,
           signal: options.signal,
         });
-        mount.signal.addEventListener("abort", () => resolve(picked), { once: true });
-        // An aborted `signal` closes the dialog before this listener attaches.
-        if (mount.signal.aborted) resolve(undefined);
+        void closed(mount).then(() => resolve(picked));
       }),
   ) as Tui["select"];
 
@@ -251,9 +248,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
           rows: (title === undefined ? 0 : 1) + 3,
           signal: options.signal,
         });
-        mount.signal.addEventListener("abort", () => resolve(answer), { once: true });
-        // An aborted `signal` closes the dialog before this listener attaches.
-        if (mount.signal.aborted) resolve(undefined);
+        void closed(mount).then(() => resolve(answer));
       }),
   );
 
@@ -289,8 +284,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
           rows: (title === undefined ? 0 : 1) + Math.min(lines, CONFIRM_ROWS) + 1,
           signal: options.signal,
         });
-        mount.signal.addEventListener("abort", () => resolve(confirmed), { once: true });
-        if (mount.signal.aborted) resolve(false);
+        void closed(mount).then(() => resolve(confirmed));
       }),
   );
 

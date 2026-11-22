@@ -1,4 +1,5 @@
-// The native module: Rust functions for the built-in modules (crates/js/src/native).
+// The native module: Rust functions for the built-in modules (crates/js/src/native). A tuple argument crosses as JSON, so
+// an `undefined` item reaches Rust as `null`, and an optional item can take `undefined`.
 
 declare module "yuke:internal/native" {
   import type {
@@ -517,19 +518,19 @@ declare module "yuke:internal/native" {
   /** End the watch of the facts. */
   export function factsRelease(): void;
   export function sessionsCreate(
-    request: readonly [settings: SessionSettings, parent: SessionId | null],
+    request: readonly [settings: SessionSettings, parent: SessionId | undefined],
   ): Promise<SessionId>;
-  export function sessionsFork(request: readonly [id: SessionId, through: EventNumber | null]): Promise<SessionId>;
+  export function sessionsFork(request: readonly [id: SessionId, through: EventNumber | undefined]): Promise<SessionId>;
   export function sessionsList(params: ListSessionsParams): Promise<ListSessionsResult>;
   export function sessionsGet(id: SessionId): Promise<SessionRow>;
   export function sessionsRemove(id: SessionId): Promise<null>;
   export function sessionsRename(request: readonly [id: SessionId, title: SessionTitle]): Promise<null>;
   export function sessionsEvents(
-    request: readonly [id: SessionId, before: EventNumber | null, limit: number],
+    request: readonly [id: SessionId, before: EventNumber | undefined, limit: number],
   ): Promise<StoredEvent[]>;
   /** Send `content` as a message of the user. The model reads `modelContent` in place of `content` when it is set. */
   export function sessionInput(
-    request: readonly [id: SessionId, content: readonly Block[], modelContent: readonly Block[] | null],
+    request: readonly [id: SessionId, content: readonly Block[], modelContent: readonly Block[] | undefined],
   ): Promise<InputId>;
   /** Send a notification of `plugin`: the user sees `display`, and the model reads `text`. */
   export function sessionNotify(

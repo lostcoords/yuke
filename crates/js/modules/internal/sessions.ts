@@ -127,7 +127,7 @@ async function open(
     signal: ended.signal,
     async sendMessage(message) {
       live();
-      return sessionInput([id, message.content, message.modelContent ?? null]);
+      return sessionInput([id, message.content, message.modelContent]);
     },
     async notifyModel(notification) {
       live();
@@ -185,8 +185,8 @@ async function open(
 /** The sessions for the plugin `plugin`. Its signal ends each handle that it opened. */
 export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
   return {
-    create: (settings, options) => sessionsCreate([settings, options?.parent ?? null]),
-    fork: (id, options) => sessionsFork([id, options?.through ?? null]),
+    create: (settings, options) => sessionsCreate([settings, options?.parent]),
+    fork: (id, options) => sessionsFork([id, options?.through]),
     list: (params) => sessionsList(params ?? {}),
     get: (id) => sessionsGet(id),
     async rename(id, title) {
@@ -196,7 +196,7 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
       await sessionsRemove(id);
     },
     open: (id, options) => open(plugin, signal, id, options),
-    events: (id, page) => sessionsEvents([id, page.before ?? null, page.limit]),
+    events: (id, page) => sessionsEvents([id, page.before, page.limit]),
     async closeForAll(id) {
       await sessionClose(id);
     },

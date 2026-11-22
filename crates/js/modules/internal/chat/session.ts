@@ -84,9 +84,7 @@ export class ChatSession {
       if (id === this.#id && this.#handle !== undefined) return;
       // The end of the owner ends the hold at once, also during the open.
       const release = new AbortController();
-      const end = (): void => release.abort();
-      this.#signal.addEventListener("abort", end, { once: true });
-      release.signal.addEventListener("abort", () => this.#signal.removeEventListener("abort", end), { once: true });
+      const held = AbortSignal.any([release.signal, this.#signal]);
       // The target fills its own transcript. The snapshot comes only after a successful open, so the pane shows the
       // target from its snapshot on, and a failure before it leaves the shown session as it is.
       const transcript = new Transcript();
@@ -95,7 +93,7 @@ export class ChatSession {
       try {
         handle = await this.#sessions.open(id, {
           tail: TAIL,
-          signal: release.signal,
+          signal: held,
           onEvent: (event) => {
             if (!current) {
               current = true;
@@ -112,7 +110,7 @@ export class ChatSession {
         if (!current || this.#signal.aborted) throw error;
         return;
       }
-      if (release.signal.aborted) throw this.#signal.reason;
+      if (held.aborted) throw this.#signal.reason;
       this.#handle = handle;
       handle.signal.addEventListener(
         "abort",
