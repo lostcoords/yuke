@@ -21,13 +21,16 @@ pub enum InputSource {
     },
 }
 
-/// What an input is. A client shows a message in the conversation, and a notification as a notice.
+/// What an input is. A client shows a message in the conversation, and a record or a notification as a notice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum InputKind {
     /// A message of a person: the text of the user, or a text that a plugin passes on from a person.
     Message,
+    /// A completed local action, such as a command that the user ran. It adds context, asks for no answer of the model,
+    /// and passes no `input.before` hook.
+    Record,
     /// A notice that no person wrote, for example the end of a job or a request of a hook to go on.
     Notification,
 }
@@ -107,6 +110,20 @@ impl Input {
             content,
             model_content,
         })
+    }
+
+    /// This input as the record of a completed local action. The model reads it, and it asks for no answer.
+    #[must_use]
+    pub fn recorded(self) -> Self {
+        Self {
+            kind: InputKind::Record,
+            ..self
+        }
+    }
+
+    /// Whether the input asks the model for an answer. Only a record asks for none.
+    pub fn needs_reply(&self) -> bool {
+        self.kind != InputKind::Record
     }
 
     /// Who sent the input.

@@ -663,6 +663,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              const removed = await handle.removeInput(input);
              await handle.sendMessage({{ content: [{{ kind: 'userText', text: 'Review @main.rs' }}], modelContent: [{{ kind: 'userText', text: 'Review main.rs.' }}] }});
              await handle.notifyModel({{ display: 'shown', text: 'told' }});
+             await handle.record({{ display: 'ran', text: 'done' }});
              handle.cancelTurn();
              handle.moveJobsToBackground();
              await sessions.rename(id, '  renamed   session ');
@@ -697,6 +698,10 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
             format!(
                 "input {id} test {:?} [{{\"kind\":\"userText\",\"text\":\"<system_notification plugin=\\\"test\\\">told</system_notification>\"}}]",
                 InputKind::Notification
+            ),
+            format!(
+                "input {id} test {:?} [{{\"kind\":\"userText\",\"text\":\"<system_notification plugin=\\\"test\\\">done</system_notification>\"}}]",
+                InputKind::Record
             ),
             format!("cancel {id}"),
             format!("background {id}"),

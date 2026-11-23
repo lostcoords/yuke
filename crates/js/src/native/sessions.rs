@@ -175,6 +175,15 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
                 .await
         },
     )?;
+    request.add(
+        object,
+        "sessionRecord",
+        |sessions, (id, plugin, display, text): (SessionId, String, String, String)| async move {
+            sessions
+                .input(id, Input::notification(&plugin, Some(&display), &text).recorded())
+                .await
+        },
+    )?;
     request.add(object, "sessionIdle", |sessions, id: SessionId| async move {
         sessions.idle(id).await
     })?;
@@ -201,6 +210,12 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     request.add(object, "sessionClose", |sessions, id: SessionId| async move {
         sessions.close(id).await
     })?;
+    add_account_requests(&request, object)?;
+    add_plugin_requests(&request, object)
+}
+
+/// Add the requests of the model catalog and of the provider logins.
+fn add_account_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Result<()> {
     request.add(object, "catalogList", |sessions, all: bool| async move {
         sessions.catalog(all).await
     })?;
@@ -217,8 +232,7 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     )?;
     request.add(object, "authLogout", |sessions, provider: String| async move {
         sessions.logout(provider).await
-    })?;
-    add_plugin_requests(&request, object)
+    })
 }
 
 /// Add the requests of the plugin manager of `yuke:internal/sessions`. A sync, a check, and an add fetch, so each one

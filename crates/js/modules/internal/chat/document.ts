@@ -133,7 +133,8 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
         return item(entry.id, { id: "text", kind: "text", text, render: (width) => filledRows(text, width) });
       }
       const sender = entry.source.kind === "plugin" ? sourceName(entry.source.name) : "you";
-      const title = entry.inputKind === "notification" ? `Notification · ${sender}` : `Message · ${sender}`;
+      const kind = { message: "Message", record: "Record", notification: "Notification" }[entry.inputKind];
+      const title = `${kind} · ${sender}`;
       return item(entry.id, label(title, STYLE.meta), plain("text", text, undefined));
     }
     case "text": {

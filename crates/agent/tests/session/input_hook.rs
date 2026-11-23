@@ -255,3 +255,30 @@ async fn a_removal_of_the_hook_after_a_removal_of_the_client_sends_no_second_upd
     assert!(matches!(ran, Err(SessionError::NoInput)), "{ran:?}");
     assert_eq!(*observer.0.lock().unwrap(), Vec::new());
 }
+
+#[tokio::test]
+async fn a_record_passes_no_hook_and_saves_without_a_model_request() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([]);
+    let model = model();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
+    let id = session.id();
+    store.accept_input(id, user_input("fail").recorded()).await.unwrap();
+    let hook = ByText::default();
+
+    session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .input_hook(&hook)
+        .run()
+        .await
+        .unwrap();
+
+    assert_eq!(transport.requests(), Vec::<String>::new());
+    assert!(hook.0.lock().unwrap().is_empty());
+    assert_eq!(store.pending(id).await.unwrap(), []);
+    drop(session);
+    let again = Session::open(store.clone(), id).await.unwrap();
+    assert_eq!(again.context(), [Block::user_text("fail")]);
+}
