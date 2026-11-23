@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::time::Duration;
 
 use yuke_ai::{
     AssistantText, Block, Completion, Content, FinishReason, Partial, Reasoning, ToolCall, ToolResult, Usage,
@@ -6,8 +7,8 @@ use yuke_ai::{
 use yuke_testing::origin;
 
 use super::{
-    Action, Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, TurnEnd, TurnState,
-    answer_text,
+    Action, Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, ThoughtDisplay, TurnEnd,
+    TurnState, answer_text,
 };
 use crate::model::RoundError;
 use crate::tool::{DisplayBlock, Finished, Preview, Subject, SubjectKind, ToolHints};
@@ -80,6 +81,30 @@ fn tool_answer(finish_reason: FinishReason) -> Completion {
 }
 
 #[test]
+fn the_commit_of_an_answer_holds_the_duration_of_each_thought_at_its_block() {
+    let mut context = vec![Block::user_text("earlier")];
+    let mut turn_state = TurnState::new(&mut context, None);
+    assert!(matches!(
+        turn_state.send(vec![Block::user_text("go")]),
+        Action::Send(Some(_))
+    ));
+    let durations = [100, 2500, 50, 10, 20].map(Duration::from_millis);
+    let Action::CallTools(commit) =
+        turn_state.model_finished(tool_answer(FinishReason::ToolCalls), &durations, origin())
+    else {
+        panic!("expected tool calls");
+    };
+    // The reasoning is the second block of the answer. The other blocks have no thought duration.
+    assert_eq!(
+        commit.display.thoughts,
+        [ThoughtDisplay {
+            block_index: 1,
+            duration_ms: 2500,
+        }]
+    );
+}
+
+#[test]
 fn send_after_a_round_sends_another_request_without_input() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context, None);
@@ -88,7 +113,7 @@ fn send_after_a_round_sends_another_request_without_input() {
         Action::Send(_)
     ));
     assert!(matches!(
-        turn_state.model_finished(answer("done"), origin()),
+        turn_state.model_finished(answer("done"), &[], origin()),
         Action::AfterRound { .. }
     ));
 
@@ -106,7 +131,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
         Action::Send(_)
     ));
 
-    let action = turn_state.model_finished(tool_answer(FinishReason::ToolCalls), origin());
+    let action = turn_state.model_finished(tool_answer(FinishReason::ToolCalls), &[], origin());
     assert_eq!(called_names(action), ["read", "write"]);
 
     let results = vec![
@@ -150,7 +175,7 @@ fn stop_finish_with_tool_calls_runs_them() {
         Action::Send(_)
     ));
 
-    let action = turn_state.model_finished(tool_answer(FinishReason::Stop), origin());
+    let action = turn_state.model_finished(tool_answer(FinishReason::Stop), &[], origin());
 
     assert_eq!(called_names(action), ["read", "write"]);
 }
@@ -164,7 +189,7 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
         Action::Send(_)
     ));
 
-    let action = turn_state.model_finished(tool_answer(FinishReason::Length), origin());
+    let action = turn_state.model_finished(tool_answer(FinishReason::Length), &[], origin());
     assert!(matches!(
         action,
         Action::AfterRound {
@@ -199,7 +224,7 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
         Action::Send(_)
     ));
     assert!(matches!(
-        turn_state.model_finished(tool_answer(FinishReason::ContentFilter), origin()),
+        turn_state.model_finished(tool_answer(FinishReason::ContentFilter), &[], origin()),
         Action::AfterRound { .. }
     ));
 
@@ -370,10 +395,14 @@ fn a_commit_reads_back_from_its_json() {
                         ],
                         duration_ms: Some(40),
                     }],
+                    thoughts: vec![ThoughtDisplay {
+                        block_index: 2,
+                        duration_ms: 1500,
+                    }],
                 },
                 ..Commit::blocks(&[][..])
             },
-            r#"{"blocks":[],"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"folder":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}],"durationMs":40}]}}"#,
+            r#"{"blocks":[],"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"folder":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}],"durationMs":40}],"thoughts":[{"blockIndex":2,"durationMs":1500}]}}"#,
         ),
     ];
     for (commit, json) in cases {

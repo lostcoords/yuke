@@ -7,6 +7,7 @@
 import type { ChatPresentation } from "yuke:chat";
 import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/chat/rows";
 import { shownDuration, toolItem } from "yuke:internal/chat/tools";
+import { elapsed } from "yuke:internal/chat/working";
 import { sourceName } from "yuke:internal/source-name";
 import type { Entry, ReasoningEntry, Transcript, TurnFailure } from "yuke:transcript";
 import { Markdown, type TextDocument, type TextItem, type TextSection } from "yuke:tui";
@@ -149,7 +150,9 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
     case "reasoning": {
       // An encrypted thought streams no text. The working row still shows the reasoning phase.
       if (!hasText(entry)) return { id: entry.id, sections: [] };
-      const title = label(entry.draft ? "Thinking" : "Thought", STYLE.title);
+      // A thought below one second shows no time, as a tool does.
+      const time = entry.durationMs === undefined || entry.durationMs < 1000 ? "" : ` · ${elapsed(entry.durationMs)}`;
+      const title = label(entry.draft ? "Thinking" : `Thought${time}`, STYLE.title);
       const body = plain("text", entry.text, STYLE.thought);
       return item(entry.id, title, open ? body : { ...body, render: () => [] });
     }

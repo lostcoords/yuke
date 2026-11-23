@@ -259,7 +259,7 @@ export class Transcript {
             if (parts === undefined) {
               parts = new Map();
               draft.reasoning.set(group, parts);
-              this.#put({ kind: "reasoning", id: group, text: "", draft: true });
+              this.#put({ kind: "reasoning", id: group, text: "", draft: true, durationMs: undefined });
             }
             parts.set(model.blockId, "");
             draft.keys.set(model.blockId, group);
@@ -335,19 +335,24 @@ export class Transcript {
     }
     const refusal = commit.answer?.finishReason === "refusal";
     let answer = false;
-    let reasoning: { key: string; parts: string[] } | undefined;
+    let reasoning: { key: string; parts: string[]; durationMs: number | undefined } | undefined;
     const flushReasoning = (): void => {
       if (reasoning === undefined) return;
       const text = reasoning.parts.join("\n\n");
-      if (text !== "") this.#put({ kind: "reasoning", id: reasoning.key, text, draft: false });
+      if (text !== "") {
+        this.#put({ kind: "reasoning", id: reasoning.key, text, draft: false, durationMs: reasoning.durationMs });
+      }
       reasoning = undefined;
     };
     for (const [index, block] of commit.blocks.entries()) {
       if (index < offset) continue;
       const key = `${event.seq}:${index}`;
       if (block.kind === "reasoning") {
-        reasoning ??= { key, parts: [] };
+        reasoning ??= { key, parts: [], durationMs: undefined };
         if (block.text.trim() !== "") reasoning.parts.push(block.text);
+        // A run takes the sum of the durations of its blocks.
+        const thought = commit.display?.thoughts?.find((candidate) => candidate.blockIndex === index);
+        if (thought !== undefined) reasoning.durationMs = (reasoning.durationMs ?? 0) + thought.durationMs;
         continue;
       }
       flushReasoning();

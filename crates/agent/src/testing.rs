@@ -15,7 +15,7 @@ use yuke_protocol::{
 
 use yuke_engine::{
     Answer, CallDisplay, Commit, CommitDisplay, DisplayBlock, Preview, Replaced, ResultDisplay, Subject, SubjectKind,
-    ToolHints, TurnEnd,
+    ThoughtDisplay, ToolHints, TurnEnd,
 };
 
 use crate::PromptSection;
@@ -159,6 +159,10 @@ pub fn display() -> CommitDisplay {
                 patch: "@@ -1 +1 @@\n-a\n+b\n".to_owned(),
             }],
             duration_ms: Some(40),
+        }],
+        thoughts: vec![ThoughtDisplay {
+            block_index: 0,
+            duration_ms: 1500,
         }],
     }
 }

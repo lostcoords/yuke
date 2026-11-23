@@ -103,7 +103,7 @@ const input: Entry = {
 /** The entries of `turn` after its end. */
 const turnEntries: Entry[] = [
   input,
-  { kind: "reasoning", id: "3:0", text: "the test expects 3", draft: false },
+  { kind: "reasoning", id: "3:0", text: "the test expects 3", draft: false, durationMs: undefined },
   { kind: "text", id: "3:1", text: "I run the tests.", refusal: false, draft: false },
   {
     kind: "tool",
@@ -137,7 +137,7 @@ test("a draft streams its blocks until its saved commit replaces them", () => {
   const transcript = fed(opened(), turn.slice(0, 16));
   assertEquals(transcript.entries, [
     input,
-    { kind: "reasoning", id: "draft:d1:0", text: "the test expects 3", draft: true },
+    { kind: "reasoning", id: "draft:d1:0", text: "the test expects 3", draft: true, durationMs: undefined },
     { kind: "text", id: "draft:d1:1", text: "I run the tests.", refusal: false, draft: true },
     {
       kind: "tool",

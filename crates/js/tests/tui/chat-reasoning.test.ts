@@ -86,3 +86,40 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
     [" Thinking", " first", "     second"],
   );
 });
+
+test("a saved thought shows the sum of the stream time of its blocks from one second", async () => {
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
+  const sessions = fakeSessions([
+    { seq: 1, kind: "settings", ...SETTINGS },
+    commit(
+      2,
+      [
+        { kind: "reasoning", text: "first thought" },
+        { kind: "reasoning", text: "second thought" },
+        { kind: "assistantText", text: "Answer." },
+        { kind: "reasoning", text: "quick thought" },
+        { kind: "assistantText", text: "More." },
+        { kind: "reasoning", text: "older thought" },
+      ],
+      {
+        display: {
+          calls: [],
+          results: [],
+          thoughts: [
+            { blockIndex: 0, durationMs: 62_500 },
+            { blockIndex: 1, durationMs: 4000 },
+            { blockIndex: 3, durationMs: 900 },
+          ],
+        },
+      },
+    ),
+  ]);
+  await loadChat(frame, sessions);
+  frame.start();
+  await waitForSettled();
+  // The last thought has no saved time, as from an older yuke.
+  assertEquals(
+    transcriptRows(frame).filter((row) => row.includes("Thought")),
+    [" Thought · 1m 06s", " Thought", " Thought"],
+  );
+});
