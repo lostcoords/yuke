@@ -374,6 +374,29 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
   assertEquals(sessions.state.cancels, 2);
 });
 
+test("a second ctrl+c in an empty draft quits within two seconds, and a draft or a late press does not", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
+  const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
+  const chat = await loadChat(frame, sessions);
+  frame.start();
+  await waitForSettled();
+  frame.key("ctrl+c");
+  frame.advance(2000);
+  frame.key("ctrl+c");
+  frame.paste("draft");
+  frame.key("ctrl+c");
+  frame.key("ctrl+c");
+  assertEquals([frame.quits.length, sessions.state.cancels], [0, 3]);
+  frame.key("ctrl+c");
+  assertEquals(
+    [frame.quits, chat.notices],
+    [
+      ["To resume this session, run: yuke -r s1"],
+      ["info Press ctrl+c again to quit", "info Press ctrl+c again to quit", "info Press ctrl+c again to quit"],
+    ],
+  );
+});
+
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
   const saved: StoredEvent[] = [{ seq: 1, kind: "settings", ...SETTINGS }];
   for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]));

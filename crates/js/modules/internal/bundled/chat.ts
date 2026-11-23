@@ -71,7 +71,7 @@ const COMMANDS: readonly {
   },
   {
     name: "clear",
-    description: "Clear the draft, or stop the turn",
+    description: "Clear the draft, or stop the turn. A second press in an empty draft quits",
     keys: ["ctrl+c"],
     in: "chat",
     run: (pane) => pane.clear(),

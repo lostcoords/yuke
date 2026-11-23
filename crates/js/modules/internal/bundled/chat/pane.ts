@@ -56,6 +56,9 @@ const RULES: ComposerFrame = {
   },
 };
 
+/** A second `ctrl+c` in an empty draft quits within this many milliseconds of the first. */
+const QUIT_MS = 2000;
+
 /** The item at the top of a scrolled transcript, and its row there. */
 interface Viewport {
   readonly id: string;
@@ -212,6 +215,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // One send, model choice, image paste, show, or rename at a time. Another send, model choice, image paste, or `/new`
   // does nothing until it ends, also while a picker is open, and a show rejects.
   let busy = false;
+  // The time until which a `ctrl+c` in an empty draft quits. The first `ctrl+c` there sets it.
+  let quitUntil = 0;
   const working = new ChatWorking(chatSession, { signal: mount.signal, now: () => tui.now() });
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
   let stopTick: (() => void) | undefined;
@@ -825,8 +830,17 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     olderMessage,
     newerMessage: () => chatComposer.newerMessage(),
     clear: () => {
-      if (composer.state.text === "") chatSession.handle?.cancelTurn();
-      else chatComposer.setDraft(EMPTY);
+      if (composer.state.text !== "") {
+        chatComposer.setDraft(EMPTY);
+        quitUntil = 0;
+      } else if (tui.now() < quitUntil) {
+        quitUntil = 0;
+        tui.commands.run("core:quit");
+      } else {
+        chatSession.handle?.cancelTurn();
+        quitUntil = tui.now() + QUIT_MS;
+        ctx.notify("info", "Press ctrl+c again to quit");
+      }
     },
     moveJobsToBackground: () => chatSession.handle?.moveJobsToBackground(),
     interrupt: () => {
