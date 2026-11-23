@@ -382,3 +382,46 @@ test("the skills of a plugin folder come before the skills of the workspace in t
   );
   assertEquals(at("Read PDF files.") < at("<environment>") && at("Read PDF files.") >= 0, true);
 });
+
+test("a record starts no turn, passes no input.before hook, and reaches the model in the next turn", async () => {
+  let sessions: Sessions | undefined;
+  const hooked: string[] = [];
+  const holder: PluginApply = (ctx) => {
+    sessions = ctx.get("sessions");
+    return undefined;
+  };
+  const watcher: PluginSession = (s) => {
+    s.addHook("input.before", (event) => {
+      hooked.push(event.kind);
+      return undefined;
+    });
+  };
+  const replies = [reply.text("Seen.")];
+  await using host = await createHost({
+    plugins: [
+      { name: "shell", apply: holder },
+      { name: "watcher", session: watcher },
+    ],
+    replies,
+  });
+  if (sessions === undefined) throw new Error("the plugin got no sessions service");
+  const session = await host.openSession();
+  const states: string[] = [];
+  using handle = await sessions.open(session.id, {
+    tail: 1,
+    onEvent: (event) => {
+      if (event.kind === "update" && event.update.kind === "state") states.push(event.update.state);
+    },
+  });
+
+  await handle.record({ display: "Ran pwd", text: "$ pwd\n/workspace" });
+  await waitForSettled();
+  const before = [host.requests.length, session.transcript.pending.size, states.length];
+  await session.sendMessage("next");
+
+  assertEquals(before, [0, 0, 0]);
+  assertEquals(hooked, ["message"]);
+  assertEquals(host.requests[0]?.messages, [
+    { role: "user", text: '<system_notification plugin="shell">$ pwd\n/workspace</system_notification>\nnext' },
+  ]);
+});

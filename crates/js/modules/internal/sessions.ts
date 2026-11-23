@@ -27,6 +27,7 @@ import {
   sessionMcpServers,
   sessionNotify,
   sessionPutBlob,
+  sessionRecord,
   sessionRemoveInput,
   sessionRespond,
   sessionSetSettings,
@@ -132,6 +133,10 @@ async function open(
     async notifyModel(notification) {
       live();
       return sessionNotify([id, plugin, notification.display, notification.text]);
+    },
+    async record(action) {
+      live();
+      return sessionRecord([id, plugin, action.display, action.text]);
     },
     close,
     [Symbol.dispose]: close,

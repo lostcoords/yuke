@@ -43,6 +43,7 @@ macro_rules! store_tests {
             a_dropped_lease_lets_a_new_writer_open,
             a_reader_holds_no_lock,
             a_pending_input_stays_until_a_commit_consumes_it,
+            a_pending_record_asks_for_no_answer_after_a_load,
             a_consumed_input_id_is_not_given_again,
             a_commit_of_an_input_that_is_not_pending_saves_nothing,
             a_load_gives_the_events_with_the_inputs_that_are_still_pending,
@@ -1956,4 +1957,17 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
             }),
         }]
     );
+}
+
+/// A pending record keeps its kind in the store, so it still asks for no answer after a load.
+pub async fn a_pending_record_asks_for_no_answer_after_a_load(store: &dyn Store) {
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let input = Input::notification("shell", Some("pwd"), "/workspace").recorded();
+    store.accept_input(opened.id, input.clone()).await.unwrap();
+
+    let loaded = store.load(opened.id, EventPage::After(None)).await.unwrap();
+
+    assert_eq!(loaded.pending.len(), 1);
+    assert_eq!(loaded.pending[0].input, input);
+    assert!(!loaded.pending[0].input.needs_reply());
 }

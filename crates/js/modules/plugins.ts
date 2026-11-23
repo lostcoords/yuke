@@ -157,6 +157,11 @@ export interface SessionHandle extends Disposable {
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
   readonly notifyModel: (notification: { readonly display: string; readonly text: string }) => Promise<InputId>;
   /**
+   * Record a completed action of this plugin, such as a command that the user ran: the user sees `display`, and the
+   * model reads `text`. No turn starts, and no `input.before` hook gets it. The next turn has it in the context.
+   */
+  readonly record: (action: { readonly display: string; readonly text: string }) => Promise<InputId>;
+  /**
    * End the handle: `onEvent` gets no more calls, and the hold ends. The session stays open for its other holders. A
    * second close does nothing.
    */

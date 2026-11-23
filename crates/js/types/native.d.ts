@@ -535,6 +535,10 @@ declare module "yuke:internal/native" {
   export function sessionNotify(
     request: readonly [id: SessionId, plugin: string, display: string, text: string],
   ): Promise<InputId>;
+  /** Record a completed action of `plugin`: the user sees `display`, and the model reads `text` without an answer. */
+  export function sessionRecord(
+    request: readonly [id: SessionId, plugin: string, display: string, text: string],
+  ): Promise<InputId>;
   export function sessionIdle(id: SessionId): Promise<null>;
   export function sessionSetSettings(request: readonly [id: SessionId, settings: SessionSettings]): Promise<null>;
   export function sessionRemoveInput(request: readonly [id: SessionId, inputId: InputId]): Promise<boolean>;

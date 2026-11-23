@@ -259,7 +259,7 @@ impl LiveSession {
         let host = &self.parts.host;
         let output = &host.output;
         // The session lock keeps a later input on the new settings.
-        if host.has_pending_input().await? {
+        if host.pending_reply().await?.is_some() {
             return Err(AppError::Busy);
         }
         if session.is_stale() {
@@ -797,20 +797,31 @@ impl Parts {
         let output = &self.host.output;
         loop {
             // A wake with no input must not prevent new settings.
-            match self.host.has_pending_input().await {
-                Ok(true) => {}
-                Ok(false) => return,
+            let needs_reply = match self.host.pending_reply().await {
+                Ok(Some(reply)) => reply,
+                Ok(None) => return,
                 Err(error) => {
                     output.notice(NoticeLevel::Error, &chain_text(&error));
                     return;
                 }
-            }
+            };
             let mut session = self.session.lock().await;
             if session.is_stale()
                 && let Err(error) = recover(&mut session, output).await
             {
                 output.notice(NoticeLevel::Error, &chain_text(&error));
                 return;
+            }
+            // Records need no model, so they save without a turn.
+            if !needs_reply {
+                match session.flush_records(output.as_ref()).await {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(error) => {
+                        output.notice(NoticeLevel::Error, &chain_text(&error));
+                        return;
+                    }
+                }
             }
             // The settings name the model and the folder, so each turn takes both from the settings of that moment.
             let model = match model_of(&session.settings().model, &self.host.shared) {
@@ -1065,9 +1076,10 @@ impl Host {
         Ok(input_id)
     }
 
-    /// Whether an input of the session waits.
-    async fn has_pending_input(&self) -> Result<bool, StoreError> {
-        Ok(!self.shared.store.pending(self.output.session).await?.is_empty())
+    /// `None` when no input waits, else whether a waiting input asks the model for an answer.
+    async fn pending_reply(&self) -> Result<Option<bool>, StoreError> {
+        let pending = self.shared.store.pending(self.output.session).await?;
+        Ok((!pending.is_empty()).then(|| pending.iter().any(|input| input.input.needs_reply())))
     }
 }
 
