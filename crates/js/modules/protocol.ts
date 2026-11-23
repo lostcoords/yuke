@@ -219,7 +219,11 @@ calls: Array<CallDisplay>,
 /**
  * The display of each tool result that has blocks or a duration, in block order.
  */
-results: Array<ResultDisplay>, };
+results: Array<ResultDisplay>, 
+/**
+ * The duration of each thought that streamed to its end, in block order.
+ */
+thoughts?: Array<ThoughtDisplay>, };
 
 /**
  * A `commit` event: a commit of a turn, and the inputs that it consumed. The blocks of the commit start with the model
@@ -1562,6 +1566,19 @@ tokens: number, };
  * Whether a thinking block returns its summary text. Anthropic bills the full thinking either way.
  */
 export type ThinkingDisplay = "summarized" | "omitted";
+
+/**
+ * The duration of one thought of a commit.
+ */
+export type ThoughtDisplay = { 
+/**
+ * The index of the thought in the blocks of the commit.
+ */
+blockIndex: number, 
+/**
+ * The time from the start of the thought to its end in the stream, in milliseconds.
+ */
+durationMs: number, };
 
 /**
  * A tool call of the assistant.

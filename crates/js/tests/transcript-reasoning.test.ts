@@ -67,7 +67,7 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
     model("empty", { kind: "blockStarted", blockId: 4, content: { kind: "reasoning" } }),
   ]);
   const entry = reasoning(transcript)[0];
-  assertEquals(entry, { kind: "reasoning", id: "draft:empty:4", text: "", draft: true });
+  assertEquals(entry, { kind: "reasoning", id: "draft:empty:4", text: "", draft: true, durationMs: undefined });
   assert(entry !== undefined, "the live empty reasoning run is missing");
 });
 
@@ -284,6 +284,7 @@ test("inserting older and gap events preserves a live group and tool state", () 
     id: "draft:live:0",
     text: "draft one late\n\ndraft two",
     draft: true,
+    durationMs: undefined,
   });
   const savedToolAfter = transcript.entries.find((entry) => entry.id === "3:2");
   assert(savedToolAfter?.kind === "tool", "the saved tool disappeared after insertion");

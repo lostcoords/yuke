@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use yuke_ai::ToolCall;
-use yuke_ai::scripted::{ScriptedTransport, cut_reply, text_reply, tool_reply};
+use yuke_ai::scripted::{ScriptedTransport, cut_reply, sse, text_reply, tool_reply};
 use yuke_engine::{
     CallDisplay, CancellationToken, CommitDisplay, DisplayBlock, Driver, Hooks, NoWait, Observer, Preview,
     ResultDisplay, Subject, SubjectKind, Tool, ToolContent, ToolContext, ToolDecision, ToolHints, ToolOutcome, Toolset,
@@ -121,6 +121,7 @@ fn the_answer_saves_the_hints_and_the_folder_of_each_call_and_the_results_save_t
         CommitDisplay {
             calls: vec![call(0, hints()), call(1, ToolHints::default())],
             results: Vec::new(),
+            thoughts: Vec::new(),
         }
     );
     assert_eq!(saved[1].display.calls, []);
@@ -355,4 +356,49 @@ fn a_call_cancelled_before_it_starts_has_no_duration() {
 #[test]
 fn a_call_of_an_unknown_tool_has_no_duration() {
     assert_no_duration("missing", &Before::Allow, CancellationToken::new());
+}
+
+// The stream numbers its blocks, and the commit holds them in the same order, so the duration goes to the thought.
+#[test]
+fn the_answer_saves_the_duration_of_each_thought_that_streamed_to_its_end() {
+    let reply = sse(&[
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"First."}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":"plan"}}"#,
+        r#"{"type":"content_block_stop","index":1}"#,
+        r#"{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}"#,
+        r#"{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Done."}}"#,
+        r#"{"type":"content_block_stop","index":2}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+        r#"{"type":"message_stop"}"#,
+    ]);
+    let transport = ScriptedTransport::new([reply]);
+    let model = model();
+    let journal = Replay::default();
+    let driver = Driver::new(&transport, &model, &NoWait);
+
+    block_on(
+        driver
+            .turn(&mut Vec::new(), vec![yuke_ai::Block::user_text("go")])
+            .journal(&journal)
+            .run(),
+    )
+    .unwrap();
+
+    let saved = journal.saved();
+    let answer = saved.iter().find(|commit| commit.answer.is_some()).unwrap();
+    assert!(
+        matches!(answer.blocks[1], yuke_ai::Block::Reasoning(_)),
+        "{:?}",
+        answer.blocks
+    );
+    let thoughts: Vec<usize> = answer
+        .display
+        .thoughts
+        .iter()
+        .map(|thought| thought.block_index)
+        .collect();
+    assert_eq!(thoughts, [1]);
 }

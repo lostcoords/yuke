@@ -49,9 +49,17 @@ declare module "yuke:transcript" {
    * One run of consecutive reasoning blocks in one model response. Readable block texts keep their content, with a
    * blank line between them. Empty or whitespace-only blocks add no text. An empty live run stays until its response
    * ends; an empty saved run has no entry. `draft` is true until the response saves. The id anchors the first source
-   * block, also when that block has no text. A saved response replaces its draft with saved ids.
+   * block, also when that block has no text. A saved response replaces its draft with saved ids. `durationMs` is the
+   * time that the blocks of a saved run took in the stream. It is `undefined` for a draft, and for a run that yuke did
+   * not time, such as a run that an older yuke saved.
    */
-  export type ReasoningEntry = Frozen<{ kind: "reasoning"; id: string; text: string; draft: boolean }>;
+  export type ReasoningEntry = Frozen<{
+    kind: "reasoning";
+    id: string;
+    text: string;
+    draft: boolean;
+    durationMs: number | undefined;
+  }>;
 
   /**
    * A tool call of the model.

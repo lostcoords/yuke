@@ -2,9 +2,10 @@
 //! that feeds it a fact returns the next [`Action`], with the [`Commit`] that the caller saves before it acts.
 
 use std::borrow::Cow;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use yuke_ai::{Block, Completion, FinishReason, Origin, Partial, Role, ToolCall, ToolResult, Usage};
+use yuke_ai::{Block, Completion, Content, FinishReason, Origin, Partial, Role, ToolCall, ToolResult, Usage};
 
 use crate::model::RoundError;
 use crate::tool::{DisplayBlock, Finished, ToolHints, ToolOutcome};
@@ -26,6 +27,9 @@ pub(crate) struct TurnState<'c> {
 
     /// The display of the tool results since the last commit, for the next commit.
     results: Vec<ResultDisplay>,
+
+    /// The durations of the thoughts since the last commit, for the next commit.
+    thoughts: Vec<ThoughtDisplay>,
 }
 
 /// The next thing the driver does for a turn. The driver saves the commit of an action before it acts.
@@ -100,12 +104,15 @@ pub struct CommitDisplay {
     pub calls: Vec<CallDisplay>,
     /// The display of each tool result that has blocks or a duration, in block order.
     pub results: Vec<ResultDisplay>,
+    /// The duration of each thought that streamed to its end, in block order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thoughts: Vec<ThoughtDisplay>,
 }
 
 impl CommitDisplay {
     /// Whether the commit has no display.
     pub fn is_empty(&self) -> bool {
-        self.calls.is_empty() && self.results.is_empty()
+        self.calls.is_empty() && self.results.is_empty() && self.thoughts.is_empty()
     }
 }
 
@@ -135,6 +142,17 @@ pub struct ResultDisplay {
     /// The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+}
+
+/// The duration of one thought of a commit.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ThoughtDisplay {
+    /// The index of the thought in the blocks of the commit.
+    pub block_index: usize,
+    /// The time from the start of the thought to its end in the stream, in milliseconds.
+    pub duration_ms: u64,
 }
 
 impl<'a> Commit<'a> {
@@ -281,6 +299,7 @@ impl<'c> TurnState<'c> {
             turn_end: None,
             input_tokens,
             results: Vec::new(),
+            thoughts: Vec::new(),
         }
     }
 
@@ -313,8 +332,23 @@ impl<'c> TurnState<'c> {
         }
     }
 
-    /// Take the answer to the request that [`Action::Send`] asked for. `origin` names the target that answered.
-    pub(crate) fn model_finished(&mut self, completion: Completion, origin: Origin) -> Action<'_> {
+    /// Take the answer to the request that [`Action::Send`] asked for. `durations` holds the time of each block of the
+    /// completion in the stream, in its order. `origin` names the target that answered.
+    pub(crate) fn model_finished(
+        &mut self,
+        completion: Completion,
+        durations: &[Duration],
+        origin: Origin,
+    ) -> Action<'_> {
+        let start = self.context.len() - self.saved;
+        for (index, (content, duration)) in completion.content.iter().zip(durations).enumerate() {
+            if matches!(content, Content::Reasoning(_)) {
+                self.thoughts.push(ThoughtDisplay {
+                    block_index: start + index,
+                    duration_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+                });
+            }
+        }
         let finish_reason = completion.finish_reason;
         self.input_tokens = completion.usage.input;
         let answer = Answer {
@@ -332,8 +366,10 @@ impl<'c> TurnState<'c> {
         if matches!(finish_reason, FinishReason::ToolCalls | FinishReason::Stop) {
             self.context.extend(completion.into_blocks());
             let saved = self.take_unsaved();
+            let display = self.take_display();
             return Action::CallTools(Commit {
                 answer: Some(answer),
+                display,
                 ..Commit::blocks(&self.context[saved..])
             });
         }
@@ -433,6 +469,15 @@ impl<'c> TurnState<'c> {
         }
     }
 
+    /// The display of the results and thoughts since the last commit. The driver adds the hints of the calls.
+    fn take_display(&mut self) -> CommitDisplay {
+        CommitDisplay {
+            calls: Vec::new(),
+            results: std::mem::take(&mut self.results),
+            thoughts: std::mem::take(&mut self.thoughts),
+        }
+    }
+
     /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`].
     pub(crate) fn cancel(&mut self) -> Action<'_> {
         self.done(Ok(Outcome::Cancelled))
@@ -446,15 +491,13 @@ impl<'c> TurnState<'c> {
     /// The question to the caller after a round, with the commit of the round.
     fn after_round(&mut self, answer: Option<Answer>) -> Action<'_> {
         let start = self.take_unsaved();
+        let display = self.take_display();
         Action::AfterRound {
             context: self.context.as_slice(),
             finish_reason: self.turn_end,
             commit: Commit {
                 answer,
-                display: CommitDisplay {
-                    calls: Vec::new(),
-                    results: std::mem::take(&mut self.results),
-                },
+                display,
                 ..Commit::blocks(&self.context[start..])
             },
         }
@@ -463,13 +506,11 @@ impl<'c> TurnState<'c> {
     /// The end of the turn with `result`, after the blocks since the last commit.
     fn done(&mut self, result: Result<Outcome, RoundError>) -> Action<'_> {
         let start = self.take_unsaved();
+        let display = self.take_display();
         Action::Done {
             commit: Commit {
                 end: Some(TurnEnd::from_result(result.as_ref())),
-                display: CommitDisplay {
-                    calls: Vec::new(),
-                    results: std::mem::take(&mut self.results),
-                },
+                display,
                 ..Commit::blocks(&self.context[start..])
             },
             result,

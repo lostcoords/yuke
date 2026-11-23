@@ -7,7 +7,7 @@ use std::future::poll_fn;
 use std::num::NonZeroU32;
 use std::pin::pin;
 use std::task::Poll;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::future::join_all;
@@ -253,7 +253,7 @@ impl<'a> Driver<'a> {
             )
             .await
         {
-            Sent::Answered { response, .. } => Ok(Some(response)),
+            Sent::Answered { response, .. } => Ok(Some(*response)),
             Sent::Failed(error) => Err(error),
             Sent::Cancelled(_) => Ok(None),
         }
@@ -360,10 +360,23 @@ impl<'a> Driver<'a> {
                 return Sent::Cancelled(Vec::new());
             };
 
+            // The start of each block by its id, which counts up from 0, and its duration after it stops.
+            let mut clocks: Vec<(Instant, Option<Duration>)> = Vec::new();
             // No await comes between an event and its delivery, so a cancel cannot lose an event.
             loop {
                 match race(reply.next(), cancelled.as_mut()).await {
-                    Raced::Done(Some(Ok(event))) => observer.event(&TurnEvent::Model(event)),
+                    Raced::Done(Some(Ok(event))) => {
+                        match &event {
+                            yuke_ai::Event::BlockStarted(_) => clocks.push((Instant::now(), None)),
+                            yuke_ai::Event::BlockStopped(stopped) => {
+                                if let Some((start, duration)) = clocks.get_mut(stopped.block as usize) {
+                                    *duration = Some(start.elapsed());
+                                }
+                            }
+                            _ => {}
+                        }
+                        observer.event(&TurnEvent::Model(event));
+                    }
                     Raced::Done(_) => break,
                     Raced::Cancelled => {
                         let mut blocks = reply.cancel();
@@ -378,7 +391,9 @@ impl<'a> Driver<'a> {
             let error = match reply.finish().await {
                 Ok(response) => {
                     return Sent::Answered {
-                        response,
+                        response: Box::new(response),
+                        // The completion holds the stopped blocks in start order, so the durations line up with it.
+                        durations: clocks.into_iter().filter_map(|(_, duration)| duration).collect(),
                         origin: Origin::from(OriginRef::of(&model.target)),
                         native_search: model.target.tool_search,
                     };
@@ -527,11 +542,12 @@ impl<'a> Turn<'a> {
                     action = match parts.send_round(&mut turn_state, &mut encoder, &declared).await? {
                         Sent::Answered {
                             response,
+                            durations,
                             origin,
                             native_search: native,
                         } => {
                             native_search = native;
-                            turn_state.model_finished(response.completion, origin)
+                            turn_state.model_finished(response.completion, &durations, origin)
                         }
                         Sent::Failed(error) => turn_state.fail(error),
                         Sent::Cancelled(partial) => turn_state.model_cancelled(partial),
@@ -586,6 +602,7 @@ impl TurnParts<'_> {
         let display = CommitDisplay {
             calls: self.call_display(&commit.blocks),
             results: commit.display.results.clone(),
+            thoughts: commit.display.thoughts.clone(),
         };
         journal
             .commit(&Commit {
@@ -868,8 +885,10 @@ impl Error for TurnError {
 enum Sent {
     /// The model answered.
     Answered {
-        /// The answer.
-        response: Response,
+        /// The answer, in a box, so a failure is a small value.
+        response: Box<Response>,
+        /// The duration of each block of the completion, in its order.
+        durations: Vec<Duration>,
         /// The model and host of the target that answered.
         origin: Origin,
         /// Whether the target that answered has a native tool search, so a search result loads its matches.
