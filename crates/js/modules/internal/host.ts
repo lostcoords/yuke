@@ -101,6 +101,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       name: plugin.name,
       options: plugin.options ?? {},
       uses: plugin.uses ?? [],
+      optionalUses: plugin.optionalUses ?? [],
       provides: plugin.provides ?? [],
     };
   });

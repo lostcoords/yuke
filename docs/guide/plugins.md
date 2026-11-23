@@ -112,6 +112,7 @@ Each plugin folder has a `plugin.json`. yuke reads these fields:
 |---|---|
 | `entry` | The entry module, as a path in the plugin folder. It is a `.ts` or a `.js` file. Without `entry`, the plugin has no code. |
 | `uses` | The services that the plugin reads with `ctx.get`. See [Services](#services). |
+| `optionalUses` | The services that the plugin reads with `ctx.find` when a plugin provides them. See [Optional services](#optional-services). |
 | `provides` | The services that the plugin publishes with `ctx.provide`. |
 
 A plugin can ship only a `skills` folder. Leave out `entry`, and the plugin adds the skills of its folder. See [AGENTS.md and skills](instructions.md#skills).
@@ -178,6 +179,30 @@ Three services belong to yuke. No plugin can provide them, and a plugin must not
 | `catalog` | Provider and model queries in every mode. |
 
 The bundled `chat` plugin provides the `chat` service. A consumer of `chat` needs a `uses` entry.
+
+### Optional services
+
+A plugin can add to another plugin without a need for it. For example, a plugin adds an item to the menu of a start screen plugin only when the user installs that plugin.
+
+- The consumer names the service in `optionalUses`, not in `uses`.
+- The consumer reads the value with `ctx.find(name)`. It gives `undefined` when no plugin provides the service, or when the provider did not load.
+- The consumer adds the type of the service to `Services` itself, or imports the declaration of the provider.
+
+yuke loads the provider before the consumer when the provider is in the list. When two plugins name each other in `optionalUses`, the first one of the list loads first, without the service of the other one.
+
+```json
+{
+  "name": "usage",
+  "extensions": { "sh.yuke": { "entry": "src/index.ts", "optionalUses": ["dashboard"] } }
+}
+```
+
+```ts
+export function apply(ctx: PluginContext): undefined {
+  ctx.find("dashboard")?.addItem({ key: "u", label: "Usage", command: "usage:open" });
+  return undefined;
+}
+```
 
 ## Events
 

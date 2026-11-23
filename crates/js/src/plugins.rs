@@ -31,6 +31,9 @@ pub struct Plugin {
     pub options: serde_json::Map<String, serde_json::Value>,
     /// The services that the plugin gets from earlier plugins.
     pub uses: Vec<String>,
+    /// The services that the plugin gets from earlier plugins when a plugin provides them. Without a provider, the
+    /// plugin still loads.
+    pub optional_uses: Vec<String>,
     /// The services that the plugin publishes.
     pub provides: Vec<String>,
 }

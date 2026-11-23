@@ -134,6 +134,11 @@ export async function load(spec: PluginSpec): Promise<void> {
         if (name === "catalog") return catalog as ServiceOf<K>;
         return services.get(name) as ServiceOf<K>;
       },
+      find<K extends Exclude<keyof Services & string, "tui" | "sessions" | "catalog">>(
+        name: K,
+      ): ServiceOf<K> | undefined {
+        return services.get(name) as ServiceOf<K> | undefined;
+      },
       notify(level: NoticeLevel, text: string): void {
         notify(spec.name, level, text, undefined);
       },

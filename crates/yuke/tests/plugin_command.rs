@@ -102,7 +102,7 @@ fn list_shows_why_a_plugin_does_not_load_and_how_to_install_a_missing_one() {
         format!(
             "NAME    STATE          SOURCE\n\
          broken  failed         ./broken\n\
-         \x20       Plugin broken did not load: {manifest}: extensions.\"sh.yuke\": unknown field `activation`, expected one of `entry`, `uses`, `provides`\n\
+         \x20       Plugin broken did not load: {manifest}: extensions.\"sh.yuke\": unknown field `activation`, expected one of `entry`, `uses`, `optionalUses`, `provides`\n\
          sun     not installed  https://h/tools (folder plugins/sun)\n\
          `yuke plugin sync` installs the plugins that are not installed.\n",
             manifest = manifest.display()

@@ -444,7 +444,8 @@ async fn a_plugin_with_an_invalid_manifest_field_keeps_its_name_for_list_and_rem
     };
     assert!(
         error.starts_with("Plugin clock did not load: ")
-            && error.ends_with("unknown field `activation`, expected one of `entry`, `uses`, `provides`"),
+            && error
+                .ends_with("unknown field `activation`, expected one of `entry`, `uses`, `optionalUses`, `provides`"),
         "{error}"
     );
     assert_eq!(

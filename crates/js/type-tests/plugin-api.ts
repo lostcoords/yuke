@@ -178,6 +178,10 @@ ctx.provide("test.notes.v1", { count: () => 1 });
 ctx.get("test.unknown.v1");
 // @ts-expect-error: a service value is not null.
 ctx.provide("test.notes.v1", null);
+// An optional service can be absent, and a service of yuke is never optional.
+assert<Equal<ReturnType<typeof ctx.find<"test.notes.v1">>, { readonly count: () => number } | undefined>>();
+// @ts-expect-error: the sessions of yuke are always present, so `get` reads them.
+ctx.find("sessions");
 
 // The sessions and the catalog of yuke are services that are never undefined, in each mode.
 assert<Equal<ReturnType<typeof ctx.get<"sessions">>, Sessions>>();

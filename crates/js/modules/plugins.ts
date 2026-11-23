@@ -242,6 +242,13 @@ export interface PluginContext<O = Record<string, never>> {
    * gives the terminal interface of this plugin, or `undefined` outside it. It needs no `uses` entry.
    */
   readonly get: <K extends keyof Services & string>(name: K) => ServiceOf<K>;
+  /**
+   * The service `name`, or `undefined` when no plugin provides it or its provider did not load. Declare `name` in
+   * `optionalUses` of the manifest, so this plugin loads after its provider when the provider is in the list.
+   */
+  readonly find: <K extends Exclude<keyof Services & string, "tui" | "sessions" | "catalog">>(
+    name: K,
+  ) => ServiceOf<K> | undefined;
   /** Send a notice with this plugin as its source. */
   readonly notify: (level: NoticeLevel, text: string) => void;
   /** Send an event of the whole process to the client. See {@link SendClientEvent}. */

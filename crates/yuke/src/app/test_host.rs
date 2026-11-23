@@ -89,6 +89,8 @@ enum PluginRequest {
         options: Map<String, Value>,
         #[serde(default)]
         uses: Vec<String>,
+        #[serde(default, rename = "optionalUses")]
+        optional_uses: Vec<String>,
         #[serde(default)]
         provides: Vec<String>,
     },
@@ -303,6 +305,7 @@ impl TestHost for AppTestHost {
                     name,
                     options,
                     uses,
+                    optional_uses,
                     provides,
                 } => {
                     // The name is a folder below the data folder, so it follows the rule of a manifest name.
@@ -313,6 +316,7 @@ impl TestHost for AppTestHost {
                         origin: PluginCode::Given,
                         options,
                         uses,
+                        optional_uses,
                         provides,
                     }
                 }
