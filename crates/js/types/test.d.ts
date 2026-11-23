@@ -186,6 +186,7 @@ declare module "yuke:test" {
         readonly optionsSchema?: ObjectSchema;
         readonly options?: Readonly<Record<string, unknown>>;
         readonly uses?: readonly string[];
+        readonly optionalUses?: readonly string[];
         readonly provides?: readonly string[];
       }
     | {

@@ -46,6 +46,8 @@ declare module "yuke:plugins" {
   interface Services {
     "test.words.v1": { readonly word: string };
     "test.counts.v1": { readonly count: number };
+    "test.store.v1": { readonly count: number };
+    "test.none.v1": { readonly count: number };
   }
 }
 
@@ -305,6 +307,41 @@ test("a plugin whose provider comes after it does not run, nor do its users, and
     "Plugin second did not load: it uses 'test.a.v1', and plugin first that provides it did not load",
   ]);
   assertEquals(ran, ["plain"]);
+});
+
+test("a plugin with an optional service loads after its provider, and loads without one", async () => {
+  const found: Record<string, unknown> = {};
+  const finder =
+    (name: string, service: "test.counts.v1" | "test.store.v1" | "test.none.v1"): PluginApply =>
+    (ctx) => {
+      found[name] = ctx.find(service)?.count;
+      return undefined;
+    };
+  const host = createHost({
+    plugins: [
+      { name: "early", optionalUses: ["test.counts.v1"], apply: finder("early", "test.counts.v1") },
+      { name: "absent", optionalUses: ["test.none.v1"], apply: finder("absent", "test.none.v1") },
+      {
+        name: "notes",
+        provides: ["test.counts.v1"],
+        apply: (ctx) => {
+          ctx.provide("test.counts.v1", { count: 3 });
+          return undefined;
+        },
+      },
+      {
+        name: "broken",
+        provides: ["test.store.v1"],
+        apply: () => {
+          throw new Error("no store");
+        },
+      },
+      { name: "late", optionalUses: ["test.store.v1"], apply: finder("late", "test.store.v1") },
+    ],
+  });
+
+  assertEquals(await failures(host), ["Plugin broken did not load: Error: no store"]);
+  assertEquals(found, { early: 3, absent: undefined, late: undefined });
 });
 
 test("a plugin that provides a service of yuke rejects the host", async () => {

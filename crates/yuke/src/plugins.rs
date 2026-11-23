@@ -33,10 +33,11 @@ struct Manifest {
 
 /// The fields of yuke in `extensions["sh.yuke"]`. Another field, such as `activation`, is an error.
 #[derive(Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 struct YukeFields {
     entry: Option<String>,
     uses: Vec<String>,
+    optional_uses: Vec<String>,
     provides: Vec<String>,
 }
 
@@ -209,6 +210,7 @@ fn with_bundled(bundled: &[Bundled], config_folder: &Path, config: &Config, data
             data_dir: data.join("plugins").join(plugin.name),
             options: config.bundled.get(plugin.name).cloned().unwrap_or_default(),
             uses: plugin.uses.iter().map(|&service| service.to_owned()).collect(),
+            optional_uses: Vec::new(),
             provides: plugin.provides.iter().map(|&service| service.to_owned()).collect(),
         })
         .collect();
@@ -320,17 +322,37 @@ pub(crate) fn check_conflicts(plugins: &[Plugin], plugin: &Plugin) -> Result<(),
     Ok(())
 }
 
-/// The load order of `plugins`: each provider before each plugin that uses it, else the order of the list. The plugins
-/// whose services no plugin can give first go last, and the runtime does not run them.
+/// The load order of `plugins`: each provider before each plugin that uses it, else the order of the list. A provider
+/// of an optional service goes first too, unless only a cycle can give it. The plugins whose services no plugin can give
+/// first go last, and the runtime does not run them.
 pub(crate) fn load_order(plugins: Vec<Plugin>) -> Vec<Plugin> {
     // Each step takes the first plugin of the list whose services loaded. A plugin moves only for its providers.
     let mut waiting = plugins;
     let mut loaded: HashSet<String> = HashSet::new();
     let mut order = Vec::with_capacity(waiting.len());
-    while let Some(index) = waiting
-        .iter()
-        .position(|plugin| plugin.uses.iter().all(|service| loaded.contains(service)))
-    {
+    loop {
+        let ready = |plugin: &Plugin| plugin.uses.iter().all(|service| loaded.contains(service));
+        let waits = |plugin: &Plugin| {
+            plugin.optional_uses.iter().any(|service| {
+                waiting
+                    .iter()
+                    .any(|other| other.name != plugin.name && other.provides.contains(service))
+            })
+        };
+        let wanted = |plugin: &Plugin| {
+            plugin.provides.iter().any(|service| {
+                waiting
+                    .iter()
+                    .any(|other| other.name != plugin.name && other.optional_uses.contains(service))
+            })
+        };
+        // When each ready plugin waits for an optional service, a provider in the cycle loads first, without it.
+        let Some(index) = (waiting.iter().position(|plugin| ready(plugin) && !waits(plugin)))
+            .or_else(|| waiting.iter().position(|plugin| ready(plugin) && wanted(plugin)))
+            .or_else(|| waiting.iter().position(ready))
+        else {
+            break;
+        };
         let plugin = waiting.remove(index);
         loaded.extend(plugin.provides.iter().cloned());
         order.push(plugin);
@@ -370,6 +392,7 @@ fn plugin_of(root: &Path, manifest: Manifest, data: &Path, options: Map<String, 
         },
         options,
         uses: fields.uses,
+        optional_uses: fields.optional_uses,
         provides: fields.provides,
     })
 }

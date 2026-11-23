@@ -98,6 +98,7 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
                 data_dir: root.join("data/plugins/notes"),
                 options: Map::new(),
                 uses: Vec::new(),
+                optional_uses: Vec::new(),
                 provides: vec!["notes".to_owned()],
             },
             Plugin {
@@ -109,6 +110,7 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
                 data_dir: root.join("data/plugins/reader"),
                 options: Map::new(),
                 uses: vec!["notes".to_owned()],
+                optional_uses: Vec::new(),
                 provides: Vec::new(),
             },
         ]
@@ -277,6 +279,34 @@ fn plugins_without_a_provider_or_in_a_cycle_of_uses_go_last_for_the_runtime_to_s
 }
 
 #[test]
+fn a_provider_of_an_optional_service_loads_first_unless_only_a_cycle_gives_it() {
+    let root = place("optional");
+    write_plugin(
+        &root,
+        "config/menu",
+        &manifest("menu", &json!({ "optionalUses": ["board"], "provides": ["items"] })),
+    );
+    write_plugin(
+        &root,
+        "config/board",
+        &manifest("board", &json!({ "optionalUses": ["items"], "provides": ["board"] })),
+    );
+    write_plugin(
+        &root,
+        "config/usage",
+        &manifest("usage", &json!({ "optionalUses": ["board", "absent"] })),
+    );
+    write_plugin(&root, "config/plain", &manifest("plain", &json!({})));
+
+    let list = load(&root, &["usage", "menu", "board", "plain"]).unwrap();
+
+    // `menu` and `board` wait for each other, so `menu`, first in the list, loads without `board`.
+    assert_eq!(names(&list), ["plain", "menu", "board", "usage"]);
+    assert_eq!(list.load[3].optional_uses, ["board", "absent"]);
+    assert_eq!(failures(&list), Vec::<String>::new());
+}
+
+#[test]
 fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
     let root = place("bundled_first");
     write_plugin(&root, "config/mine", &manifest("mine", &json!({})));
@@ -295,6 +325,7 @@ fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
             data_dir: root.join("data/plugins/second"),
             options: Map::new(),
             uses: Vec::new(),
+            optional_uses: Vec::new(),
             provides: vec!["pairs".to_owned()],
         }
     );

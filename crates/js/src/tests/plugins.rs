@@ -114,6 +114,7 @@ async fn a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root() {
         data_dir: data_dir.clone(),
         options: serde_json::Map::new(),
         uses: Vec::new(),
+        optional_uses: Vec::new(),
         provides: Vec::new(),
     };
 
