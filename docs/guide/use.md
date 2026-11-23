@@ -110,7 +110,7 @@ When you quit, yuke prints `To resume this session, run: yuke -r ID` for each se
 
 ## Quit
 
-Press `ctrl+q` or type `/quit`. If a turn or a job runs, yuke asks "Stop everything and quit?". `enter` or `ctrl+q` stops the work and quits. `esc` stays.
+Press `ctrl+q`, type `/quit`, or press `ctrl+c` two times in an empty draft. The first `ctrl+c` stops the turn and says "Press ctrl+c again to quit". The second one quits when it comes within two seconds. If a turn or a job runs, yuke asks "Stop everything and quit?". `enter` or `ctrl+q` stops the work and quits. `esc` stays.
 
 `ctrl+z` suspends yuke to the shell.
 
@@ -126,7 +126,7 @@ This list holds the default keys of yuke. A plugin can add more. See [TUI plugin
 | `shift+enter`, `alt+enter`, `ctrl+j` | Add a new line. |
 | `up`, `down` | Show an older or a newer message of yours, or take back a waiting message. |
 | `ctrl+v` | Put the image of the clipboard in the message. |
-| `ctrl+c` | Clear the draft, or stop the turn. |
+| `ctrl+c` | Clear the draft, or stop the turn. A second `ctrl+c` in an empty draft quits. |
 | `esc` | Drop the selection, or stop the turn. |
 | `ctrl+b` | Move the waiting tool calls to the background. |
 | `ctrl+o` | Open or fold the tool calls. |
