@@ -5,6 +5,7 @@ import * as fetch from "yuke:internal/fetch";
 import * as headers from "yuke:internal/headers";
 import * as streams from "yuke:internal/streams";
 import * as url from "yuke:internal/url";
+import * as writable from "yuke:internal/writable";
 
 const {
   FinalizationRegistry: EngineFinalizationRegistry,
@@ -51,6 +52,9 @@ const classes = {
   TextEncoder: encoding.TextEncoder,
   URL: url.URL,
   URLSearchParams: url.URLSearchParams,
+  WritableStream: writable.WritableStream,
+  WritableStreamDefaultController: writable.WritableStreamDefaultController,
+  WritableStreamDefaultWriter: writable.WritableStreamDefaultWriter,
 } satisfies {
   AbortController: typeof AbortController;
   AbortSignal: typeof AbortSignal;
@@ -68,6 +72,9 @@ const classes = {
   TextEncoder: typeof TextEncoder;
   URL: typeof URL;
   URLSearchParams: typeof URLSearchParams;
+  WritableStream: typeof WritableStream;
+  WritableStreamDefaultController: typeof WritableStreamDefaultController;
+  WritableStreamDefaultWriter: typeof WritableStreamDefaultWriter;
 };
 
 // The engine gives a monotonic `now`, and the web needs `timeOrigin` as epoch time, so this object adapts the clock.

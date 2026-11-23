@@ -43,3 +43,22 @@ async fn the_end_of_the_runtime_stops_a_running_program() {
 
     assert!(gone(pid).await, "the program still runs");
 }
+
+#[tokio::test(flavor = "local")]
+async fn the_end_of_the_runtime_stops_a_spawned_program() {
+    let folder = folder("the_end_of_the_runtime_stops_a_spawned_program");
+    let (runtime, _reports) = start(&folder).await;
+    let body = format!(
+        "const {{ Command }} = await import('yuke:process');\n\
+         return new Command('sh', {{ args: ['-c', 'echo $$; exec sleep 30'], cwd: {} }}).spawn().pid;",
+        serde_json::to_string(folder.to_str().unwrap()).unwrap()
+    );
+    let pid = evaluate::<i32>(&runtime, &body).await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(10), runtime.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(gone(pid).await, "the program still runs");
+}

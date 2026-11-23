@@ -324,6 +324,66 @@ declare class ReadableStreamDefaultReader<R = unknown> {
   cancel(reason?: unknown): Promise<undefined>;
 }
 
+/** The sink of the chunks of a `WritableStream`. Each method runs with the sink as `this`. */
+interface UnderlyingSink<W = unknown> {
+  /** Run once at the start. The first write waits for the promise of the result. A rejection errors the stream. */
+  start?: (controller: WritableStreamDefaultController) => unknown;
+  /** Write one chunk. The next write waits for the promise of the result. A rejection errors the stream. */
+  write?: (chunk: W, controller: WritableStreamDefaultController) => unknown;
+  /** Run after the last write of a close. */
+  close?: () => unknown;
+  /** Run at an abort, after the write that runs. */
+  abort?: (reason: unknown) => unknown;
+  /** A writable stream has no type, so leave out the field. */
+  type?: undefined;
+}
+
+/**
+ * A stream that takes chunks, of the Streams Standard. yuke has default streams only: no pipe and no transform
+ * stream.
+ */
+declare class WritableStream<W = unknown> {
+  /** A `start` that throws makes the constructor throw. A `start` that rejects errors the stream. */
+  constructor(underlyingSink?: UnderlyingSink<W>, strategy?: QueuingStrategy<W>);
+  /** Whether a writer holds the stream. */
+  readonly locked: boolean;
+  /** Error the stream with `reason`, and abort the sink after the write that runs. A locked stream rejects with a `TypeError`. */
+  abort(reason?: unknown): Promise<undefined>;
+  /** Close the sink after the queued writes. A locked stream rejects with a `TypeError`. */
+  close(): Promise<undefined>;
+  /** A writer that holds the stream until `releaseLock`. A locked stream throws a `TypeError`. */
+  getWriter(): WritableStreamDefaultWriter<W>;
+}
+
+/** The controller that a `WritableStream` gives to its sink. It has no public constructor. */
+declare class WritableStreamDefaultController {
+  private constructor();
+  /** The signal that aborts at an abort of the stream. */
+  readonly signal: AbortSignal;
+  /** Error the stream with `error`. A stream that is not writable stays as it is. */
+  error(error?: unknown): void;
+}
+
+/** A writer that holds a `WritableStream`. */
+declare class WritableStreamDefaultWriter<W = unknown> {
+  /** A locked stream throws a `TypeError`. */
+  constructor(stream: WritableStream<W>);
+  /** A promise that fulfills when the sink closes, and rejects when the stream errors or the writer releases it. */
+  readonly closed: Promise<undefined>;
+  /** A promise that fulfills when the queue has space. It rejects when the stream errors or the writer releases it. */
+  readonly ready: Promise<undefined>;
+  /** The high water mark less the queued size. It is 0 when closed, and `null` when errored. */
+  readonly desiredSize: number | null;
+  /** Queue `chunk`. The promise fulfills when the sink wrote it. */
+  write(chunk: W): Promise<undefined>;
+  /** Close the sink after the queued writes. */
+  close(): Promise<undefined>;
+  /** Abort the stream with `reason`. */
+  abort(reason?: unknown): Promise<undefined>;
+  /** Release the stream. The promises of the writer reject with a `TypeError`. */
+  releaseLock(): void;
+}
+
 /** The headers of a new `Headers`: a `Headers`, pairs of a name and a value, or a record of names and values. */
 type HeadersInit = Headers | Iterable<Iterable<string>> | Record<string, string>;
 

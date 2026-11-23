@@ -126,3 +126,102 @@ test("env.get gives a variable of the environment of yuke, and undefined for a m
     ?.slice("PATH=".length);
   assertEquals([env.get("PATH"), env.get("YUKE_TEST_NO_SUCH_VARIABLE"), env.get("")], [path, undefined, undefined]);
 });
+
+test("spawn pipes stdin to the program and streams its output", async () => {
+  const child = new Command("cat", { cwd: folder(), stdin: "piped" }).spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode("hello "));
+  await writer.write(new TextEncoder().encode("world"));
+  await writer.close();
+  const out = await child.output();
+  assertEquals(
+    [text(out.stdout), text(out.stderr), out.code, out.success, out.signal],
+    ["hello world", "", 0, true, null],
+  );
+  assert(child.pid > 0, "the child has no process id");
+});
+
+test("stdout gives a chunk while the program runs and kill ends the group", async () => {
+  const child = new Command("sh", { args: ["-c", "echo first; exec sleep 30"], cwd: folder() }).spawn();
+  const reader = child.stdout.getReader();
+  assertEquals(text((await reader.read()).value ?? new Uint8Array()), "first\n");
+  child.kill();
+  assertEquals(await child.status, { success: false, code: 143, signal: "SIGTERM" });
+  assertEquals((await reader.read()).done, true);
+  assertEquals(
+    assertThrows(() => child.kill()),
+    new TypeError("Child process has already terminated"),
+  );
+});
+
+test("kill takes the name of a signal and rejects an unknown name", async () => {
+  const child = new Command("sleep", { args: ["30"], cwd: folder() }).spawn();
+  assertEquals(
+    assertThrows(() => child.kill("SIGNOPE")),
+    new TypeError("Unknown signal: SIGNOPE"),
+  );
+  child.kill("SIGKILL");
+  assertEquals(await child.status, { success: false, code: 137, signal: "SIGKILL" });
+});
+
+test("an abort stops a spawned group, and a signal that aborted throws before the start", async () => {
+  const base = folder();
+  const early = new AbortController();
+  early.abort(new Error("too early"));
+  assertEquals(
+    assertThrows(() => new Command("sh", { cwd: base, signal: early.signal }).spawn()),
+    new Error("too early"),
+  );
+  const late = new AbortController();
+  const child = new Command("sh", {
+    args: ["-c", "sleep 30 & echo $! > child; wait"],
+    cwd: base,
+    signal: late.signal,
+  }).spawn();
+  await pidOf(base, "child");
+  late.abort();
+  assertEquals(await child.status, { success: false, code: 143, signal: "SIGTERM" });
+  assert(await gone(base, "child"), "the child of the program still runs");
+});
+
+test("a cancel of stdout closes the pipe, so a program that writes ends", async () => {
+  const child = new Command("yes", { cwd: folder(), stderr: "null" }).spawn();
+  const reader = child.stdout.getReader();
+  await reader.read();
+  await reader.cancel();
+  assertEquals(await child.status, { success: false, code: 141, signal: "SIGPIPE" });
+});
+
+test("a stream that is not piped throws and output rejects piped stdin before any start", () => {
+  const base = folder();
+  const child = new Command("true", { cwd: base, stdout: "null", stderr: "null" }).spawn();
+  assertEquals(
+    [
+      assertThrows(() => child.stdin),
+      assertThrows(() => child.stdout),
+      assertThrows(() => child.stderr),
+      assertThrows(() => new Command("cat", { cwd: base, stdin: "piped" }).output()),
+    ],
+    [
+      new TypeError("Cannot get 'stdin': 'stdin' is not piped"),
+      new TypeError("Cannot get 'stdout': 'stdout' is not piped"),
+      new TypeError("Cannot get 'stderr': 'stderr' is not piped"),
+      new TypeError("Piped stdin is not supported for this function, use 'Command.spawn()' instead"),
+    ],
+  );
+});
+
+test("a spawn of a program that does not start throws with its name", () => {
+  assertEquals(
+    assertThrows(() => new Command("/no/such/program", { cwd: folder() }).spawn()),
+    new Error("/no/such/program did not start: No such file or directory (os error 2)"),
+  );
+});
+
+test("output of a child rejects a stream that a reader holds", async () => {
+  const child = new Command("echo", { args: ["hi"], cwd: folder() }).spawn();
+  const reader = child.stdout.getReader();
+  assertEquals(await assertRejects(() => child.output()), new TypeError("Cannot collect output: 'stdout' is locked"));
+  reader.releaseLock();
+  assertEquals(text((await child.output()).stdout), "hi\n");
+});

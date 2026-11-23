@@ -57,7 +57,7 @@ Return `{ text, isError: true }` when the failed output is useful evidence, such
 
 Pass `context.signal` to cancellable I/O. After a cancel, the host still waits for `execute` to settle, so stop the work when the signal aborts.
 
-For processes, use `Command` from `yuke:process`. It needs an absolute `cwd`, such as `context.folder`, and takes an optional `signal`.
+For processes, use `Command` from `yuke:process`. It needs an absolute `cwd`, such as `context.folder`, and takes an optional `signal`. `output()` runs a program until its end. `spawn()` starts it and gives its pipes as streams while it runs: set `stdin: "piped"` to write its input.
 
 ## Background jobs
 
