@@ -437,8 +437,8 @@ const freedBodies = new FinalizationRegistry<() => void>((remove) => remove());
 
 /**
  * The stream of a fetched body. Each read pulls one chunk from the connection, so nothing waits in a queue. An abort of
- * `signal` stops the read, closes the connection, and errors the stream with the reason. A cancel stops the read and
- * closes the connection.
+ * `signal` stops the read, closes the body, and errors the stream with the reason. A cancel stops the read and closes
+ * the body.
  */
 function bodyStream(native: HttpBody, signal: AbortSignal): ReadableStream<Uint8Array> {
   const work: BodyWork = { native, controller: undefined, stopRead: undefined };

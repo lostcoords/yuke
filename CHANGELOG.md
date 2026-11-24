@@ -18,6 +18,8 @@ Each release has one section. The release job publishes the section of the tag a
 - The optional fields of the options of `yuke:test` take `undefined`.
 - The built-in tools show a title in the chat: `Read`, `Write`, `Edit`, `Exec`, and `Stop`. A plugin tool shows one
   with `hints.title`.
+- yuke keeps a connection open for 60 seconds after a request, and the next request to the same host uses it, so it
+  skips the connection setup.
 - On a network where IPv6 drops packets, a request goes over IPv4 after 250 ms. Before, it waited for the system to
   give up on IPv6, which takes about 75 seconds on macOS.
 

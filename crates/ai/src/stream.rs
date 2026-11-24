@@ -84,8 +84,8 @@ enum State {
 /// Every event of one attempt, with no retained output. See the module documentation.
 pub(crate) struct Stream {
     info: AttemptInfo,
-    /// The response body, or `None` when the transport opened none. The stream owns the body until the stream drops,
-    /// and the drop closes the connection.
+    /// The response body, or `None` when the transport opened none. The stream owns the body until the stream drops.
+    /// The drop closes the connection, unless the whole body already arrived.
     body: Option<BoxBody>,
     /// The body returned its last chunk.
     body_ended: bool,

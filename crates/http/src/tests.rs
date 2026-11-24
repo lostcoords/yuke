@@ -110,7 +110,7 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
     assert_eq!(seen.values("x-note"), ["café"]);
     assert_eq!(seen.values("host"), [format!("127.0.0.1:{port}")]);
     assert_eq!(seen.values("user-agent"), [TEST_USER_AGENT]);
-    assert_eq!(seen.values("connection"), ["close"]);
+    assert_eq!(seen.values("connection"), Vec::<&str>::new());
     assert_eq!(seen.values("content-length"), ["7"]);
     assert_eq!(seen.body, b"{\"a\":1}");
     assert_eq!(out.error, None);
@@ -120,22 +120,163 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
     assert_eq!(out.bytes, BODY.as_bytes());
 }
 
-#[tokio::test]
-async fn each_request_opens_a_connection_of_its_own() {
-    let answer = || Answer {
+fn answer() -> Answer {
+    Answer {
         status: 200,
         body: BODY.into(),
         ..Answer::default()
-    };
-    let (port, served) = serve(vec![answer(), answer()]).await;
+    }
+}
+
+/// The connection that carried each request that the server read.
+async fn connections(served: tokio::task::JoinHandle<Vec<Seen>>) -> Vec<usize> {
+    served.await.unwrap().iter().map(|seen| seen.connection).collect()
+}
+
+#[tokio::test]
+async fn requests_in_a_row_to_one_host_share_one_connection() {
+    let (port, served) = serve(vec![answer(), answer(), answer()]).await;
     let client = client();
 
-    for _ in 0..2 {
+    for _ in 0..3 {
         assert_eq!(run(&client, post(port)).await.bytes, BODY.as_bytes());
     }
 
-    let connections: Vec<usize> = served.await.unwrap().iter().map(|seen| seen.connection).collect();
-    assert_eq!(connections, [0, 1]);
+    assert_eq!(connections(served).await, [0, 0, 0]);
+}
+
+// A stream reader stops after its last event and drops the body before it reads the end.
+#[tokio::test]
+async fn a_body_dropped_after_its_last_byte_gives_its_connection_back() {
+    let (port, served) = serve(vec![answer(), answer()]).await;
+    let client = client();
+
+    let mut response = client.send(post(port)).await.unwrap();
+    let mut bytes = Vec::new();
+    while bytes.len() < BODY.len() {
+        bytes.extend_from_slice(&response.body.chunk().await.unwrap().unwrap());
+    }
+    drop(response);
+    assert_eq!(run(&client, post(port)).await.bytes, BODY.as_bytes());
+
+    assert_eq!(connections(served).await, [0, 0]);
+}
+
+#[tokio::test]
+async fn an_unread_body_that_arrived_whole_gives_its_connection_back() {
+    let (port, served) = serve(vec![answer(), answer()]).await;
+    let client = client();
+
+    // The server writes the head and the body at once, so the body arrives with the head.
+    drop(client.send(post(port)).await.unwrap());
+    assert_eq!(run(&client, post(port)).await.bytes, BODY.as_bytes());
+
+    assert_eq!(connections(served).await, [0, 0]);
+}
+
+#[tokio::test]
+async fn an_answer_with_no_body_gives_its_connection_back() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        for _ in 0..2 {
+            read_request(&mut stream).await.unwrap();
+            stream
+                .write_all(b"HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        }
+    });
+    let client = client();
+
+    // The caller drops the answer unread, as the sender of a notification does.
+    drop(client.send(post(port)).await.unwrap());
+    // The peer accepts one connection only, so a second connection gets no answer.
+    let second = tokio::time::timeout(Duration::from_secs(5), client.send(post(port))).await;
+
+    assert_eq!(
+        second
+            .expect("the first connection carried the second request")
+            .unwrap()
+            .status,
+        StatusCode::ACCEPTED
+    );
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_connection_idle_for_longer_than_the_limit_is_not_used() {
+    let (port, served) = serve(vec![answer(), answer()]).await;
+    let client = client();
+
+    assert_eq!(run(&client, post(port)).await.bytes, BODY.as_bytes());
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    tokio::time::resume();
+    assert_eq!(run(&client, post(port)).await.bytes, BODY.as_bytes());
+
+    assert_eq!(connections(served).await, [0, 1]);
+}
+
+/// The answer of a peer to the first request on a connection, which keeps the connection open.
+const KEEP_OPEN: &[u8] = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+
+#[tokio::test]
+async fn a_connection_that_the_peer_closed_while_idle_gives_way_to_a_new_one() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (close, close_asked) = tokio::sync::oneshot::channel();
+    let (closed, close_seen) = tokio::sync::oneshot::channel();
+    let peer = tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.unwrap();
+        read_request(&mut first).await.unwrap();
+        first.write_all(KEEP_OPEN).await.unwrap();
+        // The close comes after the client put the connection in its pool.
+        close_asked.await.unwrap();
+        drop(first);
+        closed.send(()).unwrap();
+        let (mut second, _) = listener.accept().await.unwrap();
+        read_request(&mut second).await.unwrap();
+        second.write_all(KEEP_OPEN).await.unwrap();
+    });
+    let client = client();
+
+    assert_eq!(run(&client, post(port)).await.bytes, b"ok");
+    close.send(()).unwrap();
+    close_seen.await.unwrap();
+    // tokio sees the close only when its I/O driver runs. A real request comes long after the close of an idle
+    // connection.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let out = run(&client, post(port)).await;
+
+    assert_eq!((out.error, out.bytes), (None, b"ok".to_vec()));
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_request_that_left_on_a_reused_connection_is_never_sent_again() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        read_request(&mut stream).await.unwrap();
+        stream.write_all(KEEP_OPEN).await.unwrap();
+        // The second request arrives, and the connection ends with no answer.
+        read_request(&mut stream).await.unwrap();
+        drop(stream);
+        // A repeat of the request would open a new connection.
+        tokio::time::timeout(Duration::from_millis(200), listener.accept())
+            .await
+            .is_ok()
+    });
+    let client = client();
+
+    assert_eq!(run(&client, post(port)).await.bytes, b"ok");
+    let out = run(&client, post(port)).await;
+
+    assert_eq!(out.error, Some(Error::ConnectionLost));
+    assert!(!peer.await.unwrap(), "the client sent the request again");
 }
 
 #[tokio::test]

@@ -191,13 +191,13 @@ async fn write_answer(stream: &mut TcpStream, answer: &Answer, close: bool) -> b
         out.extend_from_slice(&answer.body);
         out.extend_from_slice(b"\r\n");
     }
-    // A failed write means that the client already closed, as a stalled request expects.
-    if stream.write_all(&out).await.is_err() {
-        return false;
-    }
     if answer.stall {
+        // A failed write means that the client already closed, as a stalled request expects.
+        _ = stream.write_all(&out).await;
         wait_for_close(stream).await;
         return false;
     }
-    stream.write_all(b"0\r\n\r\n").await.is_ok() && !close
+    // One write, so the end of the body arrives with its last bytes.
+    out.extend_from_slice(b"0\r\n\r\n");
+    stream.write_all(&out).await.is_ok() && !close
 }

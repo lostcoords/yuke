@@ -1,20 +1,22 @@
-//! An HTTP/1.1 client over hyper on tokio, with rustls for `https`. [`Client::send`] sends one [`Request`] on a new
-//! connection and returns the [`Response`] at its head. The [`Body`] streams after that. The client follows no
-//! redirect and decodes no `content-encoding`: the caller decides both.
+//! An HTTP/1.1 client over hyper on tokio, with rustls for `https`. [`Client::send`] sends one [`Request`] and returns
+//! the [`Response`] at its head. The [`Body`] streams after that. The client follows no redirect and decodes no
+//! `content-encoding`: the caller decides both.
 //!
-//! A new connection for each request means that a failure before the request left proves that nothing was sent.
+//! A connection goes back to the client after its body, and the next request to the same host uses it. A connect error
+//! comes only from a new connection, before the request left, so it proves that nothing was sent.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::{Pin, pin};
-use std::sync::{Arc, OnceLock};
-use std::task::{Context, Poll};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use bytes::Bytes;
-use http::header::{CONNECTION, CONTENT_LENGTH, HOST, TRANSFER_ENCODING, USER_AGENT};
+use http::header::{CONTENT_LENGTH, HOST, TRANSFER_ENCODING, USER_AGENT};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use hyper::body::{Body as _, Incoming};
 use hyper::client::conn::http1;
@@ -30,7 +32,7 @@ pub use http;
 pub mod testing;
 
 /// One request. The client owns the framing headers:
-/// - It sets `host` and `connection: close`.
+/// - It sets `host`.
 /// - It removes `content-length` and `transfer-encoding`. It sets `content-length` for a body, or for a `POST`, a
 ///   `PUT`, or a `PATCH`.
 /// - It adds its `user-agent` when `headers` has none.
@@ -156,13 +158,14 @@ impl std::error::Error for Error {}
 ///   file.
 /// - The key exchange offers the hybrid post-quantum group `X25519MLKEM768` first.
 ///
-/// One client serves the whole process, so each request shares its TLS configuration.
+/// One client serves the whole process, so each request shares its TLS configuration and its idle connections.
 #[derive(Debug)]
 pub struct Client {
     user_agent: HeaderValue,
     /// The TLS configuration, which the first successful `https` send builds. A failed build is not kept, so the next
     /// send builds again.
     tls: OnceLock<Arc<rustls::ClientConfig>>,
+    pool: Arc<Pool>,
 }
 
 impl Client {
@@ -172,11 +175,12 @@ impl Client {
         Client {
             user_agent,
             tls: OnceLock::new(),
+            pool: Arc::default(),
         }
     }
 
-    /// Send `request` on a new connection, and return the response at its head. The idle timeout and the deadline of
-    /// `request` bound the request up to the end of the body.
+    /// Send `request` on an idle connection to its host, else on a new connection, and return the response at its
+    /// head. The idle timeout and the deadline of `request` bound the request up to the end of the body.
     ///
     /// # Errors
     ///
@@ -187,33 +191,42 @@ impl Client {
         let idle_timeout = request.idle_timeout;
         let target = Target::parse(&request.url)?;
         let http_request = self.build(&target, request)?;
+        let key = (target.tls, target.host.clone(), target.port);
 
         // Connect, send, and the head wait share the idle deadline, so a silent peer never holds the call.
         let bound = earlier(idle_timeout.map(|idle| Instant::now() + idle), deadline);
-        let head = match bound {
-            None => send(self.connect(&target).await?, http_request).await,
-            Some((at, timed_out)) => {
+        let pooled = match self.pool.take(&key) {
+            Some(open) => bounded(bound, send(open, http_request)).await?,
+            None => Err(http_request),
+        };
+        let (response, open) = match pooled {
+            Ok(head) => head,
+            // No idle connection took the request, so it never left, and a new connection carries it.
+            Err(http_request) => {
                 // A timeout before the connection opens proves that the request did not leave.
-                let socket = tokio::time::timeout_at(at, self.connect(&target))
-                    .await
-                    .map_err(|_| Error::ConnectTimeout)??;
-                let outcome = tokio::time::timeout_at(at, send(socket, http_request)).await;
-                outcome.unwrap_or(Err(timed_out))
+                let open = bounded(bound.map(|(at, _)| (at, Error::ConnectTimeout)), self.connect(&target)).await?;
+                // A new connection that gives the request back never carried it.
+                bounded(bound, send(open, http_request))
+                    .await?
+                    .map_err(|_| Error::ConnectFailed)?
             }
         };
-        let (response, connection) = head?;
         let (parts, incoming) = response.into_parts();
         Ok(Response {
             status: parts.status,
             headers: parts.headers,
             body: Body {
-                connection: Some(connection),
                 incoming,
                 idle_timeout,
                 deadline,
                 timer: None,
                 armed: None,
                 done: false,
+                pooled: Pooled {
+                    open,
+                    pool: Arc::clone(&self.pool),
+                    key,
+                },
             },
         })
     }
@@ -247,7 +260,6 @@ impl Client {
         } = request;
         let full = |result: Result<_, http::header::MaxSizeReached>| result.map_err(|_| Error::InvalidRequest);
         full(fields.try_insert(HOST, target.host_header.clone()))?;
-        full(fields.try_insert(CONNECTION, HeaderValue::from_static("close")))?;
         // The client sends the whole body, so it decides the framing. RFC 9112 forbids both fields in one message.
         fields.remove(TRANSFER_ENCODING);
         fields.remove(CONTENT_LENGTH);
@@ -268,8 +280,8 @@ impl Client {
         Ok(http_request)
     }
 
-    /// Open the connection: TCP, and TLS for `https`.
-    async fn connect(&self, target: &Target) -> Result<Box<dyn Socket>, Error> {
+    /// Open a new connection: TCP, TLS for `https`, and HTTP/1.1.
+    async fn connect(&self, target: &Target) -> Result<Open, Error> {
         // A TLS configuration that fails to build fails the send before it connects.
         let tls = if target.tls { Some(self.tls()?) } else { None };
         let addresses = tokio::net::lookup_host((target.host.as_str(), target.port))
@@ -290,7 +302,9 @@ impl Client {
         } else {
             Box::new(tcp)
         };
-        Ok(socket)
+        http1::handshake(TokioIo::new(socket))
+            .await
+            .map_err(|err| error_of(&err))
     }
 }
 
@@ -411,6 +425,12 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Socket for T {}
 
 type Connection = http1::Connection<TokioIo<Box<dyn Socket>>, Parts>;
 
+/// An open connection: the sender of its requests, and the connection, which the owner drives.
+type Open = (http1::SendRequest<Parts>, Connection);
+
+/// A response head, and its connection until the connection ends.
+type Head = (http::Response<Incoming>, Option<Open>);
+
 /// The body of a request: one frame for each part, so hyper queues each buffer and copies none.
 struct Parts(std::vec::IntoIter<Bytes>);
 
@@ -434,32 +454,110 @@ impl hyper::body::Body for Parts {
     }
 }
 
-/// Send the request on a new connection, and drive the connection until the head arrives.
-async fn send(
-    socket: Box<dyn Socket>,
-    request: http::Request<Parts>,
-) -> Result<(http::Response<Incoming>, Connection), Error> {
-    let (mut sender, mut connection) = http1::handshake(TokioIo::new(socket))
-        .await
-        .map_err(|err| error_of(&err))?;
-    let mut response = pin!(sender.send_request(request));
-    let response = std::future::poll_fn(|cx| {
-        if let Poll::Ready(result) = response.as_mut().poll(cx) {
-            return Poll::Ready(result.map_err(|err| error_of(&err)));
+/// Send the request on `open`, and drive the connection until the head arrives. Give the request back when hyper did
+/// not start to write it, so the request never left.
+async fn send(open: Open, request: http::Request<Parts>) -> Result<Result<Head, http::Request<Parts>>, Error> {
+    let (mut sender, connection) = open;
+    let mut connection = Some(connection);
+    let mut response = pin!(sender.try_send_request(request));
+    let result = std::future::poll_fn(|cx| {
+        if let Some(open) = &mut connection
+            && Pin::new(open).poll(cx).is_ready()
+        {
+            // A drop of the ended connection settles the request. hyper gives back a request that never left.
+            connection = None;
         }
-        match Pin::new(&mut connection).poll(cx) {
-            // The connection ended before the head, so the response holds its cause.
-            Poll::Ready(Err(err)) => Poll::Ready(Err(error_of(&err))),
-            Poll::Ready(Ok(())) => match response.as_mut().poll(cx) {
-                Poll::Ready(result) => Poll::Ready(result.map_err(|err| error_of(&err))),
-                Poll::Pending => Poll::Ready(Err(Error::ConnectionLost)),
-            },
-            Poll::Pending => Poll::Pending,
-        }
+        response.as_mut().poll(cx)
     })
-    .await?;
-    drop(sender);
-    Ok((response, connection))
+    .await;
+    match result {
+        Ok(response) => Ok(Ok((response, connection.map(|connection| (sender, connection))))),
+        Err(mut failure) => match failure.take_message() {
+            Some(request) => Ok(Err(request)),
+            None => Err(error_of(failure.error())),
+        },
+    }
+}
+
+/// Run `future` until the time of `bound`, and fail with the error of `bound` after it.
+async fn bounded<T>(
+    bound: Option<(Instant, Error)>,
+    future: impl Future<Output = Result<T, Error>>,
+) -> Result<T, Error> {
+    match bound {
+        None => future.await,
+        Some((at, error)) => tokio::time::timeout_at(at, future).await.unwrap_or(Err(error)),
+    }
+}
+
+/// The longest time that a connection waits in the pool for its next request.
+const IDLE_LIMIT: Duration = Duration::from_secs(60);
+
+/// The host of a connection: `https` or not, the host, and the port.
+type Key = (bool, String, u16);
+
+/// The idle connections of a client, by host.
+#[derive(Default)]
+struct Pool(Mutex<HashMap<Key, Vec<(Open, Instant)>>>);
+
+impl fmt::Debug for Pool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Pool").finish_non_exhaustive()
+    }
+}
+
+impl Pool {
+    /// Take the newest idle connection to `key`, which is the most likely to be still open.
+    fn take(&self, key: &Key) -> Option<Open> {
+        let (open, _) = self.lock().get_mut(key)?.pop()?;
+        Some(open)
+    }
+
+    fn put(&self, key: Key, open: Open) {
+        self.lock().entry(key).or_default().push((open, Instant::now()));
+    }
+
+    /// Lock the idle connections, and drop each one that waited longer than [`IDLE_LIMIT`].
+    fn lock(&self) -> MutexGuard<'_, HashMap<Key, Vec<(Open, Instant)>>> {
+        let mut idle = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        idle.retain(|_, connections| {
+            connections.retain(|(_, since)| now - *since < IDLE_LIMIT);
+            !connections.is_empty()
+        });
+        idle
+    }
+}
+
+/// The connection of a body. At the end of the body or at its drop, the connection goes back to its pool if it can
+/// take a new request, and closes if not.
+struct Pooled {
+    /// `None` once the connection ended or went back.
+    open: Option<Open>,
+    pool: Arc<Pool>,
+    key: Key,
+}
+
+impl Pooled {
+    fn give_back(&mut self) {
+        let Some((sender, mut connection)) = self.open.take() else {
+            return;
+        };
+        // One poll lets hyper read the rest of the body. hyper closes the connection if the rest has not arrived, so
+        // an unfinished answer never waits in the pool, and a cancelled stream still stops at the peer.
+        let ended = Pin::new(&mut connection)
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_ready();
+        if !ended && sender.is_ready() {
+            self.pool.put(self.key.clone(), (sender, connection));
+        }
+    }
+}
+
+impl Drop for Pooled {
+    fn drop(&mut self) {
+        self.give_back();
+    }
 }
 
 /// Name one hyper failure. A truncated message is a lost connection, and a parse failure a malformed response.
@@ -552,11 +650,9 @@ impl Target {
     }
 }
 
-/// One response body. The body owns its connection, and drives the connection while the caller reads. A drop closes
-/// the connection.
+/// One response body. The body owns its connection, and drives the connection while the caller reads. At the end of
+/// the body or at its drop, the connection goes back to the client if it can carry a new request, and closes if not.
 pub struct Body {
-    /// `None` once the connection ended.
-    connection: Option<Connection>,
     incoming: Incoming,
     idle_timeout: Option<Duration>,
     deadline: Option<Instant>,
@@ -566,6 +662,9 @@ pub struct Body {
     armed: Option<Error>,
     /// The body ended or failed. It returns nothing more.
     done: bool,
+    /// The fields drop in order, so a drop of the body drops `incoming` first. hyper then reads the rest of the body
+    /// for the next request.
+    pooled: Pooled,
 }
 
 impl fmt::Debug for Body {
@@ -593,9 +692,9 @@ impl Body {
         if self.done {
             return Poll::Ready(None);
         }
-        if let Some(connection) = &mut self.connection {
+        if let Some((_, connection)) = &mut self.pooled.open {
             match Pin::new(connection).poll(cx) {
-                Poll::Ready(Ok(())) => self.connection = None,
+                Poll::Ready(Ok(())) => self.pooled.open = None,
                 Poll::Ready(Err(err)) => return self.fail(error_of(&err)),
                 Poll::Pending => {}
             }
@@ -615,6 +714,7 @@ impl Body {
                 Poll::Ready(None) => {
                     self.done = true;
                     self.armed = None;
+                    self.pooled.give_back();
                     return Poll::Ready(None);
                 }
                 Poll::Pending => break,
@@ -639,7 +739,7 @@ impl Body {
 
     fn fail(&mut self, error: Error) -> Poll<Option<Result<Bytes, Error>>> {
         self.done = true;
-        self.connection = None;
+        self.pooled.open = None;
         Poll::Ready(Some(Err(error)))
     }
 }

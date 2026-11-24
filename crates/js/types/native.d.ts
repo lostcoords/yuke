@@ -210,7 +210,7 @@ declare module "yuke:internal/native" {
   ): Operation<HttpHead>;
   /** The next chunk of `body`, or `undefined` at the end. It rejects as `httpSend` does. */
   export function httpRead(body: HttpBody): Operation<Uint8Array | undefined>;
-  /** Close `body` and its connection. */
+  /** Close `body`. Its connection closes too, unless the whole body already arrived. */
   export function httpClose(body: HttpBody): void;
 
   /** A connection to a Unix socket. When QuickJS frees it, the socket closes. */

@@ -13,7 +13,8 @@ use yuke_http::http::{HeaderMap, HeaderName, HeaderValue, Method};
 
 use super::{Cancelled, Operation};
 
-/// The body of a response. When QuickJS frees the object, the body drops and closes the connection.
+/// The body of a response. When QuickJS frees the object, the body drops. Its connection closes, unless the whole body
+/// already arrived.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "HttpBody")]
 pub(crate) struct HttpBody {
