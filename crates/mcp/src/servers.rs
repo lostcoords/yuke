@@ -3,7 +3,7 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -57,8 +57,6 @@ struct Slot {
     /// Stops the connection while the server runs.
     stop: Option<RunningServiceCancellationToken>,
     tools: Vec<McpToolInfo>,
-    /// The connection of a remote server, to connect again after its login.
-    remote: Option<Remote>,
     /// The login of a remote server.
     auth: Option<Arc<Auth>>,
 }
@@ -116,30 +114,41 @@ impl std::fmt::Debug for Servers {
     }
 }
 
+/// What the servers of a session use from the app.
+pub struct Services {
+    /// Stores the attachments of the results.
+    pub media: Rc<dyn MediaStore>,
+    /// Sends the requests of the remote servers.
+    pub http: Arc<yuke_http::Client>,
+    /// The folder of the stored logins of the remote servers.
+    pub data: PathBuf,
+}
+
+impl std::fmt::Debug for Services {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Services")
+            .field("data", &self.data)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Servers {
     /// Start each server of `user` in the background. Each server of `project` replaces a user server of its name, and
     /// waits in [`McpServerState::Untrusted`] until `trust` answers; a `true` starts it. `trust` runs only when a
     /// project server can start. `variable` gives the values of the variables of the config. A server without its own
-    /// folder runs in `folder`. `media` stores the attachments of the results. `http` sends the requests of the remote
-    /// servers, and `data` is the folder of their stored logins. `on_change` gets each later state of a server: the end
-    /// of its start, the start after the trust, and its stop.
+    /// folder runs in `folder`. `on_change` gets each later state of a server: the end of its start, the start after the
+    /// trust, and its stop.
     ///
     /// # Panics
     ///
     /// Panics outside a tokio local runtime or local task set when a server can start.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "each argument is an independent input of the start"
-    )]
     pub fn start(
         user: &[(String, ServerConfig)],
         project: &[(String, ServerConfig)],
         trust: impl Future<Output = bool> + 'static,
         variable: &dyn Fn(&str) -> Option<String>,
         folder: &Path,
-        data: &Path,
-        media: Rc<dyn MediaStore>,
-        http: Arc<yuke_http::Client>,
+        services: Services,
         on_change: OnChange,
     ) -> Servers {
         let overridden: HashSet<&str> = project.iter().map(|(name, _)| name.as_str()).collect();
@@ -150,13 +159,16 @@ impl Servers {
         let mut slots = Vec::new();
         let (mut launches, mut gated) = (Vec::new(), Vec::new());
         for (index, (source, (name, config))) in entries.enumerate() {
-            let (mut remote, mut auth) = (None, None);
+            let mut auth = None;
             let state = match config.enabled.then(|| config.launch(variable, folder)) {
                 None => McpServerState::Disabled,
                 Some(Ok(launch)) => {
-                    if let Launch::Remote(launch) = &launch {
-                        auth = Some(Arc::new(Auth::new(Arc::clone(&http), data, launch)));
-                        remote = Some(launch.clone());
+                    if let Launch::Remote(remote) = &launch {
+                        auth = Some(Arc::new(Auth::new(
+                            Arc::clone(&services.http),
+                            &services.data,
+                            remote.clone(),
+                        )));
                     }
                     match source {
                         McpServerSource::User => {
@@ -178,13 +190,12 @@ impl Servers {
                 peer: None,
                 stop: None,
                 tools: Vec::new(),
-                remote,
                 auth,
             });
         }
         let shared = Rc::new(Shared {
             slots: RefCell::new(slots),
-            http,
+            http: services.http,
             on_change,
             starting: watch::channel(launches.len() + gated.len()).0,
             closed: Cell::new(false),
@@ -204,7 +215,10 @@ impl Servers {
             ));
         }
         drop(tasks);
-        Servers { shared, media }
+        Servers {
+            shared,
+            media: services.media,
+        }
     }
 
     /// Wait until no server starts.
@@ -233,9 +247,7 @@ impl Servers {
     ) -> Result<(PendingLogin, impl Future<Output = Result<(), LoginError>> + use<>), LoginError> {
         let (index, auth) = {
             let slots = self.shared.slots.borrow();
-            let Some((index, slot)) = slots.iter().enumerate().find(|(_, slot)| slot.name == name) else {
-                return Err(LoginError::Refused(format!("the session has no MCP server {name}")));
-            };
+            let (index, slot) = find(&slots, name)?;
             match (&slot.auth, &slot.state) {
                 (Some(auth), McpServerState::NeedsLogin) => (index, Arc::clone(auth)),
                 _ => {
@@ -249,7 +261,7 @@ impl Servers {
         let shared = Rc::clone(&self.shared);
         let outcome = async move {
             outcome.await?;
-            reconnect(&shared, index);
+            reconnect(&shared, index, &auth);
             Ok(())
         };
         Ok((login, outcome))
@@ -265,9 +277,7 @@ impl Servers {
     pub async fn logout(&self, name: &str) -> Result<(), LoginError> {
         let auth = {
             let slots = self.shared.slots.borrow();
-            let Some(slot) = slots.iter().find(|slot| slot.name == name) else {
-                return Err(LoginError::Refused(format!("the session has no MCP server {name}")));
-            };
+            let (_, slot) = find(&slots, name)?;
             slot.auth
                 .clone()
                 .ok_or_else(|| LoginError::Refused(format!("{name} is not a remote server")))?
@@ -360,6 +370,15 @@ impl Drop for Servers {
     }
 }
 
+/// The index and the slot of the server `name`.
+fn find<'a>(slots: &'a [Slot], name: &str) -> Result<(usize, &'a Slot), LoginError> {
+    slots
+        .iter()
+        .enumerate()
+        .find(|(_, slot)| slot.name == name)
+        .ok_or_else(|| LoginError::Refused(format!("the session has no MCP server {name}")))
+}
+
 /// Wait for `trust`, then start each server of `gated` when it is `true`. A server that does not start stays untrusted.
 async fn start_trusted(gated: Vec<(usize, Launch)>, trust: impl Future<Output = bool>, shared: Rc<Shared>) {
     let trusted = trust.await;
@@ -374,20 +393,15 @@ async fn start_trusted(gated: Vec<(usize, Launch)>, trust: impl Future<Output = 
     }
 }
 
-/// Start the server of the slot `index` again after its login.
-fn reconnect(shared: &Rc<Shared>, index: usize) {
-    let remote = {
-        let slots = shared.slots.borrow();
-        let slot = &slots[index];
-        // A second login of the same server finds the state changed already.
-        match &slot.remote {
-            Some(remote) if slot.state == McpServerState::NeedsLogin && !shared.closed.get() => remote.clone(),
-            _ => return,
-        }
-    };
+/// Start the server of the slot `index` again after its login `auth`.
+fn reconnect(shared: &Rc<Shared>, index: usize, auth: &Auth) {
+    // Another login of this server can have connected it already.
+    if shared.closed.get() || shared.slots.borrow()[index].state != McpServerState::NeedsLogin {
+        return;
+    }
     shared.starting.send_modify(|starting| *starting += 1);
     shared.update(index, |slot| slot.state = McpServerState::Connecting);
-    let task = tokio::task::spawn_local(run(index, Launch::Remote(remote), Rc::clone(shared)));
+    let task = tokio::task::spawn_local(run(index, Launch::Remote(auth.remote.clone()), Rc::clone(shared)));
     let mut tasks = shared.tasks.borrow_mut();
     // The task of the failed start ended, and `close` needs the new task at the index.
     tasks.retain(|(task_index, _)| *task_index != Some(index));

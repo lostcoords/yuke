@@ -9,4 +9,4 @@ mod servers;
 
 pub use config::{Config, OAuthConfig, ServerConfig};
 pub use oauth::{LoginError, PendingLogin};
-pub use servers::{McpTool, OnChange, Servers};
+pub use servers::{McpTool, OnChange, Servers, Services};

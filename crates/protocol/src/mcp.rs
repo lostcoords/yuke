@@ -91,7 +91,7 @@ pub struct McpLoginResult {
 pub struct McpCompleteLoginParams {
     /// The login in progress.
     pub login_id: LoginId,
-    /// The address that the browser ended on after the approval, for a browser that cannot reach the server.
+    /// The address that the browser ended on after the approval, for a browser that cannot reach the listener of yuke.
     pub redirect_url: String,
 }
 

@@ -19,7 +19,7 @@
 //! `POST /test/token-down` makes `/token` answer `503`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -31,8 +31,14 @@ use crate::log;
 /// The client id of the client id document of yuke.
 const CLIENT_METADATA: &str = "https://yuke.sh/oauth/client.json";
 
-/// The port of the server.
-static PORT: OnceLock<u16> = OnceLock::new();
+/// The options of `MCP_TEST_OAUTH`, or `None` when the variable is not set.
+static OPTIONS: LazyLock<Option<Vec<String>>> = LazyLock::new(|| {
+    let options = std::env::var("MCP_TEST_OAUTH").ok()?;
+    Some(options.split(',').map(str::to_owned).collect())
+});
+
+/// The issuer, which is the origin of the server.
+static ISSUER: OnceLock<String> = OnceLock::new();
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
 
@@ -63,21 +69,22 @@ impl State {
     }
 }
 
-pub(crate) fn set_port(port: u16) {
-    _ = PORT.set(port);
+fn state() -> MutexGuard<'static, State> {
+    STATE.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn issuer() -> String {
-    format!("http://127.0.0.1:{}", PORT.get().copied().unwrap_or_default())
+pub(crate) fn set_port(port: u16) {
+    _ = ISSUER.set(format!("http://127.0.0.1:{port}"));
+}
+
+fn issuer() -> &'static str {
+    ISSUER.get().map_or("", String::as_str)
 }
 
 fn option(name: &str) -> bool {
-    std::env::var("MCP_TEST_OAUTH").is_ok_and(|options| options.split(',').any(|option| option == name))
-}
-
-/// Whether the fake server is on.
-pub(crate) fn enabled() -> bool {
-    std::env::var("MCP_TEST_OAUTH").is_ok()
+    OPTIONS
+        .as_ref()
+        .is_some_and(|options| options.iter().any(|option| option == name))
 }
 
 fn answer(status: &str, headers: &str, body: &Value) -> String {
@@ -88,57 +95,55 @@ fn answer(status: &str, headers: &str, body: &Value) -> String {
     )
 }
 
+fn ok(body: &Value) -> String {
+    answer("200 OK", "", body)
+}
+
 /// The answer to a request of the authorization server, or `None` for a request to the MCP endpoint.
 pub(crate) fn route(method: &str, target: &str, body: &[u8]) -> Option<String> {
-    if !enabled() || target.split('?').next() == Some("/mcp") {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    if OPTIONS.is_none() || path == "/mcp" {
         return None;
     }
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let issuer = issuer();
-    let mut state = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let state = &mut *state;
+    let mut state = state();
     Some(match (method, path) {
-        ("GET", "/.well-known/oauth-protected-resource/mcp") => answer(
-            "200 OK",
-            "",
-            &json!({
-                "resource": format!("{issuer}/mcp"),
-                "authorization_servers": [issuer],
-                "scopes_supported": ["a", "b"],
-            }),
-        ),
-        ("GET", "/.well-known/oauth-authorization-server") if !option("oidc") => {
-            answer("200 OK", "", &metadata(&issuer))
-        }
-        ("GET", "/.well-known/openid-configuration") if option("oidc") => answer("200 OK", "", &metadata(&issuer)),
-        ("GET", "/authorize") => authorize(state, &issuer, &parse(query)),
-        ("POST", "/token") => token(state, &issuer, &parse(&String::from_utf8_lossy(body))),
+        ("GET", "/.well-known/oauth-protected-resource/mcp") => ok(&json!({
+            "resource": format!("{issuer}/mcp"),
+            "authorization_servers": [issuer],
+            "scopes_supported": ["a", "b"],
+        })),
+        ("GET", "/.well-known/oauth-authorization-server") if !option("oidc") => ok(&metadata()),
+        ("GET", "/.well-known/openid-configuration") if option("oidc") => ok(&metadata()),
+        ("GET", "/authorize") => authorize(&mut state, &parse(query)),
+        ("POST", "/token") => token(&mut state, &parse(&String::from_utf8_lossy(body))),
         ("POST", "/register") if option("dcr") => {
             let request: Value = serde_json::from_slice(body).unwrap_or_default();
             let redirect = request["redirect_uris"][0].as_str().unwrap_or_default().to_owned();
             let id = state.next("client");
-            _ = log(&format!("register {redirect}"));
+            log(&format!("register {redirect}"));
             state.clients.insert(id.clone(), redirect);
             answer("201 Created", "", &json!({ "client_id": id }))
         }
         ("POST", "/test/expire") => {
             state.access.clear();
-            answer("200 OK", "", &json!({}))
+            ok(&json!({}))
         }
         ("POST", "/test/token-down") => {
             state.token_down = true;
-            answer("200 OK", "", &json!({}))
+            ok(&json!({}))
         }
         ("POST", "/test/revoke") => {
             state.access.clear();
             state.refresh.clear();
-            answer("200 OK", "", &json!({}))
+            ok(&json!({}))
         }
         _ => answer("404 Not Found", "", &json!({ "error": "not_found" })),
     })
 }
 
-fn metadata(issuer: &str) -> Value {
+fn metadata() -> Value {
+    let issuer = issuer();
     let mut metadata = json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/authorize"),
@@ -163,19 +168,17 @@ fn metadata(issuer: &str) -> Value {
 }
 
 /// What the browser does after the approval of the user: it follows the redirect to the client.
-fn authorize(state: &mut State, issuer: &str, query: &HashMap<String, String>) -> String {
+fn authorize(state: &mut State, query: &HashMap<String, String>) -> String {
     let get = |name: &str| query.get(name).map_or("", String::as_str);
     let refuse = |reason: &str| {
-        answer(
-            "400 Bad Request",
-            "",
-            &json!({ "error": "invalid_request", "error_description": reason }),
-        )
+        let error = json!({ "error": "invalid_request", "error_description": reason });
+        answer("400 Bad Request", "", &error)
     };
-    _ = log(&format!("authorize client={} scope={}", get("client_id"), get("scope")));
+    log(&format!("authorize client={} scope={}", get("client_id"), get("scope")));
     if get("response_type") != "code" || get("code_challenge_method") != "S256" || get("code_challenge").is_empty() {
         return refuse("the request needs a code with PKCE S256");
     }
+    let issuer = issuer();
     if get("resource") != format!("{issuer}/mcp") {
         return refuse("the resource is not the MCP server");
     }
@@ -189,32 +192,34 @@ fn authorize(state: &mut State, issuer: &str, query: &HashMap<String, String>) -
         return refuse("the client or its redirect is not known");
     }
     let code = state.next("code");
-    state.codes.insert(
-        code.clone(),
-        Code {
-            client_id: client_id.to_owned(),
-            redirect_uri: redirect_uri.to_owned(),
-            challenge: get("code_challenge").to_owned(),
-        },
-    );
+    let challenge = get("code_challenge").to_owned();
+    let (client_id, redirect_uri) = (client_id.to_owned(), redirect_uri.to_owned());
     let iss = if option("iss") {
         format!("&iss={issuer}")
     } else {
         String::new()
     };
     let location = format!("{redirect_uri}?code={code}&state={}{iss}", get("state"));
+    state.codes.insert(
+        code,
+        Code {
+            client_id,
+            redirect_uri,
+            challenge,
+        },
+    );
     format!("HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\n\r\n")
 }
 
-fn token(state: &mut State, issuer: &str, form: &HashMap<String, String>) -> String {
+fn token(state: &mut State, form: &HashMap<String, String>) -> String {
     let get = |name: &str| form.get(name).map_or("", String::as_str);
     let grant = get("grant_type");
-    _ = log(&format!("token {grant}"));
+    log(&format!("token {grant}"));
     let refuse = || answer("400 Bad Request", "", &json!({ "error": "invalid_grant" }));
     if state.token_down {
         return answer("503 Service Unavailable", "", &json!({}));
     }
-    if get("resource") != format!("{issuer}/mcp") {
+    if get("resource") != format!("{}/mcp", issuer()) {
         return refuse();
     }
     match grant {
@@ -254,24 +259,20 @@ fn token(state: &mut State, issuer: &str, form: &HashMap<String, String>) -> Str
         state.refresh.insert(refresh.clone());
         tokens["refresh_token"] = json!(refresh);
     }
-    answer("200 OK", "", &tokens)
+    ok(&tokens)
 }
 
-/// `None` when the request to `/mcp` carries a valid token, else the `401` answer.
+/// `None` when the server is off or the request to `/mcp` carries a valid token, else the `401` answer.
 pub(crate) fn challenge(authorization: Option<&str>) -> Option<String> {
+    OPTIONS.as_ref()?;
     let token = authorization
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
-    let valid = STATE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .access
-        .contains(token);
-    if valid {
-        _ = log(&format!("bearer {token}"));
+    if state().access.contains(token) {
+        log(&format!("bearer {token}"));
         return None;
     }
-    _ = log(&format!("refused {token}"));
+    log(&format!("refused {token}"));
     let issuer = issuer();
     let parameters = if option("bare") {
         r#"realm="test""#.to_owned()

@@ -21,7 +21,7 @@ use yuke_agent::{EventPage, Loaded, Session, SessionError, SessionObserver, Stor
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, ModelAccess, Toolset, chain_text};
 use yuke_js::{Handle, RequestFailure, ScriptSession, ScriptTool, SessionHost, ViewEvent, ViewSink};
-use yuke_mcp::{McpTool, OnChange, Servers};
+use yuke_mcp::{McpTool, OnChange, Servers, Services};
 
 use super::facts::Facts;
 use super::sessions::SessionService;
@@ -946,10 +946,12 @@ fn start_servers(host: &Rc<Host>, folder: &Path) -> Servers {
     let user: Vec<_> = shared.mcp.servers.clone().into_iter().collect();
     let entries: Vec<_> = project.servers.clone().into_iter().collect();
     let trust = trust_of(Rc::clone(host), folder.to_owned(), project);
-    let media = Rc::clone(host) as Rc<dyn MediaStore>;
-    let http = Arc::clone(&shared.machine.http);
-    let data = &shared.machine.paths.data;
-    Servers::start(&user, &entries, trust, &variable, folder, data, media, http, on_change)
+    let services = Services {
+        media: Rc::clone(host) as Rc<dyn MediaStore>,
+        http: Arc::clone(&shared.machine.http),
+        data: shared.machine.paths.data.clone(),
+    };
+    Servers::start(&user, &entries, trust, &variable, folder, services, on_change)
 }
 
 /// Whether the user trusts the project servers `project` of `folder`: a kept confirm, or a yes to the question now. A

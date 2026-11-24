@@ -24,16 +24,16 @@ The MCP client of yuke, on [rmcp](https://crates.io/crates/rmcp). Each open sess
 - `Servers::login`, `Servers::logout`, `PendingLogin::complete`, and the future give a `LoginError`: `Refused` for a
   request that does not fit (no such server, no need for a login, not a remote server, a bad redirect), `Failed` for a
   failure of the login or of the stored logins, and `Cancelled` for a cancel.
-- The `Auth` of a server lives in its slot. When its login ends while the server runs (a refresh that the server
-  refuses), the server stops and goes to `NeedsLogin`.
-- The client id comes from `oauth.clientId`, else from the client id document of yuke when the authorization server
-  accepts one, else from a new dynamic registration at each login. A public client has no secret.
+- When the login of a running server ends (a refresh that the server refuses), the server stops and goes to
+  `NeedsLogin`.
+- The client id comes from `oauth.clientId`. Else it is the client id document of yuke, when the authorization server
+  accepts one. Else yuke registers a new client at each login. A public client has no secret.
 - Each endpoint of the authorization server must use HTTPS. Only an endpoint on this computer can use HTTP.
 - `mcp-auth.json` in the data folder holds one login for each server URL. Its lock file is `mcp-auth.lock`. A token
-  that ends within one minute refreshes before the request, and a `401` answer with a token refreshes it once. A
-  refresh that fails for now keeps the login: the request never left, or the server answered with an error that does
-  not end a grant. A token that still lives serves the request then. A refresh that the server refuses, or whose request
-  can have left, removes the login.
+  that ends within one minute refreshes before the request, and a `401` answer to a request with a token refreshes it
+  once. A refresh that fails for now keeps the login: the request never left, or the server answered with an error
+  that does not end a grant. A token that still lives serves the request then. A refresh that the server refuses, or
+  whose request can have left, removes the login.
 - The test server answers as an authorization server when `MCP_TEST_OAUTH` is set. The tests play the browser.
 - `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values, the folder, the URL, and the
   header values take the value of the environment variable `NAME`. An empty value takes the default.

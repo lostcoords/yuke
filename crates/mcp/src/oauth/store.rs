@@ -1,5 +1,5 @@
 //! The stored logins of the remote servers. `mcp-auth.json` in the data folder holds one login for each server URL.
-//! Each write holds the lock file `mcp-auth.lock`, so two processes never refresh one login at once.
+//! A write holds the lock file `mcp-auth.lock`, so two processes do not refresh one login at once.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -10,7 +10,7 @@ use yuke_credentials::CredentialFile;
 use yuke_engine::chain_text;
 
 /// The stored login of one server.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoredLogin {
     pub(crate) client_id: String,
@@ -24,10 +24,14 @@ pub(crate) struct StoredLogin {
 impl StoredLogin {
     /// Whether the access token still works after `margin`.
     pub(crate) fn valid(&self, margin: Duration) -> bool {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         self.expires_at
-            .is_none_or(|end| Duration::from_secs(end) > now + margin)
+            .is_none_or(|end| Duration::from_secs(end) > now() + margin)
     }
+}
+
+/// The time from the epoch to now.
+pub(crate) fn now() -> Duration {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
 }
 
 /// The login of one server in `mcp-auth.json` in one data folder.
@@ -56,7 +60,7 @@ impl Store {
         self.file.read().map_err(|error| chain_text(&error))
     }
 
-    /// Take the lock. The call blocks until the holder releases it.
+    /// Take the lock. The call waits until the holder releases it.
     pub(crate) fn lock(&self) -> Result<Locked, String> {
         Ok(Locked {
             store: self.clone(),
@@ -65,7 +69,7 @@ impl Store {
     }
 }
 
-/// The logins while this process holds the lock. Only this type writes them. The drop releases the lock.
+/// The logins while this process holds the lock. Only this type writes them. A drop releases the lock.
 pub(crate) struct Locked {
     store: Store,
     locked: yuke_credentials::Locked,

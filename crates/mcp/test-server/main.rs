@@ -30,57 +30,46 @@ fn main() {
         serve_http();
         return;
     }
-    let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else {
-            return;
-        };
+    for line in std::io::stdin().lock().lines().map_while(Result::ok) {
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        let reply = match reply(&message) {
-            Ok(Some(reply)) => reply,
-            Ok(None) => continue,
-            Err(_) => return,
-        };
-        if writeln!(stdout, "{reply}").and_then(|()| stdout.flush()).is_err() {
+        if let Some(reply) = reply(&message)
+            && writeln!(stdout, "{reply}").and_then(|()| stdout.flush()).is_err()
+        {
             return;
         }
     }
 }
 
 /// Log `message`, and give its reply. A notification and a call that never answers have none.
-fn reply(message: &Value) -> std::io::Result<Option<Value>> {
+fn reply(message: &Value) -> Option<Value> {
     let method = message["method"].as_str().unwrap_or_default();
     let params = &message["params"];
     match method {
-        "initialize" => log(&format!("initialize {}", params["protocolVersion"]))?,
-        "tools/call" => log(&format!("call {}", message["id"]))?,
-        "notifications/cancelled" => log(&format!("cancelled {}", params["requestId"]))?,
+        "initialize" => log(&format!("initialize {}", params["protocolVersion"])),
+        "tools/call" => log(&format!("call {}", message["id"])),
+        "notifications/cancelled" => log(&format!("cancelled {}", params["requestId"])),
         _ => {}
     }
-    let Some(id) = message.get("id") else {
-        return Ok(None);
-    };
-    let answer = match method {
-        "initialize" => Ok(json!({
+    let id = message.get("id")?;
+    let result = match method {
+        "initialize" => json!({
             "protocolVersion": "2025-11-25",
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "test", "version": "1.0.0" },
-        })),
-        "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools() })),
-        "tools/call" => match call(params) {
-            Some(result) => Ok(result),
-            None => return Ok(None),
-        },
-        _ => Err(json!({ "code": -32_601, "message": "Method not found" })),
+        }),
+        "ping" => json!({}),
+        "tools/list" => json!({ "tools": tools() }),
+        "tools/call" => call(params)?,
+        _ => {
+            return Some(
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32_601, "message": "Method not found" } }),
+            );
+        }
     };
-    Ok(Some(match answer {
-        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }),
-    }))
+    Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
 /// Answer HTTP on a free loopback port, with one thread for each connection.
@@ -104,6 +93,16 @@ fn serve_http() {
     }
 }
 
+/// One HTTP request, with the headers that the server reads.
+#[derive(Default)]
+struct Request {
+    start: String,
+    key: Option<String>,
+    session: Option<String>,
+    authorization: Option<String>,
+    body: Vec<u8>,
+}
+
 /// Answer the requests of one connection until the client closes it.
 fn connection(stream: TcpStream) {
     let Ok(mut writer) = stream.try_clone() else {
@@ -111,11 +110,11 @@ fn connection(stream: TcpStream) {
     };
     let mut reader = BufReader::new(stream);
     loop {
-        let mut start = String::new();
-        if !matches!(reader.read_line(&mut start), Ok(1..)) {
+        let mut request = Request::default();
+        let mut length = 0;
+        if !matches!(reader.read_line(&mut request.start), Ok(1..)) {
             return;
         }
-        let (mut length, mut key, mut session, mut authorization) = (0, None, None, None);
         loop {
             let mut line = String::new();
             if !matches!(reader.read_line(&mut line), Ok(1..)) {
@@ -127,65 +126,59 @@ fn connection(stream: TcpStream) {
             let value = value.trim().to_owned();
             match name.to_ascii_lowercase().as_str() {
                 "content-length" => length = value.parse().unwrap_or_default(),
-                "x-api-key" => key = Some(value),
-                "mcp-session-id" => session = Some(value),
-                "authorization" => authorization = Some(value),
+                "x-api-key" => request.key = Some(value),
+                "mcp-session-id" => request.session = Some(value),
+                "authorization" => request.authorization = Some(value),
                 _ => {}
             }
         }
-        let mut body = vec![0; length];
-        if reader.read_exact(&mut body).is_err() {
+        request.body = vec![0; length];
+        if reader.read_exact(&mut request.body).is_err() {
             return;
         }
-        let mut parts = start.split(' ');
-        let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
-        if let Some(answer) = oauth::route(method, target, &body) {
-            if writer.write_all(answer.as_bytes()).is_err() {
-                return;
-            }
-            continue;
-        }
-        if oauth::enabled()
-            && let Some(answer) = oauth::challenge(authorization.as_deref())
-        {
-            if writer.write_all(answer.as_bytes()).is_err() {
-                return;
-            }
-            continue;
-        }
-        let key = key.unwrap_or_default();
-        let logged = if start.starts_with("DELETE") {
-            log(&format!("delete {} {key}", session.unwrap_or_default()))
-        } else if key.is_empty() {
-            Ok(())
-        } else {
-            log(&format!("key {key}"))
-        };
-        if logged.is_err() {
-            return;
-        }
-        if key == "deny" {
-            _ = writer.write_all(http_answer("401 Unauthorized", "text/plain", "no access").as_bytes());
-            continue;
-        }
-        let message = serde_json::from_slice::<Value>(&body).unwrap_or_default();
-        let answer = match reply(&message) {
-            Ok(Some(reply)) if message["method"] == "tools/call" => {
-                let body = format!("data: {reply}\n\n");
-                http_answer("200 OK", "text/event-stream", &body)
-            }
-            Ok(Some(reply)) => http_answer("200 OK", "application/json", &reply.to_string()),
+        let Some(answer) = respond(&request) else {
             // A call that never answers holds its connection until the client closes it.
-            Ok(None) if message.get("id").is_some() => {
-                _ = std::io::copy(&mut reader, &mut std::io::sink());
-                return;
-            }
-            Ok(None) => http_answer("202 Accepted", "application/json", ""),
-            Err(_) => return,
+            _ = std::io::copy(&mut reader, &mut std::io::sink());
+            return;
         };
         if writer.write_all(answer.as_bytes()).is_err() {
             return;
         }
+    }
+}
+
+/// The answer to `request`, or `None` for a call that never answers.
+fn respond(request: &Request) -> Option<String> {
+    let mut parts = request.start.split(' ');
+    let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+    if let Some(answer) = oauth::route(method, target, &request.body) {
+        return Some(answer);
+    }
+    if let Some(answer) = oauth::challenge(request.authorization.as_deref()) {
+        return Some(answer);
+    }
+    let key = request.key.as_deref().unwrap_or_default();
+    if method == "DELETE" {
+        log(&format!(
+            "delete {} {key}",
+            request.session.as_deref().unwrap_or_default()
+        ));
+    } else if !key.is_empty() {
+        log(&format!("key {key}"));
+    }
+    if key == "deny" {
+        return Some(http_answer("401 Unauthorized", "text/plain", "no access"));
+    }
+    let message = serde_json::from_slice::<Value>(&request.body).unwrap_or_default();
+    match reply(&message) {
+        Some(reply) if message["method"] == "tools/call" => Some(http_answer(
+            "200 OK",
+            "text/event-stream",
+            &format!("data: {reply}\n\n"),
+        )),
+        Some(reply) => Some(http_answer("200 OK", "application/json", &reply.to_string())),
+        None if message.get("id").is_some() => None,
+        None => Some(http_answer("202 Accepted", "application/json", "")),
     }
 }
 
@@ -197,13 +190,14 @@ fn http_answer(status: &str, kind: &str, body: &str) -> String {
     )
 }
 
-/// Add `line` to the file `MCP_TEST_LOG`, when it is set.
-fn log(line: &str) -> std::io::Result<()> {
+/// Add `line` to the file `MCP_TEST_LOG`, when it is set. A test that misses a line fails on its own.
+fn log(line: &str) {
     let Ok(path) = std::env::var("MCP_TEST_LOG") else {
-        return Ok(());
+        return;
     };
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(file, "{line}")
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        _ = writeln!(file, "{line}");
+    }
 }
 
 /// The base64 PNG of one pixel.
@@ -238,10 +232,10 @@ fn call(params: &Value) -> Option<Value> {
         }),
         "fail" => json!({ "content": [text("it broke")], "isError": true }),
         "structured" => json!({ "content": [], "structuredContent": { "answer": 42 } }),
-        // The server exits after a failed write too.
-        "exit" => match writeln!(std::io::stderr(), "exit") {
-            Ok(()) | Err(_) => std::process::exit(0),
-        },
+        "exit" => {
+            _ = writeln!(std::io::stderr(), "exit");
+            std::process::exit(0)
+        }
         _ => return None,
     })
 }

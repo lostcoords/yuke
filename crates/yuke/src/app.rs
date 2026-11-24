@@ -72,8 +72,8 @@ pub(crate) struct Machine {
     pub(crate) transport: Arc<dyn Transport>,
     /// Sends the requests of the logins.
     pub(crate) exchange: Arc<dyn Exchange>,
-    /// Sends the requests of `fetch` in the plugins and of the remote MCP servers. Neither sets an idle timeout: a fetch
-    /// stops by its signal, and a tool call can work for long.
+    /// Sends the requests of `fetch` in the plugins and of the remote MCP servers. Neither sets an idle timeout: the
+    /// signal stops a fetch, and a tool call can work for long.
     pub(crate) http: Arc<yuke_http::Client>,
     /// The terminal interface, or `None` with no view.
     /// Each runtime of a reload draws on its display.
@@ -316,6 +316,12 @@ impl Shared {
         Ok(ListCatalogResult { providers })
     }
 
+    /// The id for a new login of a provider or of an MCP server.
+    fn next_login_id(&self) -> LoginId {
+        self.last_login.set(self.last_login.get() + 1);
+        LoginId(self.last_login.get())
+    }
+
     /// Start a device login of `provider`, and give its code and a receiver of its end. A login in progress of the
     /// provider ends as cancelled first. A task polls the provider, saves the login in `auth.json`, and sends
     /// `auth/loginFinished`.
@@ -335,8 +341,7 @@ impl Shared {
         let pending = crate::auth::start_login(flow, &*self.machine.exchange)
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
-        let login_id = LoginId(self.last_login.get() + 1);
-        self.last_login.set(login_id.0);
+        let login_id = self.next_login_id();
         let stop = CancellationToken::new();
         let result = LoginResult {
             login_id,
@@ -431,12 +436,11 @@ impl Shared {
         server: &str,
         servers: &Servers,
     ) -> Result<(McpLoginResult, oneshot::Receiver<LoginOutcome>), AppError> {
-        // With a fixed `callbackPort`, the listener of the earlier login closes when its task next runs. The awaits of
-        // the new login come before it listens.
+        // With a fixed `callbackPort`, the earlier listener closes when its task next runs. The awaits of the new login
+        // come before it listens, so the port is free.
         self.cancel_mcp_logins(session, Some(server));
         let (pending, outcome) = servers.login(server).await?;
-        let login_id = LoginId(self.last_login.get() + 1);
-        self.last_login.set(login_id.0);
+        let login_id = self.next_login_id();
         let result = McpLoginResult {
             login_id,
             url: pending.url().to_owned(),
@@ -506,8 +510,8 @@ impl Shared {
         Ok(())
     }
 
-    /// Ask each MCP login of session `session` to stop: only the logins of `server` when it is `Some`. Each sends its
-    /// `mcp/loginFinished`.
+    /// Ask each MCP login of session `session` to stop, or only the logins of `server` when it is `Some`. Each login
+    /// sends its `mcp/loginFinished`.
     fn cancel_mcp_logins(&self, session: SessionId, server: Option<&str>) {
         for login in self.mcp_logins.borrow().values() {
             if login.session == session && server.is_none_or(|server| login.server == server) {

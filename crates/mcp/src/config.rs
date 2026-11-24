@@ -97,8 +97,22 @@ impl ServerConfig {
         session_folder: &Path,
     ) -> Result<Launch, String> {
         let expand = |text: &str| expand(text, variable);
-        let program = match (&self.command, &self.url) {
-            (Some(program), None) => program,
+        match (&self.command, &self.url) {
+            (Some(program), None) => {
+                let mut command = Command::new(expand(program)?);
+                for arg in &self.args {
+                    command.arg(expand(arg)?);
+                }
+                for (name, value) in &self.env {
+                    command.env(name, expand(value)?);
+                }
+                let folder = match &self.folder {
+                    Some(folder) => PathBuf::from(expand(&folder.to_string_lossy())?),
+                    None => PathBuf::new(),
+                };
+                command.current_dir(session_folder.join(folder));
+                Ok(Launch::Process(command))
+            }
             (None, Some(url)) => {
                 let mut headers = HashMap::new();
                 for (name, value) in &self.headers {
@@ -108,28 +122,15 @@ impl ServerConfig {
                     headers.insert(header, value);
                 }
                 let url = expand(url)?;
-                return Ok(Launch::Remote(Remote {
+                Ok(Launch::Remote(Remote {
                     resource: canonical(&url)?,
                     url,
                     headers,
                     oauth: self.oauth.clone().unwrap_or_default(),
-                }));
+                }))
             }
-            _ => return Err("the server needs exactly one of command and url".to_owned()),
-        };
-        let mut command = Command::new(expand(program)?);
-        for arg in &self.args {
-            command.arg(expand(arg)?);
+            _ => Err("the server needs exactly one of command and url".to_owned()),
         }
-        for (name, value) in &self.env {
-            command.env(name, expand(value)?);
-        }
-        let folder = match &self.folder {
-            Some(folder) => PathBuf::from(expand(&folder.to_string_lossy())?),
-            None => PathBuf::new(),
-        };
-        command.current_dir(session_folder.join(folder));
-        Ok(Launch::Process(command))
     }
 }
 
@@ -313,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_without_headers_writes_the_json_of_before() {
+    fn an_entry_without_headers_or_oauth_writes_no_key_for_them() {
         let entry: ServerConfig = serde_json::from_str(r#"{ "command": "x" }"#).unwrap();
 
         let json = serde_json::to_value(&entry).unwrap();

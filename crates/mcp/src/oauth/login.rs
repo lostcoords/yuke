@@ -8,19 +8,17 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures_util::FutureExt as _;
 use futures_util::future::LocalBoxFuture;
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use yuke_ai::oauth::form;
-use yuke_http::Request;
-use yuke_http::http::header::{ACCEPT, CONTENT_TYPE};
-use yuke_http::http::{HeaderMap, HeaderValue, Method};
+use yuke_http::http::HeaderMap;
 
 use super::store::StoredLogin;
-use super::{Auth, CLIENT_METADATA, blocking, discover, exchange, request_tokens, server_metadata};
+use super::{Auth, CLIENT_METADATA, blocking, discover, exchange, post, request_tokens, server_metadata};
 
 /// Why a login or a logout did not happen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,9 +42,6 @@ impl fmt::Display for LoginError {
 }
 
 impl std::error::Error for LoginError {}
-
-/// The longest request line of the redirect that the listener reads, in bytes.
-const MAX_REQUEST_LINE: u64 = 8 * 1024;
 
 /// A login that waits for the user. The user opens [`PendingLogin::url`], and the browser redirects to the listener of
 /// the login. A client that cannot reach the listener gives the address of the redirect to [`PendingLogin::complete`].
@@ -74,8 +69,8 @@ impl PendingLogin {
     ///
     /// # Errors
     ///
-    /// Returns [`LoginError::Refused`] when the address is not the redirect of this login, and then the login goes on
-    /// to wait. Also returns it when the login ended.
+    /// Returns [`LoginError::Refused`] when the address is not the redirect of this login. The login then keeps its
+    /// wait. The call also returns it when the login ended.
     pub fn complete(&self, redirect_url: &str) -> Result<(), LoginError> {
         let query = redirect_url
             .split('#')
@@ -89,7 +84,7 @@ impl PendingLogin {
     }
 
     /// End the login while it waits for the redirect. Its outcome is [`LoginError::Cancelled`]. After the redirect
-    /// came, a cancel does nothing, and the login finishes: the tokens are stored, and the server connects.
+    /// came, a cancel does nothing: the login stores the tokens, and the server connects.
     pub fn cancel(&self) {
         // The send fails only for an ended login, which has nothing to cancel.
         _ = self.events.send(Event::Cancelled);
@@ -99,7 +94,7 @@ impl PendingLogin {
 /// What a login waits for.
 enum Event {
     Code(String),
-    /// The authorization server ended the login, for example because the user said no.
+    /// The authorization server ended the login, for example because the user refused.
     Failed(String),
     Cancelled,
 }
@@ -154,7 +149,7 @@ fn decode(text: &str) -> String {
             b'+' => decoded.push(b' '),
             b'%' => {
                 let hex: Vec<u8> = bytes.by_ref().take(2).collect();
-                // A broken escape never matches the state of a login.
+                // A broken escape cannot match the state of a login.
                 let digit = std::str::from_utf8(&hex)
                     .ok()
                     .and_then(|hex| u8::from_str_radix(hex, 16).ok());
@@ -191,8 +186,8 @@ impl Auth {
         let kept = self.discovery.lock().await.clone();
         let discovery = match kept {
             Some(discovery) => discovery,
-            // A logout leaves no refused request to learn from.
-            None => discover(&self.client, &self.store.url, &HeaderMap::new()).await?,
+            // A server that a logout stopped has no refused request to learn from.
+            None => discover(&self.client, &self.remote.url, &HeaderMap::new()).await?,
         };
         let issuer = discovery
             .resource
@@ -210,14 +205,14 @@ impl Auth {
             ));
         }
 
-        let port = self.config.callback_port.unwrap_or(0);
+        let port = self.remote.oauth.callback_port.unwrap_or(0);
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
             .await
             .map_err(|error| format!("the login cannot listen on port {port} of 127.0.0.1: {error}"))?;
         let port = listener.local_addr().map_err(|error| error.to_string())?.port();
         let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
-        let client_id = if let Some(client_id) = &self.config.client_id {
+        let client_id = if let Some(client_id) = &self.remote.oauth.client_id {
             client_id.clone()
         } else if server.client_id_metadata_document_supported {
             CLIENT_METADATA.to_owned()
@@ -244,7 +239,7 @@ impl Auth {
             ("code_challenge", &code_challenge),
             ("code_challenge_method", "S256"),
             ("state", &state),
-            ("resource", &self.resource),
+            ("resource", &self.remote.resource),
         ];
         if let Some(scope) = &scope {
             fields.push(("scope", scope));
@@ -265,7 +260,7 @@ impl Auth {
             expect: expect.clone(),
             events: events.clone(),
         };
-        let (client, store, resource) = (self.client.clone(), self.store.clone(), self.resource.clone());
+        let (client, store, resource) = (self.client.clone(), self.store.clone(), self.remote.resource.clone());
         let token_endpoint = server.token_endpoint;
         let outcome = async move {
             let code = wait(listener, expect, events, received).await?;
@@ -285,10 +280,11 @@ impl Auth {
                 refresh_token: tokens.refresh_token,
                 expires_at: tokens.expires_at,
             };
-            blocking(move || store.lock()?.set_login(Some(stored)))
+            blocking(&store, |store| store.lock()?.set_login(Some(stored)))
                 .await
                 .map_err(LoginError::Failed)
         };
+        // The box keeps the future of a caller small.
         Ok((login, outcome.boxed_local()))
     }
 
@@ -301,18 +297,10 @@ impl Auth {
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
         });
-        let mut request = Request::new(Method::POST, endpoint);
-        request
-            .headers
-            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        request
-            .headers
-            .insert(ACCEPT, HeaderValue::from_static("application/json"));
-        request.body = vec![body.to_string().into_bytes().into()];
-        let (status, answer) = exchange(&self.client, request)
+        let (status, answer) = exchange(&self.client, post(endpoint, "application/json", body.to_string()))
             .await
             .map_err(|error| format!("{endpoint}: {error}"))?;
-        let answer: serde_json::Value = serde_json::from_slice(&answer).unwrap_or_default();
+        let answer: Value = serde_json::from_slice(&answer).unwrap_or_default();
         match answer["client_id"].as_str() {
             Some(client_id) if status.is_success() => Ok(client_id.to_owned()),
             _ => Err(format!(
@@ -329,7 +317,7 @@ async fn wait(
     events: mpsc::UnboundedSender<Event>,
     mut received: mpsc::UnboundedReceiver<Event>,
 ) -> Result<String, LoginError> {
-    // A browser can open a connection and send nothing, so each connection has a task. The drop of the set ends them.
+    // A browser can open a connection and send nothing, so each connection has a task. A drop of the set ends them.
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
@@ -352,8 +340,7 @@ async fn wait(
 /// Answer one request of the listener. The redirect of the login goes to the login. Another request gets an error.
 async fn serve(mut stream: TcpStream, expect: Expect, events: mpsc::UnboundedSender<Event>) {
     let mut line = String::new();
-    let mut reader = BufReader::new((&mut stream).take(MAX_REQUEST_LINE));
-    if reader.read_line(&mut line).await.is_err() {
+    if BufReader::new(&mut stream).read_line(&mut line).await.is_err() {
         return;
     }
     let target = line.split(' ').nth(1).unwrap_or_default();
@@ -365,7 +352,7 @@ async fn serve(mut stream: TcpStream, expect: Expect, events: mpsc::UnboundedSen
                     Event::Failed(_) => "The login failed. Go back to yuke.",
                     _ => "You are logged in. You can close this page.",
                 };
-                // The login may have ended already, so a failed send has nothing to tell.
+                // The send fails when the login ended already, and then nobody needs the event.
                 _ = events.send(event);
                 ("200 OK", text)
             }

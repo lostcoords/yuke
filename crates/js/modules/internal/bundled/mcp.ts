@@ -29,12 +29,6 @@ function stateText(state: McpServerState): string {
   }
 }
 
-/** The session in the active pane, or `undefined` when no pane shows a session. */
-function currentSession(ctx: PluginContext, tui: Tui): SessionId | undefined {
-  const pane = tui.panes.activePane?.view;
-  return pane === undefined ? undefined : ctx.get("chat").sessionIdOf(pane);
-}
-
 /** The MCP servers of the session `id` now. */
 async function serversOf(ctx: PluginContext, id: SessionId): Promise<readonly McpServer[]> {
   const stop = new AbortController();
@@ -62,9 +56,9 @@ async function openLoginDialog(
         canvas.text(0, 0, "The login starts…", "chat.meta");
         return;
       }
-      canvas.text(0, 0, "Open this page, and approve the login.");
-      // The whole URL is long, so the dialog names the host. `o` and `u` act on the whole URL.
-      canvas.text(0, 1, new URL(login.url).origin);
+      // The URL is long, and a part of it looks like a link that the user can open. So the dialog shows only the host.
+      canvas.text(0, 0, `Press o to open the login page of ${new URL(login.url).host} in the browser,`);
+      canvas.text(0, 1, "or u to copy its URL.");
     },
   };
   const dialog = tui.dialog({
@@ -130,17 +124,6 @@ async function openLoginDialog(
   else if (!closedByUser) ctx.notify("info", "Login cancelled");
 }
 
-/** Remove the stored login of `server`. */
-async function runLogout(ctx: PluginContext, sessionId: SessionId, server: string, mcp: McpLogins): Promise<void> {
-  try {
-    await mcp.logout(sessionId, server);
-  } catch (error) {
-    ctx.notify("error", `The logout failed: ${String(error)}`);
-    return;
-  }
-  ctx.notify("info", `Logged out · ${server}`);
-}
-
 /** Act on the choice of `server`: a login for a server that needs one, else a notice. */
 function choose(ctx: PluginContext, tui: Tui, sessionId: SessionId, server: McpServer, mcp: McpLogins): void {
   if (server.state.kind === "needsLogin") void openLoginDialog(ctx, tui, sessionId, server.name, mcp);
@@ -150,7 +133,8 @@ function choose(ctx: PluginContext, tui: Tui, sessionId: SessionId, server: McpS
 
 /** Run `/mcp`. `args` is the text after the command: empty, a server name, or `logout <server>`. */
 async function run(ctx: PluginContext, tui: Tui, args: unknown, mcp: McpLogins): Promise<void> {
-  const sessionId = currentSession(ctx, tui);
+  const pane = tui.panes.activePane?.view;
+  const sessionId = pane === undefined ? undefined : ctx.get("chat").sessionIdOf(pane);
   if (sessionId === undefined) {
     ctx.notify("info", "No session is shown in this pane");
     return;
@@ -158,9 +142,17 @@ async function run(ctx: PluginContext, tui: Tui, args: unknown, mcp: McpLogins):
   const words = typeof args === "string" ? args.trim() : "";
   const logout = /^logout(?:\s+(.*))?$/.exec(words);
   if (logout !== null) {
-    const name = (logout[1] ?? "").trim();
-    if (name === "") ctx.notify("error", "Name the server: /mcp logout <server>");
-    else await runLogout(ctx, sessionId, name, mcp);
+    const name = logout[1];
+    if (name === undefined) {
+      ctx.notify("error", "Name the server: /mcp logout <server>");
+      return;
+    }
+    try {
+      await mcp.logout(sessionId, name);
+      ctx.notify("info", `Logged out · ${name}`);
+    } catch (error) {
+      ctx.notify("error", `The logout failed: ${String(error)}`);
+    }
     return;
   }
   const servers = await serversOf(ctx, sessionId);

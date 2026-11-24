@@ -537,12 +537,16 @@ fn a_job_update_holds_the_whole_job_and_its_end() {
 #[test]
 fn the_mcp_login_requests_and_its_end_read_and_write_their_json() {
     let cases = [
-        json!({ "jsonrpc": "2.0", "id": 1, "method": "mcp/login", "params": { "sessionId": SESSION, "server": "linear" } }),
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "mcp/login", "params": {
+            "sessionId": SESSION, "server": "linear"
+        } }),
         json!({ "jsonrpc": "2.0", "id": 2, "method": "mcp/completeLogin", "params": {
             "loginId": 4, "redirectUrl": "http://127.0.0.1:5000/callback?code=c&state=s"
         } }),
         json!({ "jsonrpc": "2.0", "id": 3, "method": "mcp/cancelLogin", "params": { "loginId": 4 } }),
-        json!({ "jsonrpc": "2.0", "id": 4, "method": "mcp/logout", "params": { "sessionId": SESSION, "server": "linear" } }),
+        json!({ "jsonrpc": "2.0", "id": 4, "method": "mcp/logout", "params": {
+            "sessionId": SESSION, "server": "linear"
+        } }),
     ];
     for json in cases {
         let call: Request<ClientRequest> = serde_json::from_value(json.clone()).unwrap();

@@ -7,7 +7,7 @@ Any model can run behind it.
 - **Plugins all the way down.** Commands, key bindings, status items, themes, dialogs, and the transcript come from
   plugins. Replace a bundled part, such as the chat, with your own.
 - **Engine hooks.** A hook sees each input, prompt, round, and tool call. It can deny a tool call or change its result.
-- **Tools and MCP.** Give the model a new tool in a few lines of TypeScript, or connect MCP servers over stdio.
+- **Tools and MCP.** Give the model a new tool in a few lines of TypeScript, or connect MCP servers over stdio or HTTP.
 - **Any provider.** Set an API key, or log in with a ChatGPT or Grok account. Add a local server in `providers.json`.
 - **Sessions.** yuke saves each session. Resume it, fork it, or compact it.
 - **Headless.** Run one task with `yuke -p`, or embed yuke in your app with `yuke --rpc`. Your plugins work in each

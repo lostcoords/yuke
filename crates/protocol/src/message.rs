@@ -156,20 +156,21 @@ client_requests!(
     "interaction/respond" => InteractionRespond(InteractionRespondParams) -> EmptyResult,
     /// List the MCP servers of an open session.
     "mcp/list" => ListMcpServers(SessionParams) -> ListMcpServersResult,
-    /// Start the login of an MCP server of a session that is in the state `needsLogin`, and give the page of the user.
-    /// A login in progress of the same server ends as cancelled first. The browser goes to a listener of the server on
-    /// 127.0.0.1. The server stores the tokens, and sends `mcp/loginFinished`. After a success, the server connects
-    /// again, and the `mcpServer` updates show `connecting` and then `connected`. The close of the session ends its
-    /// logins.
+    /// Start the login of an MCP server of a session. The MCP server must be in the state `needsLogin`. The result
+    /// holds the page where the user approves the login. A login in progress of the same MCP server ends as cancelled
+    /// first. The browser then goes to a listener of yuke on 127.0.0.1. yuke stores the tokens and sends
+    /// `mcp/loginFinished`. After a success, yuke connects the MCP server again, and the `mcpServer` updates show
+    /// `connecting` and then `connected`. The close of the session ends its logins.
     "mcp/login" => McpLogin(crate::McpLoginParams) -> McpLoginResult,
     /// Finish a login of `mcp/login` with the address that the browser ended on, for a browser that cannot reach the
     /// listener. An address that is not the redirect of the login is an error, and the login goes on to wait.
     "mcp/completeLogin" => McpCompleteLogin(crate::McpCompleteLoginParams) -> EmptyResult,
-    /// Ask a login of `mcp/login` to stop. Its `mcp/loginFinished` tells how it ended. A login whose redirect came
-    /// already finishes: the server stores the tokens, and the outcome is `succeeded`.
+    /// Ask a login of `mcp/login` to stop. Its `mcp/loginFinished` tells how it ended. A cancel ends only the wait for
+    /// the redirect. After the redirect came, the login finishes: yuke stores the tokens, and the outcome is
+    /// `succeeded`.
     "mcp/cancelLogin" => McpCancelLogin(crate::CancelLoginParams) -> EmptyResult,
-    /// Remove the stored login of a remote MCP server of a session. A login in progress of the server ends first. A
-    /// server that had a login stops, and it gets the state `needsLogin`. yuke revokes no token.
+    /// Remove the stored login of a remote MCP server of a session. A login in progress of the MCP server ends first.
+    /// An MCP server that had a login stops, and it gets the state `needsLogin`. yuke revokes no token.
     "mcp/logout" => McpLogout(crate::McpLogoutParams) -> EmptyResult,
     /// List the plugins of `config.json` with their state on disk and whether they run. It uses no network.
     "plugin/list" => ListPlugins(EmptyParams) -> ListPluginsResult,

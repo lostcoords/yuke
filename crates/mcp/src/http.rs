@@ -31,11 +31,12 @@ pub(crate) struct HttpClient {
 
 impl HttpClient {
     /// Send a request to `uri` with the headers of the config, then the headers that the protocol owns, so a header of
-    /// the config cannot replace `accept`, `content-type`, or the session. A request has no time bound: a tool call can
-    /// work for long.
+    /// the config cannot replace `accept`, `content-type`, or the session. A request has no time bound, because a tool
+    /// call can take long.
     ///
-    /// With a login, the request carries its token. A `401` answer with a token refreshes the token once and sends the
-    /// request again. A `401` answer that leads to OAuth metadata marks the server as one that needs a login.
+    /// With a login, the request carries its token. A `401` answer to a request with a token refreshes the token once
+    /// and sends the request again. A `401` answer that leads to OAuth metadata marks the server as one that needs a
+    /// login.
     async fn send(
         &self,
         method: Method,
@@ -111,10 +112,8 @@ async fn read(mut body: Body, limit: usize) -> Result<Vec<u8>, Failure> {
 
 /// Whether the content type `value` names the media type `expected`. The parameters and the case do not matter.
 fn media_type_is(value: &str, expected: &str) -> bool {
-    value
-        .split(';')
-        .next()
-        .is_some_and(|essence| essence.trim().eq_ignore_ascii_case(expected))
+    let (essence, _) = value.split_once(';').unwrap_or((value, ""));
+    essence.trim().eq_ignore_ascii_case(expected)
 }
 
 impl StreamableHttpClient for HttpClient {
@@ -151,10 +150,6 @@ impl StreamableHttpClient for HttpClient {
         if status == StatusCode::NOT_FOUND && session_id.is_some() {
             return Err(StreamableHttpError::SessionExpired);
         }
-        // Only a request waits for an answer. A server answers a notification with 202, 204, or 200.
-        if status.is_success() && !matches!(message, ClientJsonRpcMessage::Request(_)) {
-            return Ok(StreamableHttpPostResponse::Accepted);
-        }
         if !status.is_success() {
             let limit = limits.max_error_response_size;
             let text = read(body, limit).await?;
@@ -162,6 +157,10 @@ impl StreamableHttpClient for HttpClient {
             return Err(StreamableHttpError::UnexpectedServerResponse(
                 format!("HTTP {status}: {text}").into(),
             ));
+        }
+        // Only a request waits for an answer. A server answers a notification with 202, 204, or 200.
+        if !matches!(message, ClientJsonRpcMessage::Request(_)) {
+            return Ok(StreamableHttpPostResponse::Accepted);
         }
         let session = headers
             .get(SESSION_ID)
@@ -202,8 +201,8 @@ impl StreamableHttpClient for HttpClient {
         Ok(())
     }
 
-    /// The client opens no stream of its own. It declares no capability, so a server has no request to send, and a
-    /// POST gets its answer on its own stream.
+    /// The client opens no stream of its own. It declares no capability, so a server has no request to send. A POST
+    /// gets its answer on its own stream.
     fn get_stream(
         &self,
         _uri: Arc<str>,

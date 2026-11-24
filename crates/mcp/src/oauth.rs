@@ -5,7 +5,7 @@ mod login;
 mod store;
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -17,9 +17,9 @@ use yuke_http::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use yuke_http::{Client, Error, Request};
 
 pub use login::{LoginError, PendingLogin};
-use store::{Store, StoredLogin};
+use store::{Store, StoredLogin, now};
 
-use crate::config::{OAuthConfig, Remote};
+use crate::config::Remote;
 
 /// A token that ends within this margin refreshes before the request.
 const MARGIN: Duration = Duration::from_mins(1);
@@ -27,19 +27,17 @@ const MARGIN: Duration = Duration::from_mins(1);
 /// The idle time and the whole time of one OAuth request.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-/// An answer of an OAuth server is small, so a larger one is cut and then fails to read.
+/// An answer of an OAuth server is small, so a larger one is cut and then fails to parse.
 const MAX_ANSWER: usize = 256 * 1024;
 
-/// The client of yuke for the authorization servers that read a client id document.
+/// The client id document of yuke, for the authorization servers that read one.
 const CLIENT_METADATA: &str = "https://yuke.sh/oauth/client.json";
 
 /// The login of one remote server.
 pub(crate) struct Auth {
     client: Arc<Client>,
     store: Store,
-    /// The canonical URL of the server, the `resource` of each request (RFC 8707).
-    resource: String,
-    config: OAuthConfig,
+    pub(crate) remote: Remote,
     /// What the last refused request taught about the authorization of the server.
     discovery: Mutex<Option<Discovery>>,
     /// Whether the server needs a login: it refused a request without a token, or its login ended.
@@ -47,12 +45,11 @@ pub(crate) struct Auth {
 }
 
 impl Auth {
-    pub(crate) fn new(client: Arc<Client>, data: &std::path::Path, remote: &Remote) -> Auth {
+    pub(crate) fn new(client: Arc<Client>, data: &std::path::Path, remote: Remote) -> Auth {
         Auth {
             client,
             store: Store::new(data, &remote.url),
-            resource: remote.resource.clone(),
-            config: remote.oauth.clone(),
+            remote,
             discovery: Mutex::default(),
             needs_login: watch::channel(false).0,
         }
@@ -71,14 +68,14 @@ impl Auth {
         _ = self.needs_login.subscribe().wait_for(|needed| *needed).await;
     }
 
-    /// The access token for the next request, refreshed when it ends soon. `None` when the server has no login.
+    /// The access token for the next request. A token that ends soon refreshes first. `None` when the server has no
+    /// login.
     ///
     /// # Errors
     ///
     /// Returns why a refresh failed for now, when the token does not serve any more. The login stays.
     pub(crate) async fn token(&self) -> Result<Option<String>, String> {
-        let store = self.store.clone();
-        let Some(stored) = blocking(move || store.login()).await? else {
+        let Some(stored) = blocking(&self.store, |store| store.login()).await? else {
             return Ok(None);
         };
         if stored.valid(MARGIN) {
@@ -91,15 +88,14 @@ impl Auth {
         }
     }
 
-    /// Change the login for a new access token. The refresh skips the request when another process already renewed the
+    /// Change the login for a new access token. The call sends no request when another process already renewed the
     /// token, that is, when the stored token is valid and is not `rejected`. `None` when the login ended.
     ///
     /// # Errors
     ///
     /// Returns why the refresh failed for now. The login stays.
     pub(crate) async fn refresh(&self, rejected: Option<&str>) -> Result<Option<String>, String> {
-        let store = self.store.clone();
-        let (locked, stored) = blocking(move || {
+        let (locked, stored) = blocking(&self.store, |store| {
             let locked = store.lock()?;
             let stored = locked.login()?;
             Ok((locked, stored))
@@ -117,26 +113,26 @@ impl Auth {
             self.set_needs_login(true);
         }
         // The new token serves this request, even when the save fails.
-        _ = blocking(move || locked.set_login(renewed)).await;
+        _ = tokio::task::spawn_blocking(move || locked.set_login(renewed)).await;
         Ok(token)
     }
 
     /// The stored login after a refresh request, or `None` when the login ended.
     async fn renew(&self, stored: StoredLogin) -> Result<Option<StoredLogin>, String> {
-        let Some(refresh_token) = stored.refresh_token.clone() else {
+        let Some(refresh_token) = stored.refresh_token.as_deref() else {
             return Ok(None);
         };
         let fields = [
             ("grant_type", "refresh_token"),
-            ("refresh_token", &refresh_token),
+            ("refresh_token", refresh_token),
             ("client_id", &stored.client_id),
-            ("resource", &self.resource),
+            ("resource", &self.remote.resource),
         ];
         match request_tokens(&self.client, &stored.token_endpoint, &fields).await {
             Ok(tokens) => Ok(Some(StoredLogin {
                 access_token: tokens.access_token,
                 // An answer without a new refresh token keeps the old one.
-                refresh_token: tokens.refresh_token.or(Some(refresh_token)),
+                refresh_token: tokens.refresh_token.or(stored.refresh_token),
                 expires_at: tokens.expires_at,
                 ..stored
             })),
@@ -145,10 +141,10 @@ impl Auth {
         }
     }
 
-    /// Learn from a `401` answer with the headers `headers`: when they lead to OAuth metadata, the server needs a
+    /// Learn from a `401` answer with the headers `headers`. When they lead to OAuth metadata, the server needs a
     /// login.
     pub(crate) async fn challenged(&self, headers: &HeaderMap) {
-        if let Ok(discovery) = discover(&self.client, &self.store.url, headers).await {
+        if let Ok(discovery) = discover(&self.client, &self.remote.url, headers).await {
             *self.discovery.lock().await = Some(discovery);
             self.set_needs_login(true);
         }
@@ -156,8 +152,7 @@ impl Auth {
 
     /// Remove the stored login. A server that had one needs a login again.
     pub(crate) async fn logout(&self) -> Result<(), String> {
-        let store = self.store.clone();
-        let had = blocking(move || {
+        let had = blocking(&self.store, |store| {
             let locked = store.lock()?;
             let had = locked.login()?.is_some();
             locked.set_login(None)?;
@@ -171,9 +166,13 @@ impl Auth {
     }
 }
 
-/// Run `f` on a blocking thread of tokio, because the file calls block.
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tokio::task::spawn_blocking(f)
+/// Run `f` with `store` on a blocking thread of tokio, because the file calls block.
+async fn blocking<T: Send + 'static>(
+    store: &Store,
+    f: impl FnOnce(Store) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let store = store.clone();
+    tokio::task::spawn_blocking(move || f(store))
         .await
         .map_err(|error| format!("a file call of the login stopped: {error}"))?
 }
@@ -186,8 +185,8 @@ struct Discovery {
     resource: ResourceMetadata,
 }
 
-/// The protected resource metadata of the server `url`, at the URL that the `WWW-Authenticate` headers of its `401`
-/// answer give (RFC 9728, section 5.1), else at the well-known URLs, with the path of the server first.
+/// The protected resource metadata of the server `url`. It is at the URL that the `WWW-Authenticate` headers of a `401`
+/// answer give (RFC 9728, section 5.1). Else it is at the well-known URLs, with the path of the server first.
 async fn discover(client: &Client, url: &str, headers: &HeaderMap) -> Result<Discovery, String> {
     let urls = if let Some(metadata) = parameter(headers, "resource_metadata") {
         vec![metadata]
@@ -261,19 +260,20 @@ struct ServerMetadata {
     authorization_response_iss_parameter_supported: bool,
 }
 
-/// The metadata of the authorization server `issuer`. Each endpoint must use HTTPS, so the code and the tokens never
+/// The metadata of the authorization server `issuer`. Each endpoint must use HTTPS, so the code and the tokens do not
 /// cross the network in plain text. Only an endpoint on this computer can use HTTP.
 async fn server_metadata(client: &Client, issuer: &str) -> Result<ServerMetadata, String> {
     let metadata: ServerMetadata = first_document(client, &server_metadata_urls(issuer)?).await?;
-    let endpoints = [
-        Some(&metadata.authorization_endpoint),
-        Some(&metadata.token_endpoint),
-        metadata.registration_endpoint.as_ref(),
-    ];
-    for endpoint in endpoints.into_iter().flatten() {
-        let uri: Uri = endpoint.parse().map_err(|_| format!("{endpoint} is not a URL"))?;
-        let local = matches!(uri.host(), Some("localhost" | "127.0.0.1" | "[::1]"));
-        if uri.scheme_str() != Some("https") && !(local && uri.scheme_str() == Some("http")) {
+    let endpoints = [&metadata.authorization_endpoint, &metadata.token_endpoint]
+        .into_iter()
+        .chain(&metadata.registration_endpoint);
+    for endpoint in endpoints {
+        let secure = endpoint.parse::<Uri>().is_ok_and(|uri| match uri.scheme_str() {
+            Some("https") => true,
+            Some("http") => matches!(uri.host(), Some("localhost" | "127.0.0.1" | "[::1]")),
+            _ => false,
+        });
+        if !secure {
             return Err(format!(
                 "the authorization server {issuer} names {endpoint}, which does not use HTTPS"
             ));
@@ -316,10 +316,23 @@ async fn first_document<T: DeserializeOwned>(client: &Client, urls: &[String]) -
     Err(format!("found no OAuth metadata at {}", urls.join(" or ")))
 }
 
+/// A POST request to `url` that sends `body` of the type `content_type` and asks for JSON.
+fn post(url: &str, content_type: &'static str, body: String) -> Request {
+    let mut request = Request::new(Method::POST, url);
+    request
+        .headers
+        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+    request
+        .headers
+        .insert(ACCEPT, HeaderValue::from_static("application/json"));
+    request.body = vec![body.into_bytes().into()];
+    request
+}
+
 /// Send `request` within [`TIMEOUT`], and read the whole answer.
 async fn exchange(client: &Client, mut request: Request) -> Result<(StatusCode, Vec<u8>), Error> {
     request.idle_timeout = Some(TIMEOUT);
-    request.deadline = Some(std::time::Instant::now() + TIMEOUT);
+    request.deadline = Some(Instant::now() + TIMEOUT);
     let mut response = client.send(request).await?;
     let mut bytes = Vec::new();
     while bytes.len() <= MAX_ANSWER
@@ -356,13 +369,7 @@ impl From<TokenError> for LoginError {
 /// Post the form `fields` to the token endpoint `endpoint`. A refresh repeats only when the request provably never
 /// left, as for the logins of the providers.
 async fn request_tokens(client: &Client, endpoint: &str, fields: &[(&str, &str)]) -> Result<Tokens, TokenError> {
-    let mut request = Request::new(Method::POST, endpoint);
-    let form_type = HeaderValue::from_static("application/x-www-form-urlencoded");
-    request.headers.insert(CONTENT_TYPE, form_type);
-    request
-        .headers
-        .insert(ACCEPT, HeaderValue::from_static("application/json"));
-    request.body = vec![form(fields).into_bytes().into()];
+    let request = post(endpoint, "application/x-www-form-urlencoded", form(fields));
     let (status, body) = match exchange(client, request).await {
         Ok(answer) => answer,
         Err(error) => {
@@ -394,11 +401,10 @@ async fn request_tokens(client: &Client, endpoint: &str, fields: &[(&str, &str)]
         };
         let lifetime = &answer["expires_in"];
         let seconds = lifetime.as_u64().or_else(|| lifetime.as_str()?.parse().ok());
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         return Ok(Tokens {
             access_token: access_token.to_owned(),
             refresh_token: answer["refresh_token"].as_str().map(str::to_owned),
-            expires_at: seconds.map(|seconds| now.as_secs() + seconds),
+            expires_at: seconds.map(|seconds| now().as_secs() + seconds),
         });
     }
     let code = answer["error"].as_str().unwrap_or_default();

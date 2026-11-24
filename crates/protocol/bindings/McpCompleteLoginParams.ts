@@ -10,6 +10,6 @@ export type McpCompleteLoginParams = {
  */
 loginId: LoginId, 
 /**
- * The address that the browser ended on after the approval, for a browser that cannot reach the server.
+ * The address that the browser ended on after the approval, for a browser that cannot reach the listener of yuke.
  */
 redirectUrl: string, };

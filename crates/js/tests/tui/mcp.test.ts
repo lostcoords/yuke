@@ -16,9 +16,8 @@ const SERVERS: McpServer[] = [
   { name: "proj", source: "project", state: { kind: "untrusted" } },
 ];
 
-/** The host of each fake login, and its page: a real page is longer than the dialog is wide. */
-const ORIGIN = "https://auth.example.com";
-const URL = `${ORIGIN}/authorize?response_type=code&client_id=https%3A%2F%2Fyuke.sh%2Foauth%2Fclient.json&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=${"x".repeat(43)}&code_challenge_method=S256&state=${"y".repeat(22)}&resource=https%3A%2F%2Fmcp.example.com%2Fmcp`;
+/** The page of each fake login: a real page is longer than the dialog is wide. */
+const URL = `https://auth.example.com/authorize?response_type=code&client_id=https%3A%2F%2Fyuke.sh%2Foauth%2Fclient.json&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback&code_challenge=${"x".repeat(43)}&code_challenge_method=S256&state=${"y".repeat(22)}&resource=https%3A%2F%2Fmcp.example.com%2Fmcp`;
 
 /** Load the plugin in `frame` on a chat that shows the session `s1` with `servers`. A test ends a login with `end`. */
 async function load(frame: FrameTest, servers: readonly McpServer[] = SERVERS) {
@@ -129,9 +128,10 @@ test("a server that needs a login opens the dialog with its page, and its keys c
 
   assertEquals(mcp.calls, ["login s1 linear"]);
   assertEquals(shown.includes("Log in · linear"), true);
-  // The dialog names the host. The whole URL does not fit its row, and the copy key gives the whole URL.
-  assertEquals(shown.includes(ORIGIN), true);
-  assertEquals(shown.includes("response_type"), false);
+  // The dialog names the host and shows nothing that looks like a link. The copy key gives the whole URL.
+  assertEquals(shown.includes("Press o to open the login page of auth.example.com in the browser,"), true);
+  assertEquals(shown.includes("or u to copy its URL."), true);
+  assertEquals(shown.includes("https://"), false);
   assertEquals(shown.includes("o: open"), true);
   assertEquals(shown.includes("p: paste address"), true);
   assertEquals(frame.copies, [URL]);

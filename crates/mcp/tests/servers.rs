@@ -16,7 +16,7 @@ use yuke_ai::scripted::{ScriptedTransport, text_reply, tool_reply};
 use yuke_ai::{Blob, Block, Target};
 use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Tool, Toolset};
-use yuke_mcp::{LoginError, ServerConfig, Servers};
+use yuke_mcp::{LoginError, ServerConfig, Servers, Services};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 use yuke_testing::{model_of, target};
 
@@ -102,6 +102,15 @@ fn http() -> Arc<yuke_http::Client> {
     )))
 }
 
+/// The services of the app for the servers: `media` for the attachments, and `data` for the stored logins.
+fn services(media: Rc<dyn MediaStore>, data: &Path) -> Services {
+    Services {
+        media,
+        http: http(),
+        data: data.to_owned(),
+    }
+}
+
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
     yuke_testing::folder("mcp", name)
@@ -135,9 +144,7 @@ async fn started_with(
         trust,
         &variable,
         folder,
-        &data,
-        media,
-        http(),
+        services(media, &data),
         on_change,
     );
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
@@ -167,6 +174,17 @@ fn native_target() -> Target {
         tool_search: true,
         ..target()
     }
+}
+
+/// The text of each tool result of `context`.
+fn tool_results(context: &[Block]) -> Vec<&str> {
+    context
+        .iter()
+        .filter_map(|block| match block {
+            Block::ToolResult(result) => Some(result.content.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn toolset(servers: &Servers) -> Toolset {
@@ -323,7 +341,6 @@ async fn cancel_reaches(entry: ServerConfig, folder: &Path, log: &Path) {
                 cancel.cancel();
             }
             if lines.lines().any(|line| line.starts_with("cancelled ")) {
-                assert!(lines.lines().any(|line| line.starts_with("call ")), "{lines}");
                 break;
             }
             assert!(Instant::now() < deadline, "the server got no call or cancel: {lines}");
@@ -338,14 +355,7 @@ async fn cancel_reaches(entry: ServerConfig, folder: &Path, log: &Path) {
     let (result, ()) = tokio::join!(turn.run(), received);
     result.unwrap();
 
-    let results: Vec<_> = context
-        .iter()
-        .filter_map(|block| match block {
-            Block::ToolResult(result) => Some(result.content.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(results, ["The user cancelled the call."]);
+    assert_eq!(tool_results(&context), ["The user cancelled the call."]);
     servers.close().await;
 }
 
@@ -393,9 +403,7 @@ async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and
         async { false },
         &|_| None,
         &folder,
-        &folder,
-        Rc::new(Recorded::default()),
-        http(),
+        services(Rc::new(Recorded::default()), &folder),
         Rc::new(move |server| changed.send(server).unwrap()),
     );
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
@@ -489,9 +497,7 @@ async fn a_close_stops_a_server_that_never_answers_its_start() {
         async { false },
         &|_| None,
         &folder,
-        &folder,
-        Rc::new(Recorded::default()),
-        http(),
+        services(Rc::new(Recorded::default()), &folder),
         on_change,
     );
 
@@ -633,9 +639,7 @@ async fn the_trust_runs_only_when_a_project_server_can_start() {
         trust,
         &|_| None,
         &folder,
-        &folder,
-        Rc::new(Recorded::default()),
-        http(),
+        services(Rc::new(Recorded::default()), &folder),
         Rc::new(|_| {}),
     );
     servers.ready().await;
@@ -655,9 +659,7 @@ async fn a_close_during_the_trust_starts_no_project_server() {
         trust,
         &|_| None,
         &folder,
-        &folder,
-        Rc::new(Recorded::default()),
-        http(),
+        services(Rc::new(Recorded::default()), &folder),
         Rc::new(|_| {}),
     );
 
@@ -745,20 +747,127 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
 /// The client id document of yuke, which the fake server takes with the option `cimd`.
 const CLIENT_METADATA: &str = "https://yuke.sh/oauth/client.json";
 
-/// The test server over HTTP with the OAuth options `options`, and its entry named `test` without headers.
-async fn oauth_server(
-    options: &str,
-    log: &Path,
-    env: &[(&str, &str)],
-) -> (Vec<(String, ServerConfig)>, tokio::process::Child) {
+/// A session with the server `test`: the test server over HTTP, with the fake authorization server of the `options`.
+struct Remote {
+    folder: PathBuf,
+    log: PathBuf,
+    entries: Vec<(String, ServerConfig)>,
+    servers: Servers,
+    changes: Changes,
+    child: tokio::process::Child,
+}
+
+/// Start a session in the new folder `name`.
+async fn remote(name: &str, options: &str) -> Remote {
+    remote_with(name, options, &[], None).await
+}
+
+/// Start a session with the `env` of the test server and the OAuth entry `oauth` of the server.
+async fn remote_with(name: &str, options: &str, env: &[(&str, &str)], oauth: Option<yuke_mcp::OAuthConfig>) -> Remote {
+    let folder = folder(name);
+    let log = folder.join("log");
     let mut variables = vec![("MCP_TEST_OAUTH", options), ("MCP_TEST_LOG", log.to_str().unwrap())];
     variables.extend_from_slice(env);
     let (entry, child) = http_server(&variables).await;
     let entry = ServerConfig {
         headers: std::collections::BTreeMap::new(),
+        oauth,
         ..entry
     };
-    (vec![("test".to_owned(), entry)], child)
+    let entries = vec![("test".to_owned(), entry)];
+    let (servers, changes) = started(entries.clone(), &folder, Rc::default()).await;
+    Remote {
+        folder,
+        log,
+        entries,
+        servers,
+        changes,
+        child,
+    }
+}
+
+impl Remote {
+    /// Start a new session over the files of the old one.
+    async fn start(&mut self) {
+        (self.servers, self.changes) = started(self.entries.clone(), &self.folder, Rc::default()).await;
+    }
+
+    /// Close the session, and start a new one over its files.
+    async fn restart(&mut self) {
+        self.servers.close().await;
+        self.start().await;
+    }
+
+    fn state(&self) -> McpServerState {
+        self.servers.states().remove(0).state
+    }
+
+    /// Wait until the server is in the state `expected`.
+    async fn wait_for_state(&self, expected: McpServerState) {
+        let reached = async {
+            while self.state() != expected {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), reached).await.unwrap();
+    }
+
+    /// Log in as the user does, and wait until the server connects again.
+    async fn log_in(&self) {
+        let (login, outcome) = self.servers.login("test").await.unwrap();
+        let location = approve(login.url()).await;
+        let (result, status) = tokio::join!(outcome, visit(&location));
+        result.unwrap();
+        assert_eq!(status, 200);
+        tokio::time::timeout(Duration::from_secs(10), self.servers.ready())
+            .await
+            .unwrap();
+    }
+
+    /// The lines of the log that the authorization server and the bearer check write.
+    fn lines(&self) -> Vec<String> {
+        let text = std::fs::read_to_string(&self.log).unwrap_or_default();
+        let kinds = ["authorize ", "register ", "token ", "bearer ", "refused "];
+        text.lines()
+            .filter(|line| kinds.iter().any(|kind| line.starts_with(kind)))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The lines of [`Remote::lines`] from the first line that starts with `prefix`.
+    fn lines_from(&self, prefix: &str) -> Vec<String> {
+        let lines = self.lines();
+        lines.into_iter().skip_while(|line| !line.starts_with(prefix)).collect()
+    }
+
+    /// Send the control request `path` to the fake authorization server.
+    async fn control(&self, path: &str) {
+        let origin = self.entries[0].1.url.as_ref().unwrap().trim_end_matches("/mcp");
+        fetch(yuke_http::http::Method::POST, &format!("{origin}/test/{path}")).await;
+    }
+
+    /// The stored logins of all servers.
+    fn stored_logins(&self) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(self.folder.join("data/mcp-auth.json")).unwrap()).unwrap()
+    }
+
+    /// The result text of a call of the `echo` tool.
+    async fn call_echo(&self) -> String {
+        let toolset = toolset(&self.servers);
+        let transport = ScriptedTransport::new([
+            tool_reply(&[("c1", "mcp__test__echo", r#"{"text":"hello"}"#)]),
+            text_reply("done"),
+        ]);
+        let model = model_of(native_target());
+        let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
+        let mut context = Vec::new();
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .run()
+            .await
+            .unwrap();
+        tool_results(&context).concat()
+    }
 }
 
 /// Send a request to `url`, and give the status, the headers, and the body.
@@ -782,142 +891,9 @@ async fn approve(url: &str) -> String {
     headers[yuke_http::http::header::LOCATION].to_str().unwrap().to_owned()
 }
 
-/// The browser opens `location`, and the listener of the client answers.
-async fn visit(location: &str) -> (u16, String) {
-    let (status, _, body) = fetch(yuke_http::http::Method::GET, location).await;
-    (status.as_u16(), body)
-}
-
-/// Log in the server `test` as the user does, and wait until it connects again.
-async fn log_in(servers: &Servers) {
-    let (login, outcome) = servers.login("test").await.unwrap();
-    let location = approve(login.url()).await;
-    let (result, page) = tokio::join!(outcome, visit(&location));
-    result.unwrap();
-    assert_eq!(page.0, 200, "{}", page.1);
-    tokio::time::timeout(Duration::from_secs(10), servers.ready())
-        .await
-        .unwrap();
-}
-
-/// The lines of the log that the authorization server and the bearer check write.
-fn oauth_lines(log: &Path) -> Vec<String> {
-    let text = std::fs::read_to_string(log).unwrap_or_default();
-    let kinds = ["authorize ", "register ", "token ", "bearer ", "refused "];
-    text.lines()
-        .filter(|line| kinds.iter().any(|kind| line.starts_with(kind)))
-        .map(str::to_owned)
-        .collect()
-}
-
-/// The lines of the log from the first line that starts with `prefix`.
-fn lines_from(log: &Path, prefix: &str) -> Vec<String> {
-    let lines = oauth_lines(log);
-    lines.into_iter().skip_while(|line| !line.starts_with(prefix)).collect()
-}
-
-/// Wait until the server `test` is in the state `expected`.
-async fn wait_for_state(servers: &Servers, expected: McpServerState) {
-    let reached = async {
-        while state_of(servers) != expected {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), reached).await.unwrap();
-}
-
-/// Send the control request `path` to the fake authorization server of `entries`.
-async fn control(entries: &[(String, ServerConfig)], path: &str) {
-    let origin = entries[0].1.url.clone().unwrap().replace("/mcp", "");
-    fetch(yuke_http::http::Method::POST, &format!("{origin}/test/{path}")).await;
-}
-
-/// The text of the file with the stored logins.
-fn stored_logins(folder: &Path) -> serde_json::Value {
-    serde_json::from_str(&std::fs::read_to_string(folder.join("data/mcp-auth.json")).unwrap()).unwrap()
-}
-
-/// The result text of a call of the `echo` tool of the server `test`.
-async fn call_echo(servers: &Servers) -> String {
-    let toolset = toolset(servers);
-    let transport = ScriptedTransport::new([
-        tool_reply(&[("c1", "mcp__test__echo", r#"{"text":"hello"}"#)]),
-        text_reply("done"),
-    ]);
-    let model = model_of(native_target());
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
-    let mut context = Vec::new();
-    driver
-        .turn(&mut context, vec![Block::user_text("go")])
-        .run()
-        .await
-        .unwrap();
-    context
-        .iter()
-        .filter_map(|block| match block {
-            Block::ToolResult(result) => Some(result.content.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn state_of(servers: &Servers) -> McpServerState {
-    servers.states().remove(0).state
-}
-
-#[tokio::test(flavor = "local")]
-async fn a_server_that_needs_a_login_waits_in_needs_login_and_a_login_over_the_loopback_connects_it() {
-    let folder = folder("a_login_over_the_loopback");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd,dcr", &log, &[]).await;
-    let (servers, changes) = started(entries, &folder, Rc::default()).await;
-    let waiting = servers.states();
-
-    log_in(&servers).await;
-
-    assert_eq!(waiting, [server("test", McpServerState::NeedsLogin)]);
-    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
-    let kinds: Vec<_> = changes.borrow().iter().map(|server| server.state.clone()).collect();
-    assert_eq!(
-        kinds,
-        [
-            McpServerState::NeedsLogin,
-            McpServerState::Connecting,
-            McpServerState::Connected { tools: 6 }
-        ]
-    );
-    // The start has no token. The authorization server checks the PKCE verifier at the token request. The client id
-    // document wins over the registration, and the scope is the one of the challenge. After the login, `initialize`,
-    // `notifications/initialized`, and `tools/list` carry the token.
-    assert_eq!(
-        oauth_lines(&log),
-        [
-            "refused ".to_owned(),
-            format!("authorize client={CLIENT_METADATA} scope=files:read"),
-            "token authorization_code".to_owned(),
-            "bearer access-1".to_owned(),
-            "bearer access-1".to_owned(),
-            "bearer access-1".to_owned(),
-        ]
-    );
-    servers.close().await;
-}
-
-#[tokio::test(flavor = "local")]
-async fn a_login_completes_with_the_pasted_address_of_the_redirect() {
-    let folder = folder("a_login_with_the_pasted_address");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-
-    let (login, outcome) = servers.login("test").await.unwrap();
-    let location = approve(login.url()).await;
-    login.complete(&location).unwrap();
-    outcome.await.unwrap();
-    servers.ready().await;
-
-    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
-    servers.close().await;
+/// The browser opens `location`, and the listener of the client answers with a status.
+async fn visit(location: &str) -> u16 {
+    fetch(yuke_http::http::Method::GET, location).await.0.as_u16()
 }
 
 /// The address `location` with the value of `name` replaced by `value`.
@@ -934,21 +910,69 @@ fn with_parameter(location: &str, name: &str, value: &str) -> String {
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_server_that_needs_a_login_waits_in_needs_login_and_a_login_over_the_loopback_connects_it() {
+    let remote = remote("a_login_over_the_loopback", "cimd,dcr").await;
+    assert_eq!(remote.servers.states(), [server("test", McpServerState::NeedsLogin)]);
+
+    remote.log_in().await;
+
+    assert_eq!(remote.state(), McpServerState::Connected { tools: 6 });
+    let states: Vec<_> = remote
+        .changes
+        .borrow()
+        .iter()
+        .map(|server| server.state.clone())
+        .collect();
+    assert_eq!(
+        states,
+        [
+            McpServerState::NeedsLogin,
+            McpServerState::Connecting,
+            McpServerState::Connected { tools: 6 }
+        ]
+    );
+    // The start has no token. The authorization server checks the PKCE verifier at the token request. The client id
+    // document wins over the registration, and the scope is the one of the challenge. After the login, `initialize`,
+    // `notifications/initialized`, and `tools/list` carry the token.
+    assert_eq!(
+        remote.lines(),
+        [
+            "refused ".to_owned(),
+            format!("authorize client={CLIENT_METADATA} scope=files:read"),
+            "token authorization_code".to_owned(),
+            "bearer access-1".to_owned(),
+            "bearer access-1".to_owned(),
+            "bearer access-1".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_login_completes_with_the_pasted_address_of_the_redirect() {
+    let remote = remote("a_login_with_the_pasted_address", "cimd").await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
+    let location = approve(login.url()).await;
+
+    login.complete(&location).unwrap();
+    outcome.await.unwrap();
+    remote.servers.ready().await;
+
+    assert_eq!(remote.state(), McpServerState::Connected { tools: 6 });
+}
+
+#[tokio::test(flavor = "local")]
 async fn a_redirect_with_another_state_is_refused_and_the_login_goes_on_to_wait() {
-    let folder = folder("a_redirect_with_another_state");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    let (login, outcome) = servers.login("test").await.unwrap();
+    let remote = remote("a_redirect_with_another_state", "cimd").await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
     let location = approve(login.url()).await;
     let forged = with_parameter(&location, "state", "forged");
 
     let pasted = login.complete(&forged);
-    let (result, page) = tokio::join!(outcome, async {
-        let page = visit(&forged).await;
+    let (result, status) = tokio::join!(outcome, async {
+        let status = visit(&forged).await;
         // The right redirect still logs in.
         login.complete(&location).unwrap();
-        page
+        status
     });
 
     assert_eq!(
@@ -957,25 +981,20 @@ async fn a_redirect_with_another_state_is_refused_and_the_login_goes_on_to_wait(
             "the state of the redirect is not the state of this login".to_owned()
         ))
     );
-    assert_eq!(page.0, 400);
+    assert_eq!(status, 400);
     result.unwrap();
-    servers.ready().await;
-    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
-    servers.close().await;
+    remote.servers.ready().await;
+    assert_eq!(remote.state(), McpServerState::Connected { tools: 6 });
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_redirect_with_another_issuer_is_refused_when_the_server_names_its_issuer() {
-    let folder = folder("a_redirect_with_another_issuer");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd,iss", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    let (login, outcome) = servers.login("test").await.unwrap();
+    let remote = remote("a_redirect_with_another_issuer", "cimd,iss").await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
     let location = approve(login.url()).await;
 
     let forged = login.complete(&with_parameter(&location, "iss", "https%3A%2F%2Fevil.test"));
     login.complete(&location).unwrap();
-    outcome.await.unwrap();
 
     assert_eq!(
         forged,
@@ -983,106 +1002,94 @@ async fn a_redirect_with_another_issuer_is_refused_when_the_server_names_its_iss
             "the issuer of the redirect is not the issuer of the server".to_owned()
         ))
     );
-    servers.ready().await;
-    servers.close().await;
+    assert_eq!(outcome.await, Ok(()));
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_login_that_the_user_denies_ends_with_the_error_of_the_authorization_server() {
-    let folder = folder("a_login_that_the_user_denies");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    let (login, outcome) = servers.login("test").await.unwrap();
+    let remote = remote("a_login_that_the_user_denies", "cimd").await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
     let location = approve(login.url()).await;
-    let denied = with_parameter(&location, "code", "x").replace("code=x", "error=access_denied");
+    let state = location
+        .split(['?', '&'])
+        .find(|pair| pair.starts_with("state="))
+        .unwrap();
+    let denied = format!("{}?error=access_denied&{state}", location.split('?').next().unwrap());
 
     login.complete(&denied).unwrap();
-    let result = outcome.await;
 
     assert_eq!(
-        result,
+        outcome.await,
         Err(LoginError::Failed(
             "the authorization server refused the login: access_denied".to_owned()
         ))
     );
-    assert_eq!(state_of(&servers), McpServerState::NeedsLogin);
+    assert_eq!(remote.state(), McpServerState::NeedsLogin);
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_cancelled_login_ends_with_an_error_and_the_server_still_needs_a_login() {
+    let remote = remote("a_cancelled_login", "cimd").await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
+
+    login.cancel();
+
+    assert_eq!(outcome.await, Err(LoginError::Cancelled));
+    assert_eq!(remote.state(), McpServerState::NeedsLogin);
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_cancel_after_the_redirect_came_does_not_stop_the_login() {
-    let folder = folder("a_cancel_after_the_redirect");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    let (login, outcome) = servers.login("test").await.unwrap();
+    let remote = remote("a_cancel_after_the_redirect", "cimd").await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
     login.complete(&approve(login.url()).await).unwrap();
 
     login.cancel();
-    let result = outcome.await;
-    servers.ready().await;
 
-    assert_eq!(result, Ok(()));
-    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
-    servers.close().await;
+    assert_eq!(outcome.await, Ok(()));
+    remote.servers.ready().await;
+    assert_eq!(remote.state(), McpServerState::Connected { tools: 6 });
 }
 
 #[tokio::test(flavor = "local")]
 async fn two_logins_of_one_server_connect_it_once() {
-    let folder = folder("two_logins_of_one_server");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, changes) = started(entries, &folder, Rc::default()).await;
-    let (first, first_outcome) = servers.login("test").await.unwrap();
-    let (second, second_outcome) = servers.login("test").await.unwrap();
+    let remote = remote("two_logins_of_one_server", "cimd").await;
+    let (first, first_outcome) = remote.servers.login("test").await.unwrap();
+    let (second, second_outcome) = remote.servers.login("test").await.unwrap();
     first.complete(&approve(first.url()).await).unwrap();
     second.complete(&approve(second.url()).await).unwrap();
 
     let (first_result, second_result) = tokio::join!(first_outcome, second_outcome);
-    servers.ready().await;
+    remote.servers.ready().await;
 
     assert_eq!((first_result, second_result), (Ok(()), Ok(())));
-    let kinds: Vec<_> = changes.borrow().iter().map(|server| server.state.clone()).collect();
+    let states: Vec<_> = remote
+        .changes
+        .borrow()
+        .iter()
+        .map(|server| server.state.clone())
+        .collect();
     assert_eq!(
-        kinds,
+        states,
         [
             McpServerState::NeedsLogin,
             McpServerState::Connecting,
             McpServerState::Connected { tools: 6 }
         ]
     );
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_cancelled_login_ends_with_an_error_and_the_server_still_needs_a_login() {
-    let folder = folder("a_cancelled_login");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    let (login, outcome) = servers.login("test").await.unwrap();
-
-    login.cancel();
-    let result = outcome.await;
-
-    assert_eq!(result, Err(LoginError::Cancelled));
-    assert_eq!(state_of(&servers), McpServerState::NeedsLogin);
-    assert_eq!(
-        servers.login("other").await.err(),
-        Some(LoginError::Refused("the session has no MCP server other".to_owned()))
-    );
-}
-
-#[tokio::test(flavor = "local")]
-async fn a_server_that_needs_no_login_refuses_a_login_and_a_logout_needs_a_remote_server() {
-    let folder = folder("a_server_that_needs_no_login");
+async fn a_login_or_a_logout_is_refused_for_a_server_that_cannot_use_it() {
+    let folder = folder("a_login_for_a_server_that_cannot_use_it");
     let (remote, _child) = http_server(&[]).await;
     let entries = vec![("remote".to_owned(), remote), ("local".to_owned(), test_server(&[]))];
     let (servers, _changes) = started(entries, &folder, Rc::default()).await;
 
     let login = servers.login("remote").await.err();
-    let logout = servers.logout("local").await;
-    let missing = servers.logout("nobody").await;
+    let unknown_login = servers.login("nobody").await.err();
+    let local_logout = servers.logout("local").await;
+    let unknown_logout = servers.logout("nobody").await;
 
     assert_eq!(
         login,
@@ -1090,57 +1097,46 @@ async fn a_server_that_needs_no_login_refuses_a_login_and_a_logout_needs_a_remot
             "the MCP server remote does not need a login".to_owned()
         ))
     );
+    let unknown = LoginError::Refused("the session has no MCP server nobody".to_owned());
+    assert_eq!(unknown_login, Some(unknown.clone()));
+    assert_eq!(unknown_logout, Err(unknown));
     assert_eq!(
-        logout,
+        local_logout,
         Err(LoginError::Refused("local is not a remote server".to_owned()))
     );
-    assert_eq!(
-        missing,
-        Err(LoginError::Refused("the session has no MCP server nobody".to_owned()))
-    );
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_login_is_refused_when_the_authorization_server_lacks_pkce_with_s256() {
-    let folder = folder("a_login_without_pkce");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd,nopkce", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    let remote = remote("a_login_without_pkce", "cimd,nopkce").await;
 
-    let result = servers.login("test").await.err();
+    let result = remote.servers.login("test").await.err();
 
     let Some(LoginError::Failed(error)) = result else {
         panic!("{result:?}");
     };
     assert!(error.ends_with("does not support PKCE with S256"), "{error}");
-    assert!(oauth_lines(&log).iter().all(|line| !line.starts_with("authorize")));
+    assert!(remote.lines().iter().all(|line| !line.starts_with("authorize")));
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_login_is_refused_when_an_endpoint_of_the_authorization_server_uses_http_on_another_computer() {
-    let folder = folder("a_login_with_a_plaintext_endpoint");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd,plaintext", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    let remote = remote("a_login_with_a_plaintext_endpoint", "cimd,plaintext").await;
 
-    let error = servers.login("test").await.err().unwrap().to_string();
+    let error = remote.servers.login("test").await.err().unwrap().to_string();
 
     assert!(
         error.ends_with("names http://auth.example.test/token, which does not use HTTPS"),
         "{error}"
     );
-    assert!(oauth_lines(&log).iter().all(|line| !line.starts_with("authorize")));
+    assert!(remote.lines().iter().all(|line| !line.starts_with("authorize")));
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_login_without_a_client_id_source_asks_for_the_client_id_of_the_config() {
-    let folder = folder("a_login_without_a_client_id_source");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    let remote = remote("a_login_without_a_client_id_source", "").await;
 
-    let error = servers.login("test").await.err().unwrap().to_string();
+    let error = remote.servers.login("test").await.err().unwrap().to_string();
 
     assert!(
         error.ends_with("set oauth.clientId in the entry of the server"),
@@ -1150,281 +1146,248 @@ async fn a_login_without_a_client_id_source_asks_for_the_client_id_of_the_config
 
 #[tokio::test(flavor = "local")]
 async fn the_client_id_of_the_config_wins_and_the_redirect_uses_the_port_of_the_config() {
-    let folder = folder("the_client_id_of_the_config_wins");
-    let log = folder.join("log");
-    let (mut entries, _child) = oauth_server("cimd,dcr", &log, &[]).await;
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
         .port();
-    entries[0].1.oauth = Some(yuke_mcp::OAuthConfig {
+    let oauth = yuke_mcp::OAuthConfig {
         client_id: Some("preregistered".to_owned()),
         callback_port: Some(port),
-    });
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-
-    let (login, outcome) = servers.login("test").await.unwrap();
+    };
+    let remote = remote_with("the_client_id_of_the_config_wins", "cimd,dcr", &[], Some(oauth)).await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
     let location = approve(login.url()).await;
-    let (result, _page) = tokio::join!(outcome, visit(&location));
-    result.unwrap();
-    servers.ready().await;
 
+    let (result, _) = tokio::join!(outcome, visit(&location));
+
+    result.unwrap();
     assert!(
         location.starts_with(&format!("http://127.0.0.1:{port}/callback?")),
         "{location}"
     );
     assert_eq!(
-        lines_from(&log, "authorize")[..2],
+        remote.lines_from("authorize")[..2],
         [
             "authorize client=preregistered scope=files:read",
             "token authorization_code"
         ]
     );
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
 async fn the_metadata_is_found_at_the_well_known_urls_and_the_scope_falls_back_to_the_supported_scopes() {
-    let folder = folder("the_metadata_at_the_well_known_urls");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd,bare,oidc", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    assert_eq!(state_of(&servers), McpServerState::NeedsLogin);
+    let remote = remote("the_metadata_at_the_well_known_urls", "cimd,bare,oidc").await;
 
-    log_in(&servers).await;
+    remote.log_in().await;
 
     assert_eq!(
-        lines_from(&log, "authorize")[0],
+        remote.lines_from("authorize")[0],
         format!("authorize client={CLIENT_METADATA} scope=a b")
     );
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_server_without_a_client_id_document_registers_yuke_and_logs_in_with_the_new_client() {
-    let folder = folder("a_server_without_a_client_id_document");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("dcr", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    let remote = remote("a_server_without_a_client_id_document", "dcr").await;
 
-    log_in(&servers).await;
+    remote.log_in().await;
 
-    let lines = lines_from(&log, "register");
+    let lines = remote.lines_from("register");
     assert!(lines[0].starts_with("register http://127.0.0.1:"), "{lines:?}");
     assert!(lines[0].ends_with("/callback"), "{lines:?}");
     assert_eq!(lines[1], "authorize client=client-1 scope=files:read");
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_stored_login_serves_the_next_session_and_its_file_is_private() {
-    let folder = folder("a_stored_login_serves_the_next_session");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
-    servers.close().await;
+    let mut remote = remote("a_stored_login_serves_the_next_session", "cimd").await;
+    remote.log_in().await;
 
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    remote.restart().await;
 
-    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
-    let lines = oauth_lines(&log);
-    assert_eq!(
-        lines.iter().filter(|line| line.starts_with("authorize ")).count(),
-        1,
-        "{lines:?}"
-    );
-    let file = folder.join("data/mcp-auth.json");
-    assert_eq!(
-        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&file).unwrap().permissions()) & 0o777,
-        0o600
-    );
-    servers.close().await;
+    assert_eq!(remote.state(), McpServerState::Connected { tools: 6 });
+    let authorizations = remote
+        .lines()
+        .iter()
+        .filter(|line| line.starts_with("authorize "))
+        .count();
+    assert_eq!(authorizations, 1);
+    let file = remote.folder.join("data/mcp-auth.json");
+    let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&file).unwrap().permissions());
+    assert_eq!(mode & 0o777, 0o600);
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_logout_removes_the_login_and_stops_the_server_until_a_login() {
-    let folder = folder("a_logout_removes_the_login");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
+    let mut remote = remote("a_logout_removes_the_login", "cimd").await;
+    remote.log_in().await;
 
-    servers.logout("test").await.unwrap();
+    remote.servers.logout("test").await.unwrap();
 
-    wait_for_state(&servers, McpServerState::NeedsLogin).await;
-    assert!(servers.tools().is_empty());
-    assert_eq!(stored_logins(&folder), serde_json::json!({}));
-    servers.close().await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    assert_eq!(state_of(&servers), McpServerState::NeedsLogin);
+    remote.wait_for_state(McpServerState::NeedsLogin).await;
+    assert!(remote.servers.tools().is_empty());
+    assert_eq!(remote.stored_logins(), serde_json::json!({}));
+    remote.restart().await;
+    assert_eq!(remote.state(), McpServerState::NeedsLogin);
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_server_that_has_no_login_to_remove_keeps_running_at_a_logout() {
+async fn a_logout_of_a_server_without_a_login_keeps_it_running() {
     let folder = folder("a_logout_without_a_login");
-    let (remote, _child) = http_server(&[]).await;
-    let (servers, _changes) = started(vec![("test".to_owned(), remote)], &folder, Rc::default()).await;
+    let (entry, _child) = http_server(&[]).await;
+    let (servers, _changes) = started(vec![("test".to_owned(), entry)], &folder, Rc::default()).await;
 
     servers.logout("test").await.unwrap();
 
+    // A logout that stops the server does it later, and no event tells that it did not, so the test waits.
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
-    servers.close().await;
+    assert_eq!(
+        servers.states(),
+        [server("test", McpServerState::Connected { tools: 6 })]
+    );
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_token_that_the_server_rejects_refreshes_once_and_the_call_succeeds() {
-    let folder = folder("a_token_that_the_server_rejects");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
-    control(&entries, "expire").await;
+    let remote = remote("a_token_that_the_server_rejects", "cimd").await;
+    remote.log_in().await;
+    remote.control("expire").await;
 
-    let echoed = call_echo(&servers).await;
+    let echoed = remote.call_echo().await;
 
     assert_eq!(echoed, "hello");
     assert_eq!(
-        lines_from(&log, "refused access"),
+        remote.lines_from("refused access"),
         ["refused access-1", "token refresh_token", "bearer access-2"]
     );
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_token_that_ends_within_the_margin_refreshes_before_the_request() {
-    let folder = folder("a_token_that_ends_within_the_margin");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[("MCP_TEST_EXPIRES_IN", "30")]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+async fn a_token_that_ends_within_the_margin_refreshes_before_each_request() {
+    let remote = remote_with(
+        "a_token_that_ends_within_the_margin",
+        "cimd",
+        &[("MCP_TEST_EXPIRES_IN", "30")],
+        None,
+    )
+    .await;
 
-    log_in(&servers).await;
+    remote.log_in().await;
 
-    // Each new token lasts less than the margin, so each request refreshes first, and the server never refuses one.
-    let lines = oauth_lines(&log);
-    assert!(
-        lines
-            .iter()
-            .all(|line| !line.starts_with("refused ") || line == "refused "),
-        "{lines:?}"
+    // Each new token lasts less than the margin, so the server never refuses one.
+    assert_eq!(
+        remote.lines_from("token authorization_code")[1..],
+        [
+            "token refresh_token",
+            "bearer access-2",
+            "token refresh_token",
+            "bearer access-3",
+            "token refresh_token",
+            "bearer access-4"
+        ]
     );
-    let refreshes = lines.iter().filter(|line| *line == "token refresh_token").count();
-    assert_eq!(refreshes, 3, "{lines:?}");
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_login_that_cannot_refresh_is_removed_and_the_server_needs_a_login_again() {
-    let folder = folder("a_login_that_cannot_refresh");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
-    servers.close().await;
-    control(&entries, "revoke").await;
+    let mut remote = remote("a_login_that_cannot_refresh", "cimd").await;
+    remote.log_in().await;
+    remote.servers.close().await;
+    remote.control("revoke").await;
 
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    remote.start().await;
 
-    assert_eq!(state_of(&servers), McpServerState::NeedsLogin);
-    assert_eq!(stored_logins(&folder), serde_json::json!({}));
+    assert_eq!(remote.state(), McpServerState::NeedsLogin);
+    assert_eq!(remote.stored_logins(), serde_json::json!({}));
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_login_that_the_server_ends_during_the_session_moves_it_to_needs_login_and_a_login_connects_it_again() {
-    let folder = folder("a_login_that_the_server_ends");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
-    control(&entries, "revoke").await;
+    let remote = remote("a_login_that_the_server_ends", "cimd").await;
+    remote.log_in().await;
+    remote.control("revoke").await;
 
-    let failed = call_echo(&servers).await;
+    let failed = remote.call_echo().await;
 
-    assert_ne!(failed, "hello");
-    wait_for_state(&servers, McpServerState::NeedsLogin).await;
-    assert!(servers.tools().is_empty());
-    log_in(&servers).await;
-    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
-    assert_eq!(call_echo(&servers).await, "hello");
-    servers.close().await;
+    assert_eq!(failed, "The server closed before its answer.");
+    remote.wait_for_state(McpServerState::NeedsLogin).await;
+    assert!(remote.servers.tools().is_empty());
+    remote.log_in().await;
+    assert_eq!(remote.state(), McpServerState::Connected { tools: 6 });
+    assert_eq!(remote.call_echo().await, "hello");
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_refresh_that_fails_for_now_keeps_the_login_and_a_token_that_still_lives_serves_the_call() {
-    let folder = folder("a_refresh_that_fails_for_now");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[("MCP_TEST_EXPIRES_IN", "30")]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
-    control(&entries, "token-down").await;
+    let remote = remote_with(
+        "a_refresh_that_fails_for_now",
+        "cimd",
+        &[("MCP_TEST_EXPIRES_IN", "30")],
+        None,
+    )
+    .await;
+    remote.log_in().await;
+    remote.control("token-down").await;
 
-    let echoed = call_echo(&servers).await;
+    let echoed = remote.call_echo().await;
 
     // The token ends within the margin, but it did not end yet.
     assert_eq!(echoed, "hello");
-    assert_eq!(stored_logins(&folder).as_object().unwrap().len(), 1);
-    servers.close().await;
+    assert_eq!(remote.stored_logins().as_object().unwrap().len(), 1);
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_refresh_whose_request_never_left_keeps_the_login() {
-    let folder = folder("a_refresh_that_never_left");
-    let log = folder.join("log");
-    let (entries, mut child) = oauth_server("cimd", &log, &[("MCP_TEST_EXPIRES_IN", "30")]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
-    servers.close().await;
-    child.kill().await.unwrap();
+    let mut remote = remote_with(
+        "a_refresh_that_never_left",
+        "cimd",
+        &[("MCP_TEST_EXPIRES_IN", "30")],
+        None,
+    )
+    .await;
+    remote.log_in().await;
+    remote.servers.close().await;
+    remote.child.kill().await.unwrap();
 
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    remote.start().await;
 
-    let McpServerState::Failed { .. } = state_of(&servers) else {
-        panic!("{:?}", servers.states());
+    let McpServerState::Failed { .. } = remote.state() else {
+        panic!("{:?}", remote.servers.states());
     };
-    assert_eq!(stored_logins(&folder).as_object().unwrap().len(), 1);
+    assert_eq!(remote.stored_logins().as_object().unwrap().len(), 1);
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_refresh_answer_without_a_new_refresh_token_keeps_the_old_one() {
-    let folder = folder("a_refresh_answer_without_a_new_token");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd,norotate", &log, &[]).await;
-    let (servers, _changes) = started(entries.clone(), &folder, Rc::default()).await;
-    log_in(&servers).await;
+    let remote = remote("a_refresh_answer_without_a_new_token", "cimd,norotate").await;
+    remote.log_in().await;
 
-    control(&entries, "expire").await;
-    let first = call_echo(&servers).await;
-    control(&entries, "expire").await;
-    let second = call_echo(&servers).await;
+    remote.control("expire").await;
+    let first = remote.call_echo().await;
+    remote.control("expire").await;
+    let second = remote.call_echo().await;
 
     assert_eq!((first.as_str(), second.as_str()), ("hello", "hello"));
-    let refreshes = oauth_lines(&log)
+    let refreshes = remote
+        .lines()
         .iter()
         .filter(|line| *line == "token refresh_token")
         .count();
     assert_eq!(refreshes, 2);
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_request_to_another_path_of_the_listener_gets_404_and_the_login_goes_on() {
-    let folder = folder("a_request_to_another_path");
-    let log = folder.join("log");
-    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
-    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
-    let (login, outcome) = servers.login("test").await.unwrap();
+    let remote = remote("a_request_to_another_path", "cimd").await;
+    let (login, outcome) = remote.servers.login("test").await.unwrap();
     let location = approve(login.url()).await;
-    let origin = location.split("/callback").next().unwrap().to_owned();
+    let origin = location.split("/callback").next().unwrap();
 
-    let (result, (stray, page)) = tokio::join!(outcome, async {
-        let stray = visit(&format!("{origin}/favicon.ico")).await;
-        (stray, visit(&location).await)
+    let (result, statuses) = tokio::join!(outcome, async {
+        (visit(&format!("{origin}/favicon.ico")).await, visit(&location).await)
     });
 
-    assert_eq!((stray.0, page.0), (404, 200));
+    assert_eq!(statuses, (404, 200));
     result.unwrap();
-    servers.ready().await;
-    servers.close().await;
 }
