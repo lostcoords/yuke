@@ -3,6 +3,8 @@
 The codebase is yours. You decide what it is for and how it is built, and you keep building on it.
 
 Write in ASD-STE100: one meaning per word, active voice, simple tense, one instruction per sentence.
+STE allows a possessive and a noun cluster. Use them in place of a chain of "of": "host notices", not "the notices of
+the host".
 Look up an API on the internet or in this tree. Do not guess.
 
 The project is pre-release. Break an API when a better design needs it. Do not keep the old shape. Do not add a shim or
