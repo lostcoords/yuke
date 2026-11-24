@@ -425,6 +425,131 @@ async fn a_failed_send_names_the_dns_or_the_connect() {
     peer.await.unwrap();
 }
 
+fn ipv6(last: u16) -> SocketAddr {
+    SocketAddr::from(([0x2001, 0xdb8, 0, 0, 0, 0, 0, last], 443))
+}
+
+fn ipv4(last: u8) -> SocketAddr {
+    SocketAddr::from(([192, 0, 2, last], 443))
+}
+
+#[test]
+fn interleave_alternates_the_families_from_the_first_address() {
+    assert_eq!(
+        interleave([ipv6(1), ipv6(2), ipv6(3), ipv4(1), ipv4(2)]),
+        [ipv6(1), ipv4(1), ipv6(2), ipv4(2), ipv6(3)]
+    );
+    assert_eq!(interleave([ipv4(1), ipv4(2), ipv6(1)]), [ipv4(1), ipv6(1), ipv4(2)]);
+    assert_eq!(interleave([ipv4(1), ipv4(2)]), [ipv4(1), ipv4(2)]);
+    assert_eq!(interleave([]), []);
+}
+
+/// How one fake connection attempt ends.
+#[derive(Clone, Copy)]
+enum Fate {
+    /// It opens after the milliseconds.
+    Opens(u64),
+    /// It fails after the milliseconds.
+    Refused(u64),
+    /// It never ends.
+    Silent,
+}
+
+/// Race `ipv6(1)` and then `ipv4(1)` with fake attempts that end as `fate` says, and return the winner and the time it
+/// took.
+async fn race_two(fate: impl Fn(SocketAddr) -> Fate) -> (Option<SocketAddr>, Duration) {
+    let start = Instant::now();
+    let racing = race([ipv6(1), ipv4(1)], |address| {
+        let fate = fate(address);
+        async move {
+            match fate {
+                Fate::Opens(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
+                Fate::Refused(ms) => {
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    return Err(io::ErrorKind::ConnectionRefused.into());
+                }
+                Fate::Silent => std::future::pending().await,
+            }
+            Ok(address)
+        }
+    });
+    // A race that waits for an attempt that never ends fails the test, and does not hang it.
+    let winner = tokio::time::timeout(Duration::from_secs(60), racing)
+        .await
+        .expect("the race ends");
+    (winner, start.elapsed())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_silent_address_costs_the_attempt_delay_and_not_the_system_timeout() {
+    let fate = |address: SocketAddr| {
+        if address.is_ipv6() {
+            Fate::Silent
+        } else {
+            Fate::Opens(0)
+        }
+    };
+    assert_eq!(race_two(fate).await, (Some(ipv4(1)), Duration::from_millis(250)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_address_starts_the_next_at_once() {
+    let fate = |address: SocketAddr| {
+        if address.is_ipv6() {
+            Fate::Refused(10)
+        } else {
+            Fate::Opens(0)
+        }
+    };
+    assert_eq!(race_two(fate).await, (Some(ipv4(1)), Duration::from_millis(10)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_earlier_attempt_keeps_running_and_wins_when_it_opens_first() {
+    let fate = |address: SocketAddr| {
+        if address.is_ipv6() {
+            Fate::Opens(400)
+        } else {
+            Fate::Silent
+        }
+    };
+    assert_eq!(race_two(fate).await, (Some(ipv6(1)), Duration::from_millis(400)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_race_where_each_address_fails_opens_nothing() {
+    assert_eq!(
+        race_two(|_| Fate::Refused(50)).await,
+        (None, Duration::from_millis(100))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_winner_of_a_race_closes_the_attempts_that_lost() {
+    /// Counts its own drop.
+    struct Attempt(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Attempt {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let dropped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let winner = race([ipv6(1), ipv4(1)], |address| {
+        let attempt = Attempt(Arc::clone(&dropped));
+        async move {
+            if address.is_ipv6() {
+                std::future::pending::<()>().await;
+            }
+            drop(attempt);
+            Ok(address)
+        }
+    })
+    .await;
+    assert_eq!(winner, Some(ipv4(1)));
+    // The winner drops its own guard, and the race drops the silent attempt.
+    assert_eq!(dropped.load(std::sync::atomic::Ordering::Relaxed), 2);
+}
+
 #[tokio::test]
 async fn missing_root_certificates_fail_only_https() {
     // A child process keeps the root-store settings apart from the other tests.

@@ -7,6 +7,7 @@
 use std::fmt;
 use std::future::Future;
 use std::io;
+use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
@@ -274,14 +275,9 @@ impl Client {
         let addresses = tokio::net::lookup_host((target.host.as_str(), target.port))
             .await
             .map_err(|_| Error::DnsFailed)?;
-        let mut tcp = None;
-        for address in addresses {
-            if let Ok(stream) = TcpStream::connect(address).await {
-                tcp = Some(stream);
-                break;
-            }
-        }
-        let tcp = tcp.ok_or(Error::ConnectFailed)?;
+        let tcp = race(interleave(addresses), TcpStream::connect)
+            .await
+            .ok_or(Error::ConnectFailed)?;
         // The request goes out in one write, so no small segment waits for an acknowledgment.
         tcp.set_nodelay(true).map_err(|_| Error::ConnectFailed)?;
         let socket: Box<dyn Socket> = if let Some(tls) = tls {
@@ -340,6 +336,72 @@ fn handshake_error(error: &io::Error) -> Error {
         Some(rustls::Error::InvalidCertificate(_)) => Error::CertificateRejected,
         _ => Error::ConnectFailed,
     }
+}
+
+/// The wait before the next address gets an attempt while the earlier attempts still run (RFC 8305, section 5).
+const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+/// Order `addresses` as RFC 8305, section 4, asks: the family of the first address, then the other family, in turn.
+/// Each family keeps the order of the resolver.
+fn interleave(addresses: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+    let mut addresses = addresses.into_iter().peekable();
+    let Some(first_is_ipv6) = addresses.peek().map(SocketAddr::is_ipv6) else {
+        return Vec::new();
+    };
+    let (first, other): (Vec<_>, Vec<_>) = addresses.partition(|address| address.is_ipv6() == first_is_ipv6);
+    let mut other = other.into_iter();
+    let mut ordered = Vec::new();
+    for address in first {
+        ordered.push(address);
+        ordered.extend(other.next());
+    }
+    ordered.extend(other);
+    ordered
+}
+
+/// Attempt `addresses` in order, and return the first connection that opens, or `None` when each attempt fails.
+///
+/// The next address starts after [`ATTEMPT_DELAY`] even while earlier attempts still run, so an address that drops
+/// packets costs that delay, not the timeout of the system. When no attempt runs, the next address starts at once. The
+/// return drops the other attempts, and so closes them.
+async fn race<T, F>(
+    addresses: impl IntoIterator<Item = SocketAddr>,
+    mut attempt: impl FnMut(SocketAddr) -> F,
+) -> Option<T>
+where
+    F: Future<Output = io::Result<T>>,
+{
+    let mut waiting = addresses.into_iter();
+    let mut running: Vec<Pin<Box<F>>> = Vec::new();
+    let mut delay = pin!(tokio::time::sleep(ATTEMPT_DELAY));
+    std::future::poll_fn(|cx| {
+        loop {
+            let mut index = 0;
+            while index < running.len() {
+                match running[index].as_mut().poll(cx) {
+                    Poll::Ready(Ok(connection)) => return Poll::Ready(Some(connection)),
+                    Poll::Ready(Err(_)) => {
+                        running.swap_remove(index);
+                    }
+                    Poll::Pending => index += 1,
+                }
+            }
+            // This poll also wakes the task when the delay ends.
+            if !running.is_empty() && delay.as_mut().poll(cx).is_pending() {
+                return Poll::Pending;
+            }
+            let Some(address) = waiting.next() else {
+                return if running.is_empty() {
+                    Poll::Ready(None)
+                } else {
+                    Poll::Pending
+                };
+            };
+            running.push(Box::pin(attempt(address)));
+            delay.as_mut().reset(Instant::now() + ATTEMPT_DELAY);
+        }
+    })
+    .await
 }
 
 /// The byte stream of one connection: plain TCP, or TLS over TCP.

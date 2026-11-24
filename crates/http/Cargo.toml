@@ -27,7 +27,7 @@ openssl-probe = "0.2.1"
 rustls-native-certs = "0.8.4"
 
 [dev-dependencies]
-tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 
 [lints]
 workspace = true
