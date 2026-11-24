@@ -476,8 +476,8 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: DisplayInput) -> 
             };
             object.set("code", code_name(key.code))?;
             object.set("character", character)?;
-            object.set("shifted", key.shifted.map(String::from).unwrap_or_default())?;
-            object.set("baseLayout", key.base_layout.map(String::from).unwrap_or_default())?;
+            object.set("shifted", key.shifted.map_or_default(String::from))?;
+            object.set("baseLayout", key.base_layout.map_or_default(String::from))?;
             object.set("text", key.text)?;
             object.set("modifiers", modifiers_object(ctx, key.modifiers)?)?;
             Ok(object)

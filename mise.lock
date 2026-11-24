@@ -90,9 +90,9 @@ url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescri
 url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522603566"
 
 [[tools.rust]]
-version = "1.99.0"
+version = "1.100.0"
 backend = "core:rust"
-specifiers = ["1.99.0"]
+specifiers = ["1.100.0"]
 
 [tools.rust.options]
 components = "clippy,rust-analyzer,rust-docs,rust-src,rustfmt"

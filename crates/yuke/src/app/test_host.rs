@@ -245,7 +245,7 @@ fn text_of(content: &Value) -> String {
 fn request_view(sent: &Sent) -> Value {
     let body: Value = serde_json::from_str(&sent.body).unwrap_or(Value::Null);
     let list = |key: &str| body.get(key).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-    let message = |role: Option<&Value>, content: Option<&Value>| json!({ "role": role.cloned().unwrap_or(Value::Null), "text": content.map(text_of).unwrap_or_default() });
+    let message = |role: Option<&Value>, content: Option<&Value>| json!({ "role": role.cloned().unwrap_or(Value::Null), "text": content.map_or_default(text_of) });
     let names = |pointer: &str| -> Vec<Value> {
         list("tools")
             .iter()
@@ -275,7 +275,7 @@ fn request_view(sent: &Sent) -> Value {
                     Some("function_call_output") => Some(message(Some(&tool), item.get("output"))),
                     _ => None,
                 });
-            let system = body.get("instructions").map(text_of).unwrap_or_default();
+            let system = body.get("instructions").map_or_default(text_of);
             (system, items.collect(), names("/name"))
         }
         // Another URL reads the fields of Anthropic Messages.
@@ -283,7 +283,7 @@ fn request_view(sent: &Sent) -> Value {
             let messages = list("messages")
                 .iter()
                 .map(|item| message(item.get("role"), item.get("content")));
-            let system = body.get("system").map(text_of).unwrap_or_default();
+            let system = body.get("system").map_or_default(text_of);
             (system, messages.collect(), names("/name"))
         }
     };

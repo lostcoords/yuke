@@ -10,7 +10,7 @@ Model calls for the yuke coding agent.
 
 ## Dependencies
 
-- Rust 1.99 (pinned in [`.mise.toml`](../../.mise.toml))
+- Rust 1.100 (pinned in [`.mise.toml`](../../.mise.toml))
 
 Catalog generation script:
 

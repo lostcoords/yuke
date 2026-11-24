@@ -137,10 +137,7 @@ pub(crate) fn write_text(path: &Path, text: &str) -> Result<bool, String> {
     }
     let target_folder = target.parent().unwrap_or(folder);
     std::fs::create_dir_all(target_folder).map_err(fail)?;
-    let name = target
-        .file_name()
-        .map(|name| name.to_string_lossy())
-        .unwrap_or_default();
+    let name = target.file_name().map_or_default(|name| name.to_string_lossy());
     let temporary = target_folder.join(format!(".{name}.new"));
     let mut file = std::fs::File::create(&temporary).map_err(fail)?;
     file.write_all(text.as_bytes()).map_err(fail)?;

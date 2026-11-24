@@ -362,7 +362,7 @@ impl Toolset {
 
     /// The hints of the tool `name`, or the default hints for a name that no tool has.
     pub(crate) fn hints_of(&self, name: &str) -> ToolHints {
-        self.handler(name).map(Tool::hints).unwrap_or_default()
+        self.handler(name).map_or_default(Tool::hints)
     }
 
     /// Offer `definition` to the model. A call with that name runs `tool`.

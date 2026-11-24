@@ -406,7 +406,7 @@ pub(crate) async fn run_point(
                     media: stored(&script, result.media.unwrap_or_default()).await?,
                     loaded: Vec::new(),
                 },
-                display: result.display.map(|display| display.0).unwrap_or_default(),
+                display: result.display.map_or_default(|display| display.0),
             };
             let changed = hooks.after_tool(&call, &outcome).await.unwrap_or(outcome);
             Decision::Outcome {

@@ -165,7 +165,7 @@ impl<'v> Fields<'v> {
             }
         }
         if let Some(response) = root.get("response") {
-            let mut fields = response.get("error").map(Fields::of).unwrap_or_default();
+            let mut fields = response.get("error").map_or_default(Fields::of);
             // OpenRouter puts the class of a failed response beside the error object.
             fields.error_type = response.get_str("error_type").or(fields.error_type);
             return Some(fields);

@@ -451,7 +451,7 @@ impl ScriptTool {
             text: answer.text,
             media: store_media(&*self.host, answer.media.unwrap_or_default(), folder).await?,
             is_error: answer.is_error.unwrap_or_default(),
-            display: answer.display.map(|Json(display)| display).unwrap_or_default(),
+            display: answer.display.map_or_default(|Json(display)| display),
         })
     }
 }
