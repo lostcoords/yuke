@@ -33,12 +33,13 @@ use yuke_ai::oauth::Flow;
 use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CancellationToken, CredentialSource, ModelAccess, Timer, chain_text};
 use yuke_js::{Options, PluginCode, Processes, Report, Runtime};
+use yuke_mcp::{LoginError, PendingLogin, Servers};
 use yuke_protocol::{
     AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult,
     ExtensionRequestParams, FindPluginsParams, FindPluginsResult, InteractionId, JobId, ListCatalogResult,
-    ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, ModelReference, NoticeLevel,
-    NoticeParams, ProviderCredential, ProviderState, ResponseError, ServerNotification, SessionEvent, SessionId,
-    SessionSettings, StoredEvent, SyncPluginsResult, UpdateCredentialParams,
+    ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, McpLoginFinishedParams, McpLoginResult,
+    ModelReference, NoticeLevel, NoticeParams, ProviderCredential, ProviderState, ResponseError, ServerNotification,
+    SessionEvent, SessionId, SessionSettings, StoredEvent, SyncPluginsResult, UpdateCredentialParams,
 };
 use yuke_store::FileStore;
 
@@ -133,8 +134,17 @@ pub(crate) struct Shared {
     logins: RefCell<HashMap<String, LoginSource>>,
     /// The login in progress of each provider, from `auth/login`.
     pending_logins: RefCell<HashMap<String, InProgress>>,
-    /// The id of the last login of `auth/login`.
+    /// The login in progress of each MCP server, from `mcp/login`, by its id.
+    mcp_logins: RefCell<HashMap<LoginId, McpLogin>>,
+    /// The id of the last login of `auth/login` or `mcp/login`.
     last_login: Cell<u64>,
+}
+
+/// A login of an MCP server in progress: its session and server, and the login itself.
+struct McpLogin {
+    session: SessionId,
+    server: String,
+    login: PendingLogin,
 }
 
 /// A login in progress: its id, the token that stops its polls, and its task.
@@ -407,6 +417,101 @@ impl Shared {
         Ok(())
     }
 
+    /// Start the login of the MCP server `server` of session `session`, and give its page. A login in progress of the
+    /// same server ends as cancelled first. A task waits for the end of the login, and it sends `mcp/loginFinished`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a server that the session lacks or that needs no login, and
+    /// [`AppError::Internal`] when the OAuth metadata of the server does not allow a login.
+    pub(crate) async fn mcp_login(
+        self: &Rc<Self>,
+        session: SessionId,
+        server: &str,
+        servers: &Servers,
+    ) -> Result<McpLoginResult, AppError> {
+        // With a fixed `callbackPort`, the listener of the earlier login closes when its task next runs. The awaits of
+        // the new login come before it listens.
+        self.cancel_mcp_logins(session, Some(server));
+        let (pending, outcome) = servers.login(server).await?;
+        let login_id = LoginId(self.last_login.get() + 1);
+        self.last_login.set(login_id.0);
+        let result = McpLoginResult {
+            login_id,
+            url: pending.url().to_owned(),
+        };
+        let (shared, finished_server) = (Rc::clone(self), server.to_owned());
+        tokio::task::spawn_local(async move {
+            let outcome = match outcome.await {
+                Ok(()) => LoginOutcome::Succeeded,
+                Err(LoginError::Cancelled) => LoginOutcome::Cancelled,
+                Err(error) => LoginOutcome::Failed {
+                    error: error.to_string(),
+                },
+            };
+            shared.mcp_logins.borrow_mut().remove(&login_id);
+            shared
+                .observer
+                .notify(ServerNotification::McpLoginFinished(McpLoginFinishedParams {
+                    login_id,
+                    session_id: session,
+                    server: finished_server,
+                    outcome,
+                }));
+        });
+        // No await lies between the spawn and the insert, so the task cannot end before its entry is there.
+        self.mcp_logins.borrow_mut().insert(
+            login_id,
+            McpLogin {
+                session,
+                server: server.to_owned(),
+                login: pending,
+            },
+        );
+        Ok(result)
+    }
+
+    /// Finish the MCP login `id` with the address `redirect_url` of the redirect.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NoLogin`] when no MCP login with this id is in progress, and [`AppError::Invalid`] when the
+    /// address is not the redirect of the login. The login goes on to wait.
+    pub(crate) fn complete_mcp_login(&self, id: LoginId, redirect_url: &str) -> Result<(), AppError> {
+        let logins = self.mcp_logins.borrow();
+        Ok(logins
+            .get(&id)
+            .ok_or(AppError::NoLogin(id))?
+            .login
+            .complete(redirect_url)?)
+    }
+
+    /// Ask the MCP login `id` in progress to stop. Its `mcp/loginFinished` tells how it ended: a login whose redirect
+    /// came already still finishes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NoLogin`] when no MCP login with this id is in progress.
+    pub(crate) fn cancel_mcp_login(&self, id: LoginId) -> Result<(), AppError> {
+        self.mcp_logins
+            .borrow()
+            .get(&id)
+            .ok_or(AppError::NoLogin(id))?
+            .login
+            .cancel();
+        Ok(())
+    }
+
+    /// Ask each MCP login of session `session` to stop: only the logins of `server` when it is `Some`. Each sends its
+    /// `mcp/loginFinished`.
+    fn cancel_mcp_logins(&self, session: SessionId, server: Option<&str>) {
+        for login in self.mcp_logins.borrow().values() {
+            if login.session == session && server.is_none_or(|server| login.server == server) {
+                login.login.cancel();
+            }
+        }
+    }
+
     /// Remove what yuke stored for `provider`: its login or its API key in `auth.json`, and the token of
     /// `credential/update`. A login in progress of the provider ends first, and the removal comes after its task.
     ///
@@ -604,6 +709,7 @@ impl App {
             facts,
             logins: RefCell::default(),
             pending_logins: RefCell::default(),
+            mcp_logins: RefCell::default(),
             last_login: Cell::new(0),
         });
         let sessions = SessionService::new(Rc::clone(&shared));
@@ -789,6 +895,15 @@ pub(crate) enum AppError {
     Store(StoreError),
     /// A part of yuke failed. The text tells why.
     Internal(String),
+}
+
+impl From<LoginError> for AppError {
+    fn from(error: LoginError) -> AppError {
+        match error {
+            LoginError::Refused(text) => AppError::Invalid(text),
+            LoginError::Failed(_) | LoginError::Cancelled => AppError::Internal(error.to_string()),
+        }
+    }
 }
 
 impl fmt::Display for AppError {
@@ -1136,7 +1251,8 @@ mod tests {
                 other @ (ServerNotification::SessionUpdate(_)
                 | ServerNotification::ExtensionEvent(_)
                 | ServerNotification::ExtensionCancel(_)
-                | ServerNotification::LoginFinished(_)) => {
+                | ServerNotification::LoginFinished(_)
+                | ServerNotification::McpLoginFinished(_)) => {
                     panic!("expected a notice, got {other:?}")
                 }
             })

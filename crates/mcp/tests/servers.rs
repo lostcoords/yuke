@@ -16,7 +16,7 @@ use yuke_ai::scripted::{ScriptedTransport, text_reply, tool_reply};
 use yuke_ai::{Blob, Block, Target};
 use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Tool, Toolset};
-use yuke_mcp::{ServerConfig, Servers};
+use yuke_mcp::{LoginError, ServerConfig, Servers};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 use yuke_testing::{model_of, target};
 
@@ -953,7 +953,9 @@ async fn a_redirect_with_another_state_is_refused_and_the_login_goes_on_to_wait(
 
     assert_eq!(
         pasted,
-        Err("the state of the redirect is not the state of this login".to_owned())
+        Err(LoginError::Refused(
+            "the state of the redirect is not the state of this login".to_owned()
+        ))
     );
     assert_eq!(page.0, 400);
     result.unwrap();
@@ -977,7 +979,9 @@ async fn a_redirect_with_another_issuer_is_refused_when_the_server_names_its_iss
 
     assert_eq!(
         forged,
-        Err("the issuer of the redirect is not the issuer of the server".to_owned())
+        Err(LoginError::Refused(
+            "the issuer of the redirect is not the issuer of the server".to_owned()
+        ))
     );
     servers.ready().await;
     servers.close().await;
@@ -998,9 +1002,29 @@ async fn a_login_that_the_user_denies_ends_with_the_error_of_the_authorization_s
 
     assert_eq!(
         result,
-        Err("the authorization server refused the login: access_denied".to_owned())
+        Err(LoginError::Failed(
+            "the authorization server refused the login: access_denied".to_owned()
+        ))
     );
     assert_eq!(state_of(&servers), McpServerState::NeedsLogin);
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_cancel_after_the_redirect_came_does_not_stop_the_login() {
+    let folder = folder("a_cancel_after_the_redirect");
+    let log = folder.join("log");
+    let (entries, _child) = oauth_server("cimd", &log, &[]).await;
+    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+    let (login, outcome) = servers.login("test").await.unwrap();
+    login.complete(&approve(login.url()).await).unwrap();
+
+    login.cancel();
+    let result = outcome.await;
+    servers.ready().await;
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(state_of(&servers), McpServerState::Connected { tools: 6 });
+    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
@@ -1041,11 +1065,11 @@ async fn a_cancelled_login_ends_with_an_error_and_the_server_still_needs_a_login
     login.cancel();
     let result = outcome.await;
 
-    assert_eq!(result, Err("the login was cancelled".to_owned()));
+    assert_eq!(result, Err(LoginError::Cancelled));
     assert_eq!(state_of(&servers), McpServerState::NeedsLogin);
     assert_eq!(
-        servers.login("other").await.err().as_deref(),
-        Some("there is no server other")
+        servers.login("other").await.err(),
+        Some(LoginError::Refused("the session has no MCP server other".to_owned()))
     );
 }
 
@@ -1058,9 +1082,22 @@ async fn a_server_that_needs_no_login_refuses_a_login_and_a_logout_needs_a_remot
 
     let login = servers.login("remote").await.err();
     let logout = servers.logout("local").await;
+    let missing = servers.logout("nobody").await;
 
-    assert_eq!(login.as_deref(), Some("the server remote does not need a login"));
-    assert_eq!(logout, Err("local is not a remote server".to_owned()));
+    assert_eq!(
+        login,
+        Some(LoginError::Refused(
+            "the MCP server remote does not need a login".to_owned()
+        ))
+    );
+    assert_eq!(
+        logout,
+        Err(LoginError::Refused("local is not a remote server".to_owned()))
+    );
+    assert_eq!(
+        missing,
+        Err(LoginError::Refused("the session has no MCP server nobody".to_owned()))
+    );
     servers.close().await;
 }
 
@@ -1073,7 +1110,9 @@ async fn a_login_is_refused_when_the_authorization_server_lacks_pkce_with_s256()
 
     let result = servers.login("test").await.err();
 
-    let error = result.unwrap();
+    let Some(LoginError::Failed(error)) = result else {
+        panic!("{result:?}");
+    };
     assert!(error.ends_with("does not support PKCE with S256"), "{error}");
     assert!(oauth_lines(&log).iter().all(|line| !line.starts_with("authorize")));
 }
@@ -1085,7 +1124,7 @@ async fn a_login_is_refused_when_an_endpoint_of_the_authorization_server_uses_ht
     let (entries, _child) = oauth_server("cimd,plaintext", &log, &[]).await;
     let (servers, _changes) = started(entries, &folder, Rc::default()).await;
 
-    let error = servers.login("test").await.err().unwrap();
+    let error = servers.login("test").await.err().unwrap().to_string();
 
     assert!(
         error.ends_with("names http://auth.example.test/token, which does not use HTTPS"),
@@ -1101,7 +1140,7 @@ async fn a_login_without_a_client_id_source_asks_for_the_client_id_of_the_config
     let (entries, _child) = oauth_server("", &log, &[]).await;
     let (servers, _changes) = started(entries, &folder, Rc::default()).await;
 
-    let error = servers.login("test").await.err().unwrap();
+    let error = servers.login("test").await.err().unwrap().to_string();
 
     assert!(
         error.ends_with("set oauth.clientId in the entry of the server"),

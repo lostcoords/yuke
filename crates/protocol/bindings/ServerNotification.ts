@@ -2,10 +2,11 @@
 import type { ExtensionCancelParams } from "./ExtensionCancelParams.ts";
 import type { ExtensionEventParams } from "./ExtensionEventParams.ts";
 import type { LoginFinishedParams } from "./LoginFinishedParams.ts";
+import type { McpLoginFinishedParams } from "./McpLoginFinishedParams.ts";
 import type { NoticeParams } from "./NoticeParams.ts";
 import type { SessionUpdateParams } from "./SessionUpdateParams.ts";
 
 /**
  * The method and the params of a server notification.
  */
-export type ServerNotification = { "method": "session/update", "params": SessionUpdateParams } | { "method": "notice", "params": NoticeParams } | { "method": "extension/event", "params": ExtensionEventParams } | { "method": "extension/cancel", "params": ExtensionCancelParams } | { "method": "auth/loginFinished", "params": LoginFinishedParams };
+export type ServerNotification = { "method": "session/update", "params": SessionUpdateParams } | { "method": "notice", "params": NoticeParams } | { "method": "extension/event", "params": ExtensionEventParams } | { "method": "extension/cancel", "params": ExtensionCancelParams } | { "method": "auth/loginFinished", "params": LoginFinishedParams } | { "method": "mcp/loginFinished", "params": McpLoginFinishedParams };

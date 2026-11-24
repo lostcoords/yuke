@@ -13,6 +13,7 @@ import type { ListMcpServersResult } from "./ListMcpServersResult.ts";
 import type { ListPluginsResult } from "./ListPluginsResult.ts";
 import type { ListSessionsResult } from "./ListSessionsResult.ts";
 import type { LoginResult } from "./LoginResult.ts";
+import type { McpLoginResult } from "./McpLoginResult.ts";
 import type { RemoveInputResult } from "./RemoveInputResult.ts";
 import type { SessionResult } from "./SessionResult.ts";
 import type { SessionRow } from "./SessionRow.ts";
@@ -127,6 +128,29 @@ initialize: InitializeResult,
  * List the MCP servers of an open session.
  */
 "mcp/list": ListMcpServersResult, 
+/**
+ * Start the login of an MCP server of a session that is in the state `needsLogin`, and give the page of the user.
+ * A login in progress of the same server ends as cancelled first. The browser goes to a listener of the server on
+ * 127.0.0.1. The server stores the tokens, and sends `mcp/loginFinished`. After a success, the server connects
+ * again, and the `mcpServer` updates show `connecting` and then `connected`. The close of the session ends its
+ * logins.
+ */
+"mcp/login": McpLoginResult, 
+/**
+ * Finish a login of `mcp/login` with the address that the browser ended on, for a browser that cannot reach the
+ * listener. An address that is not the redirect of the login is an error, and the login goes on to wait.
+ */
+"mcp/completeLogin": EmptyResult, 
+/**
+ * Ask a login of `mcp/login` to stop. Its `mcp/loginFinished` tells how it ended. A login whose redirect came
+ * already finishes: the server stores the tokens, and the outcome is `succeeded`.
+ */
+"mcp/cancelLogin": EmptyResult, 
+/**
+ * Remove the stored login of a remote MCP server of a session. A login in progress of the server ends first. A
+ * server that had a login stops, and it gets the state `needsLogin`. yuke revokes no token.
+ */
+"mcp/logout": EmptyResult, 
 /**
  * List the plugins of `config.json` with their state on disk and whether they run. It uses no network.
  */

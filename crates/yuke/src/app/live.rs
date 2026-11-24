@@ -138,6 +138,11 @@ impl LiveSession {
         self.parts.host.wake.notify_one();
     }
 
+    /// The MCP servers of the session.
+    pub(super) fn servers(&self) -> &Servers {
+        &self.parts.servers
+    }
+
     /// Each MCP server of the session and its state.
     pub(super) fn mcp_servers(&self) -> Vec<McpServer> {
         self.parts.servers.states()
@@ -320,6 +325,10 @@ impl LiveSession {
             .jobs()
             .close_session(self.parts.host.output.session)
             .await;
+        self.parts
+            .host
+            .shared
+            .cancel_mcp_logins(self.parts.host.output.session, None);
         self.parts.servers.close().await;
     }
 }

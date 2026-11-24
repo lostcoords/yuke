@@ -4,8 +4,7 @@ description: Connect local MCP servers over stdio and remote MCP servers over HT
 
 # MCP servers
 
-yuke supports local MCP servers over stdio and remote MCP servers over Streamable HTTP. A remote server can take an API key in a header.
-A remote server that needs an OAuth login has the state `needsLogin`. The login itself is not available yet.
+yuke supports local MCP servers over stdio and remote MCP servers over Streamable HTTP. A remote server can take an API key in a header, or it can need an OAuth login.
 yuke does not support the older SSE transport.
 
 ## Sources and trust
@@ -46,6 +45,30 @@ The command, arguments, environment values, `cwd`, URL, and header values expand
 Both files accept `//` and `/* */` comments. yuke ignores a field that it does not know, on purpose: a file that other tools read can hold their own fields.
 
 User servers start without a question. Project servers need approval: yuke asks with the options "Start" and "Don't start". The question shows each server as the file writes it: its command line or URL, and its folder, environment variables, and headers. yuke keeps a "Start" answer in `mcp-trust` in the [data folder](config.md), for that folder and that list of servers. A change of the list asks again. yuke does not keep "Don't start", so it asks again in the next session. Without an answering client, such as in `yuke -p`, only a kept approval starts project servers.
+
+## OAuth login
+
+A remote server that answers a request with `401` and names its OAuth metadata has the state `needsLogin`. yuke follows the MCP authorization spec of 2025-11-25: the login uses the authorization code flow with PKCE, and yuke keeps the tokens in `mcp-auth.json` in the [data folder](config.md). A token that ends soon refreshes before the next request. A login that the server ends, or that you remove, puts the server back in `needsLogin`.
+
+A client of the [protocol](rpc.md#mcp-servers) logs in with `mcp/login`. The server gives a page, the user approves there, and the browser goes to a listener on 127.0.0.1. A client that cannot reach the listener sends the final address of the browser with `mcp/completeLogin`. After the login, the server connects again.
+
+An entry can set `oauth` when the authorization server needs a fixed client or a fixed redirect:
+
+```json
+{
+  "mcpServers": {
+    "tracker": {
+      "url": "https://mcp.tracker.test/mcp",
+      "oauth": { "clientId": "abc123", "callbackPort": 19876 }
+    }
+  }
+}
+```
+
+- `clientId` is the client id that the authorization server gave to yuke. Without it, yuke uses its client id document when the authorization server accepts one, and else it registers a client at each login. An authorization server with neither needs this field.
+- `callbackPort` is the port of the redirect on 127.0.0.1. Without it, the port is free.
+
+An entry with an `authorization` header uses no OAuth.
 
 ## Tools
 

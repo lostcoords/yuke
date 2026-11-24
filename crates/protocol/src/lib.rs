@@ -28,7 +28,10 @@ pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, Pendin
 pub use interaction::{
     InteractionRequest, InteractionRespondParams, InteractionResponse, Question, QuestionAnswer, QuestionOption,
 };
-pub use mcp::{ListMcpServersResult, McpServer, McpServerSource, McpServerState};
+pub use mcp::{
+    ListMcpServersResult, McpCompleteLoginParams, McpLoginFinishedParams, McpLoginParams, McpLoginResult,
+    McpLogoutParams, McpServer, McpServerSource, McpServerState,
+};
 pub use message::{
     ClientNotification, ClientRequest, EmptyParams, EmptyResult, ExtensionCancelParams, ExtensionEventParams,
     ExtensionRequestParams, ForkSessionParams, GetBlobParams, GetBlobResult, GetSessionParams, Implementation,

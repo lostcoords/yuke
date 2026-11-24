@@ -33,7 +33,7 @@ use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 use crate::config::{Launch, Remote, ServerConfig};
 use crate::http::HttpClient;
 use crate::names::{hashed_name, tool_name};
-use crate::oauth::{Auth, PendingLogin};
+use crate::oauth::{Auth, LoginError, PendingLogin};
 
 /// The connection to one running server.
 type Client = RunningService<RoleClient, ClientConfig>;
@@ -215,12 +215,14 @@ impl Servers {
 
     /// Start the login of the server `name`, which is in the state [`McpServerState::NeedsLogin`]. The user opens the
     /// [`PendingLogin::url`]. The future ends when the login ends. After a success, the server connects again: its
-    /// state changes to `Connecting`, and then to `Connected` or `Failed`. A drop of the future ends the login.
+    /// state changes to `Connecting`, and then to `Connected` or `Failed`. A drop of the future ends the login, also
+    /// while it stores the tokens, so a caller that wants an exact outcome awaits the future and ends the login with
+    /// [`PendingLogin::cancel`].
     ///
     /// # Errors
     ///
-    /// Returns why the login cannot start: the server does not exist or does not need a login, or its OAuth metadata
-    /// does not allow a login.
+    /// Returns [`LoginError::Refused`] when the server does not exist or does not need a login, and
+    /// [`LoginError::Failed`] when its OAuth metadata does not allow a login.
     ///
     /// # Panics
     ///
@@ -228,18 +230,22 @@ impl Servers {
     pub async fn login(
         &self,
         name: &str,
-    ) -> Result<(PendingLogin, impl Future<Output = Result<(), String>> + use<>), String> {
+    ) -> Result<(PendingLogin, impl Future<Output = Result<(), LoginError>> + use<>), LoginError> {
         let (index, auth) = {
             let slots = self.shared.slots.borrow();
             let Some((index, slot)) = slots.iter().enumerate().find(|(_, slot)| slot.name == name) else {
-                return Err(format!("there is no server {name}"));
+                return Err(LoginError::Refused(format!("the session has no MCP server {name}")));
             };
             match (&slot.auth, &slot.state) {
                 (Some(auth), McpServerState::NeedsLogin) => (index, Arc::clone(auth)),
-                _ => return Err(format!("the server {name} does not need a login")),
+                _ => {
+                    return Err(LoginError::Refused(format!(
+                        "the MCP server {name} does not need a login"
+                    )));
+                }
             }
         };
-        let (login, outcome) = auth.login().await?;
+        let (login, outcome) = auth.login().await.map_err(LoginError::Failed)?;
         let shared = Rc::clone(&self.shared);
         let outcome = async move {
             outcome.await?;
@@ -254,18 +260,19 @@ impl Servers {
     ///
     /// # Errors
     ///
-    /// Returns an error when the server is not a remote server, or when the stored logins do not read or write.
-    pub async fn logout(&self, name: &str) -> Result<(), String> {
+    /// Returns [`LoginError::Refused`] when the server does not exist or is not a remote server, and
+    /// [`LoginError::Failed`] when the stored logins do not read or write.
+    pub async fn logout(&self, name: &str) -> Result<(), LoginError> {
         let auth = {
             let slots = self.shared.slots.borrow();
-            slots
-                .iter()
-                .find(|slot| slot.name == name)
-                .and_then(|slot| slot.auth.clone())
+            let Some(slot) = slots.iter().find(|slot| slot.name == name) else {
+                return Err(LoginError::Refused(format!("the session has no MCP server {name}")));
+            };
+            slot.auth
+                .clone()
+                .ok_or_else(|| LoginError::Refused(format!("{name} is not a remote server")))?
         };
-        auth.ok_or_else(|| format!("{name} is not a remote server"))?
-            .logout()
-            .await
+        auth.logout().await.map_err(LoginError::Failed)
     }
 
     /// Each server and its state, in config order.

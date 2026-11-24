@@ -86,11 +86,12 @@ pub struct LoginFinishedParams {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LoginOutcome {
-    /// The user approved, and the server saved the login in `auth.json`.
+    /// The user approved, and the server saved the login.
     Succeeded,
-    /// `auth/cancelLogin`, or a new `auth/login` for the provider, ended the login.
+    /// A cancel request, or a new login for the same provider or server, ended the login. The close of the session of
+    /// an MCP login ends it too.
     Cancelled,
-    /// The provider refused, the login expired, or the save failed.
+    /// The provider or the authorization server refused, the login expired, or the save failed.
     Failed {
         /// Why. The text holds no token.
         error: String,

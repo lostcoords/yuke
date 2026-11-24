@@ -445,6 +445,22 @@ impl Server {
             ClientRequest::ListMcpServers(params) => Ok(ServerResult::ListMcpServers(ListMcpServersResult {
                 servers: app.sessions().mcp_servers(params.session_id)?,
             })),
+            // The discovery of the OAuth metadata makes this future large.
+            ClientRequest::McpLogin(params) => Ok(ServerResult::McpLogin(
+                Box::pin(app.sessions().mcp_login(params.session_id, &params.server)).await?,
+            )),
+            ClientRequest::McpCompleteLogin(params) => {
+                app.shared().complete_mcp_login(params.login_id, &params.redirect_url)?;
+                Ok(ServerResult::McpCompleteLogin(EmptyResult {}))
+            }
+            ClientRequest::McpCancelLogin(params) => {
+                app.shared().cancel_mcp_login(params.login_id)?;
+                Ok(ServerResult::McpCancelLogin(EmptyResult {}))
+            }
+            ClientRequest::McpLogout(params) => {
+                app.sessions().mcp_logout(params.session_id, &params.server).await?;
+                Ok(ServerResult::McpLogout(EmptyResult {}))
+            }
             ClientRequest::InteractionRespond(params) => {
                 app.sessions()
                     .respond(params.session_id, params.interaction_id, params.response)?;
@@ -613,7 +629,8 @@ impl Observer for ActiveClient {
                 ServerNotification::SessionUpdate(_)
                 | ServerNotification::ExtensionEvent(_)
                 | ServerNotification::ExtensionCancel(_)
-                | ServerNotification::LoginFinished(_),
+                | ServerNotification::LoginFinished(_)
+                | ServerNotification::McpLoginFinished(_),
             ) => {}
         }
     }

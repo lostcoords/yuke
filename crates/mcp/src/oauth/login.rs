@@ -20,7 +20,30 @@ use yuke_http::http::header::{ACCEPT, CONTENT_TYPE};
 use yuke_http::http::{HeaderMap, HeaderValue, Method};
 
 use super::store::StoredLogin;
-use super::{Auth, CLIENT_METADATA, TokenError, blocking, discover, exchange, request_tokens, server_metadata};
+use super::{Auth, CLIENT_METADATA, blocking, discover, exchange, request_tokens, server_metadata};
+
+/// Why a login or a logout did not happen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginError {
+    /// The request does not fit: the server does not exist, needs no login, or is not a remote server, or an address
+    /// is not the redirect of the login.
+    Refused(String),
+    /// The login or the stored logins failed: the metadata of the server, its authorization server, or a file.
+    Failed(String),
+    /// A cancel ended the login before its redirect came.
+    Cancelled,
+}
+
+impl fmt::Display for LoginError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(text) | Self::Failed(text) => f.write_str(text),
+            Self::Cancelled => f.write_str("the login was cancelled"),
+        }
+    }
+}
+
+impl std::error::Error for LoginError {}
 
 /// The longest request line of the redirect that the listener reads, in bytes.
 const MAX_REQUEST_LINE: u64 = 8 * 1024;
@@ -51,19 +74,22 @@ impl PendingLogin {
     ///
     /// # Errors
     ///
-    /// Returns why the address is not the redirect of this login. The login goes on to wait. Also returns an error when
-    /// the login ended.
-    pub fn complete(&self, redirect_url: &str) -> Result<(), String> {
+    /// Returns [`LoginError::Refused`] when the address is not the redirect of this login, and then the login goes on
+    /// to wait. Also returns it when the login ended.
+    pub fn complete(&self, redirect_url: &str) -> Result<(), LoginError> {
         let query = redirect_url
             .split('#')
             .next()
             .and_then(|url| url.split_once('?'))
             .map_or("", |(_, query)| query);
-        let event = self.expect.check(query)?;
-        self.events.send(event).map_err(|_| "the login ended".to_owned())
+        let event = self.expect.check(query).map_err(LoginError::Refused)?;
+        self.events
+            .send(event)
+            .map_err(|_| LoginError::Refused("the login ended".to_owned()))
     }
 
-    /// End the login. Its outcome is an error.
+    /// End the login while it waits for the redirect. Its outcome is [`LoginError::Cancelled`]. After the redirect
+    /// came, a cancel does nothing, and the login finishes: the tokens are stored, and the server connects.
     pub fn cancel(&self) {
         // The send fails only for an ended login, which has nothing to cancel.
         _ = self.events.send(Event::Cancelled);
@@ -159,7 +185,9 @@ impl Auth {
     ///
     /// Returns why the server cannot log in: its metadata is missing, its authorization server lacks PKCE with `S256`
     /// or a way to get a client id, or the listener does not open.
-    pub(crate) async fn login(&self) -> Result<(PendingLogin, LocalBoxFuture<'static, Result<(), String>>), String> {
+    pub(crate) async fn login(
+        &self,
+    ) -> Result<(PendingLogin, LocalBoxFuture<'static, Result<(), LoginError>>), String> {
         let kept = self.discovery.lock().await.clone();
         let discovery = match kept {
             Some(discovery) => discovery,
@@ -249,9 +277,7 @@ impl Auth {
                 ("client_id", &client_id),
                 ("resource", &resource),
             ];
-            let tokens = request_tokens(&client, &token_endpoint, &fields)
-                .await
-                .map_err(TokenError::text)?;
+            let tokens = request_tokens(&client, &token_endpoint, &fields).await?;
             let stored = StoredLogin {
                 client_id,
                 token_endpoint,
@@ -259,7 +285,9 @@ impl Auth {
                 refresh_token: tokens.refresh_token,
                 expires_at: tokens.expires_at,
             };
-            blocking(move || store.lock()?.set_login(Some(stored))).await
+            blocking(move || store.lock()?.set_login(Some(stored)))
+                .await
+                .map_err(LoginError::Failed)
         };
         Ok((login, outcome.boxed_local()))
     }
@@ -300,7 +328,7 @@ async fn wait(
     expect: Expect,
     events: mpsc::UnboundedSender<Event>,
     mut received: mpsc::UnboundedReceiver<Event>,
-) -> Result<String, String> {
+) -> Result<String, LoginError> {
     // A browser can open a connection and send nothing, so each connection has a task. The drop of the set ends them.
     let mut connections = JoinSet::new();
     loop {
@@ -313,8 +341,8 @@ async fn wait(
             event = received.recv() => {
                 return match event {
                     Some(Event::Code(code)) => Ok(code),
-                    Some(Event::Failed(text)) => Err(text),
-                    Some(Event::Cancelled) | None => Err("the login was cancelled".to_owned()),
+                    Some(Event::Failed(text)) => Err(LoginError::Failed(text)),
+                    Some(Event::Cancelled) | None => Err(LoginError::Cancelled),
                 };
             }
         }

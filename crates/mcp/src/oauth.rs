@@ -16,7 +16,7 @@ use yuke_http::http::header::{ACCEPT, CONTENT_TYPE, WWW_AUTHENTICATE};
 use yuke_http::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use yuke_http::{Client, Error, Request};
 
-pub use login::PendingLogin;
+pub use login::{LoginError, PendingLogin};
 use store::{Store, StoredLogin};
 
 use crate::config::{OAuthConfig, Remote};
@@ -345,10 +345,10 @@ enum TokenError {
     Transient(String),
 }
 
-impl TokenError {
-    fn text(self) -> String {
-        match self {
-            Self::Permanent(text) | Self::Transient(text) => text,
+impl From<TokenError> for LoginError {
+    fn from(error: TokenError) -> LoginError {
+        match error {
+            TokenError::Permanent(text) | TokenError::Transient(text) => LoginError::Failed(text),
         }
     }
 }

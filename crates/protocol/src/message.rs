@@ -13,8 +13,8 @@ use yuke_ai::Blob;
 
 use crate::{
     AddPluginsResult, CheckPluginsResult, EventNumber, FindPluginsResult, InputId, InstanceId,
-    InteractionRespondParams, ListCatalogResult, ListMcpServersResult, ListPluginsResult, LoginResult, SessionId,
-    SessionRow, SessionSettings, SessionTitle, SessionUpdateParams, SyncPluginsResult,
+    InteractionRespondParams, ListCatalogResult, ListMcpServersResult, ListPluginsResult, LoginResult, McpLoginResult,
+    SessionId, SessionRow, SessionSettings, SessionTitle, SessionUpdateParams, SyncPluginsResult,
 };
 
 /// The protocol version that this crate speaks.
@@ -156,6 +156,21 @@ client_requests!(
     "interaction/respond" => InteractionRespond(InteractionRespondParams) -> EmptyResult,
     /// List the MCP servers of an open session.
     "mcp/list" => ListMcpServers(SessionParams) -> ListMcpServersResult,
+    /// Start the login of an MCP server of a session that is in the state `needsLogin`, and give the page of the user.
+    /// A login in progress of the same server ends as cancelled first. The browser goes to a listener of the server on
+    /// 127.0.0.1. The server stores the tokens, and sends `mcp/loginFinished`. After a success, the server connects
+    /// again, and the `mcpServer` updates show `connecting` and then `connected`. The close of the session ends its
+    /// logins.
+    "mcp/login" => McpLogin(crate::McpLoginParams) -> McpLoginResult,
+    /// Finish a login of `mcp/login` with the address that the browser ended on, for a browser that cannot reach the
+    /// listener. An address that is not the redirect of the login is an error, and the login goes on to wait.
+    "mcp/completeLogin" => McpCompleteLogin(crate::McpCompleteLoginParams) -> EmptyResult,
+    /// Ask a login of `mcp/login` to stop. Its `mcp/loginFinished` tells how it ended. A login whose redirect came
+    /// already finishes: the server stores the tokens, and the outcome is `succeeded`.
+    "mcp/cancelLogin" => McpCancelLogin(crate::CancelLoginParams) -> EmptyResult,
+    /// Remove the stored login of a remote MCP server of a session. A login in progress of the server ends first. A
+    /// server that had a login stops, and it gets the state `needsLogin`. yuke revokes no token.
+    "mcp/logout" => McpLogout(crate::McpLogoutParams) -> EmptyResult,
     /// List the plugins of `config.json` with their state on disk and whether they run. It uses no network.
     "plugin/list" => ListPlugins(EmptyParams) -> ListPluginsResult,
     /// Install the commit of `plugins.lock` of each Git plugin, and lock each new one at the commit of its ref. The lock
@@ -250,6 +265,9 @@ pub enum ServerNotification {
     /// The end of a login of `auth/login`.
     #[serde(rename = "auth/loginFinished")]
     LoginFinished(crate::LoginFinishedParams),
+    /// The end of a login of `mcp/login`.
+    #[serde(rename = "mcp/loginFinished")]
+    McpLoginFinished(crate::McpLoginFinishedParams),
 }
 
 /// The params of `notice`.

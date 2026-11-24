@@ -7,10 +7,10 @@ use yuke_protocol::{
     BlockStarted, ClientNotification, ClientRequest, CommitEvent, ConsumedInput, DraftCommitted, DraftModelUpdate,
     DraftStarted, EventNumber, ExtensionCancelParams, ExtensionEventParams, ExtensionRequestParams, Input,
     InputAccepted, InputError, InputId, InputKind, InputRemoved, InputSource, JobId, JobKind, JobState, JobUpdate,
-    ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
-    NoticeParams, Notification, PendingInput, ReasoningSelection, Request, Response, ServerNotification, ServerRequest,
-    SessionEvent, SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StateUpdate,
-    StoredEvent, TextDelta, ToolOutput,
+    ListMcpServersResult, LiveUpdate, LoginId, LoginOutcome, McpLoginFinishedParams, McpServer, McpServerSource,
+    McpServerState, ModelReference, NoticeLevel, NoticeParams, Notification, PendingInput, ReasoningSelection, Request,
+    Response, ServerNotification, ServerRequest, SessionEvent, SessionId, SessionSettings, SessionTitle, SessionUpdate,
+    SessionUpdateParams, StateUpdate, StoredEvent, TextDelta, ToolOutput,
 };
 
 use serde::Serialize;
@@ -531,6 +531,37 @@ fn a_job_update_holds_the_whole_job_and_its_end() {
                 plugin: "agents".to_owned(),
             },
         }),
+    );
+}
+
+#[test]
+fn the_mcp_login_requests_and_its_end_read_and_write_their_json() {
+    let cases = [
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "mcp/login", "params": { "sessionId": SESSION, "server": "linear" } }),
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "mcp/completeLogin", "params": {
+            "loginId": 4, "redirectUrl": "http://127.0.0.1:5000/callback?code=c&state=s"
+        } }),
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "mcp/cancelLogin", "params": { "loginId": 4 } }),
+        json!({ "jsonrpc": "2.0", "id": 4, "method": "mcp/logout", "params": { "sessionId": SESSION, "server": "linear" } }),
+    ];
+    for json in cases {
+        let call: Request<ClientRequest> = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&call).unwrap(), json);
+    }
+
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "mcp/loginFinished", "params": {
+            "loginId": 4, "sessionId": SESSION, "server": "linear", "outcome": { "kind": "failed", "error": "no" }
+        } }),
+        &Notification {
+            jsonrpc: yuke_protocol::JsonRpc::V2,
+            message: ServerNotification::McpLoginFinished(McpLoginFinishedParams {
+                login_id: LoginId(4),
+                session_id: session(),
+                server: "linear".to_owned(),
+                outcome: LoginOutcome::Failed { error: "no".to_owned() },
+            }),
+        },
     );
 }
 

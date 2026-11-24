@@ -8,5 +8,5 @@ mod oauth;
 mod servers;
 
 pub use config::{Config, OAuthConfig, ServerConfig};
-pub use oauth::PendingLogin;
+pub use oauth::{LoginError, PendingLogin};
 pub use servers::{McpTool, OnChange, Servers};

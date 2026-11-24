@@ -17,8 +17,13 @@ The MCP client of yuke, on [rmcp](https://crates.io/crates/rmcp). Each open sess
   `"oauth": { "clientId": "…", "callbackPort": 19876 }`. A server whose `headers` hold an `authorization` uses no OAuth.
 - `Servers::login` starts the login of a server in `NeedsLogin`. It gives a `PendingLogin` with the page of the user,
   and a future that ends after the tokens are stored and the server connects again. The page redirects to a listener
-  on 127.0.0.1, or the client gives the address of the redirect to `PendingLogin::complete`. `Servers::logout` removes
-  the stored login, and the server goes to `NeedsLogin`.
+  on 127.0.0.1, or the client gives the address of the redirect to `PendingLogin::complete`. `PendingLogin::cancel`
+  ends the wait for the redirect. After the redirect came, a cancel does nothing, and the login finishes. A drop of
+  the future ends the login at once, also while it stores the tokens. `Servers::logout` removes the stored login, and
+  the server goes to `NeedsLogin`.
+- `Servers::login`, `Servers::logout`, `PendingLogin::complete`, and the future give a `LoginError`: `Refused` for a
+  request that does not fit (no such server, no need for a login, not a remote server, a bad redirect), `Failed` for a
+  failure of the login or of the stored logins, and `Cancelled` for a cancel.
 - The `Auth` of a server lives in its slot. When its login ends while the server runs (a refresh that the server
   refuses), the server stops and goes to `NeedsLogin`.
 - The client id comes from `oauth.clientId`, else from the client id document of yuke when the authorization server

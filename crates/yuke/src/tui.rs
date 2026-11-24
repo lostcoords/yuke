@@ -27,7 +27,8 @@ impl Observer for Notices {
             ServerNotification::SessionUpdate(_)
             | ServerNotification::ExtensionEvent(_)
             | ServerNotification::ExtensionCancel(_)
-            | ServerNotification::LoginFinished(_) => {}
+            | ServerNotification::LoginFinished(_)
+            | ServerNotification::McpLoginFinished(_) => {}
         }
     }
 }

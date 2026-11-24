@@ -30,9 +30,9 @@ Plugins load in this mode without the `tui` service.
 ## Messages
 
 - Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client then loads each session again.
-- Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`, `session/removeInput`, `session/setSettings`, `session/rename`, `session/list`, `session/get`, `session/remove`, `auth/login`, `auth/cancelLogin`, `auth/logout`, `auth/setApiKey`, `catalog/list`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`, `plugin/find`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
+- Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`, `session/removeInput`, `session/setSettings`, `session/rename`, `session/list`, `session/get`, `session/remove`, `auth/login`, `auth/cancelLogin`, `auth/logout`, `auth/setApiKey`, `catalog/list`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`, `mcp/list`, `mcp/login`, `mcp/completeLogin`, `mcp/cancelLogin`, `mcp/logout`, `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`, `plugin/find`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
 - Notifications from a client: `session/cancel` and `session/background`. `session/background` moves each tool call of the session that waits for a job, such as a running command, to the background, and the turn goes on.
-- Notifications from the server: `session/update`, `notice`, `extension/event`, `extension/cancel`, and `auth/loginFinished`.
+- Notifications from the server: `session/update`, `notice`, `extension/event`, `extension/cancel`, `auth/loginFinished`, and `mcp/loginFinished`.
 - Server requests: `extension/request`. A client answers each one. It answers -32601 for a method or an extension that it does not know. The server numbers its requests from 1, apart from the ids of the client.
 - `notice` is text for the user, for the whole process or one session. It is not part of session history.
 - `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions stay open. Their process jobs go on, and their plugin jobs stop. It fails while a turn runs, or for a bad `config.json`, `plugins.lock`, or `providers.json`. A failure keeps the old plugins and providers. A plugin that does not load does not fail it, and a `notice` names it. The next request of an open session can miss the prompt cache when the reload changes its tools.
@@ -107,6 +107,16 @@ The background jobs of a session run while the session is open. `job/list` lists
 ## MCP servers
 
 Each open session runs the servers of the user config and of `.mcp.json` in its folder. An `mcpServer` live update holds the whole state of one server, with its `source` (`user` or `project`). Its `state` has the kind `connecting`, `connected` with its tool count, `failed` with its error, `disabled`, `untrusted`, or `needsLogin` (a remote server that needs an OAuth login). `mcp/list` gives each server of a session.
+
+A client logs in to a server in the state `needsLogin` with these requests. The login of a server uses the browser of the user and a listener of the server on 127.0.0.1:
+
+- `mcp/login { sessionId, server }` answers `{ loginId, url }` at once. A login in progress of the same server ends as `cancelled` first. The client opens `url`. After the approval, the browser goes to the listener, and the server stores the tokens. A client on another computer, for example over SSH, cannot reach the listener.
+- `mcp/completeLogin { loginId, redirectUrl }` finishes the login with the address that the browser ended on, for a client that cannot reach the listener. An address that is not the redirect of this login is an error (`-32602`), and the login goes on to wait.
+- `mcp/cancelLogin { loginId }` asks a login in progress to stop. A login whose redirect came already finishes: the server stores the tokens, and the outcome is `succeeded`.
+- The server sends `mcp/loginFinished { loginId, sessionId, server, outcome }` when the login ends: `succeeded`, `cancelled`, or `failed { error }`. After a success, the server connects again, and the `mcpServer` updates show `connecting` and then `connected` or `failed`. The close of the session ends its login as `cancelled`.
+- `mcp/logout { sessionId, server }` removes the stored login of a remote server. A login in progress of the server ends first, as `cancelled`. A server that had a login stops, and its state is `needsLogin`.
+
+A `loginId` that is not in progress, for example after the end of its login, is the error `-32006`. A server that does not exist in the session, a server that needs no login (for `mcp/login`), and a server that is not remote (for `mcp/logout`) are the error `-32602`. A server whose OAuth metadata does not allow a login, and a stored login that does not read or write, are internal errors with the reason as their text.
 
 Project servers start only after the user confirms them. yuke asks one question from `host:mcp`, with the options "Start" and "Don't start", and keeps a start for that folder and that list of servers. See [MCP servers](mcp.md).
 

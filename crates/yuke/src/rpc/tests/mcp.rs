@@ -2,7 +2,7 @@
 
 use super::*;
 
-fn mcp_state(message: &Value, name: &str, state: &str) -> bool {
+pub(super) fn mcp_state(message: &Value, name: &str, state: &str) -> bool {
     let update = &message["params"]["update"];
     update["kind"] == "mcpServer" && update["name"] == name && update["state"]["kind"] == state
 }

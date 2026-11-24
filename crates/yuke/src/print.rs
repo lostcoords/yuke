@@ -324,10 +324,11 @@ impl Observer for Watcher {
                 self.ended.notify_one();
             }
             ServerNotification::Notice(notice) => warn(&format!("{}: {}", notice.source, notice.text)),
-            // A run has no client for the events of plugins, and it starts no login of `auth/login`.
+            // A run has no client for the events of plugins, and it starts no login of `auth/login` or `mcp/login`.
             ServerNotification::ExtensionEvent(_)
             | ServerNotification::ExtensionCancel(_)
-            | ServerNotification::LoginFinished(_) => {}
+            | ServerNotification::LoginFinished(_)
+            | ServerNotification::McpLoginFinished(_) => {}
         }
     }
 }

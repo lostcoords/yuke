@@ -12,8 +12,8 @@ use yuke_engine::chain_text;
 use yuke_js::{FactSink, Handle, ViewSink};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, JobId, ListSessionsParams,
-    ListSessionsResult, NoticeLevel, NoticeParams, ServerNotification, SessionId, SessionRow, SessionSettings,
-    SessionState, SessionSummary, SessionTitle, StoredEvent,
+    ListSessionsResult, McpLoginResult, NoticeLevel, NoticeParams, ServerNotification, SessionId, SessionRow,
+    SessionSettings, SessionState, SessionSummary, SessionTitle, StoredEvent,
 };
 
 use super::facts::Watch;
@@ -695,6 +695,30 @@ impl SessionService {
     /// Returns [`AppError::NotOpen`].
     pub(crate) fn mcp_servers(&self, id: SessionId) -> Result<Vec<yuke_protocol::McpServer>, AppError> {
         Ok(self.live(id)?.mcp_servers())
+    }
+
+    /// Start the login of the MCP server `server` of session `id`, and give its page. See [`Shared::mcp_login`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`], and the errors of [`Shared::mcp_login`].
+    pub(crate) async fn mcp_login(&self, id: SessionId, server: &str) -> Result<McpLoginResult, AppError> {
+        let live = self.live(id)?;
+        self.shared.mcp_login(id, server, live.servers()).await
+    }
+
+    /// Remove the stored login of the remote MCP server `server` of session `id`. A login in progress of the server
+    /// ends first. A server that had a login gets the state `needsLogin`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`], [`AppError::Invalid`] when the session has no remote server of this name, and
+    /// [`AppError::Internal`] when the stored logins do not read or write.
+    pub(crate) async fn mcp_logout(&self, id: SessionId, server: &str) -> Result<(), AppError> {
+        let live = self.live(id)?;
+        // A login that goes on would store its tokens after the logout.
+        self.shared.cancel_mcp_logins(id, Some(server));
+        Ok(live.servers().logout(server).await?)
     }
 
     /// Give `response` to the open question `interaction_id` of session `id`.
