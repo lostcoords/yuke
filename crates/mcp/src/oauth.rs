@@ -261,9 +261,25 @@ struct ServerMetadata {
     authorization_response_iss_parameter_supported: bool,
 }
 
-/// The metadata of the authorization server `issuer`.
+/// The metadata of the authorization server `issuer`. Each endpoint must use HTTPS, so the code and the tokens never
+/// cross the network in plain text. Only an endpoint on this computer can use HTTP.
 async fn server_metadata(client: &Client, issuer: &str) -> Result<ServerMetadata, String> {
-    first_document(client, &server_metadata_urls(issuer)?).await
+    let metadata: ServerMetadata = first_document(client, &server_metadata_urls(issuer)?).await?;
+    let endpoints = [
+        Some(&metadata.authorization_endpoint),
+        Some(&metadata.token_endpoint),
+        metadata.registration_endpoint.as_ref(),
+    ];
+    for endpoint in endpoints.into_iter().flatten() {
+        let uri: Uri = endpoint.parse().map_err(|_| format!("{endpoint} is not a URL"))?;
+        let local = matches!(uri.host(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        if uri.scheme_str() != Some("https") && !(local && uri.scheme_str() == Some("http")) {
+            return Err(format!(
+                "the authorization server {issuer} names {endpoint}, which does not use HTTPS"
+            ));
+        }
+    }
+    Ok(metadata)
 }
 
 /// The well-known URLs of the metadata of `issuer`, in the order of the MCP spec.

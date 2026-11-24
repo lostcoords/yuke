@@ -23,6 +23,7 @@ The MCP client of yuke, on [rmcp](https://crates.io/crates/rmcp). Each open sess
   refuses), the server stops and goes to `NeedsLogin`.
 - The client id comes from `oauth.clientId`, else from the client id document of yuke when the authorization server
   accepts one, else from a new dynamic registration at each login. A public client has no secret.
+- Each endpoint of the authorization server must use HTTPS. Only an endpoint on this computer can use HTTP.
 - `mcp-auth.json` in the data folder holds one login for each server URL. Its lock file is `mcp-auth.lock`. A token
   that ends within one minute refreshes before the request, and a `401` answer with a token refreshes it once. A
   refresh that fails for now keeps the login: the request never left, or the server answered with an error that does

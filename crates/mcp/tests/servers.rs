@@ -1079,6 +1079,22 @@ async fn a_login_is_refused_when_the_authorization_server_lacks_pkce_with_s256()
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_login_is_refused_when_an_endpoint_of_the_authorization_server_uses_http_on_another_computer() {
+    let folder = folder("a_login_with_a_plaintext_endpoint");
+    let log = folder.join("log");
+    let (entries, _child) = oauth_server("cimd,plaintext", &log, &[]).await;
+    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
+
+    let error = servers.login("test").await.err().unwrap();
+
+    assert!(
+        error.ends_with("names http://auth.example.test/token, which does not use HTTPS"),
+        "{error}"
+    );
+    assert!(oauth_lines(&log).iter().all(|line| !line.starts_with("authorize")));
+}
+
+#[tokio::test(flavor = "local")]
 async fn a_login_without_a_client_id_source_asks_for_the_client_id_of_the_config() {
     let folder = folder("a_login_without_a_client_id_source");
     let log = folder.join("log");

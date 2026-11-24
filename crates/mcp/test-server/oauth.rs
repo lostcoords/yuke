@@ -9,6 +9,7 @@
 //! - `oidc` serves its metadata only at the OIDC path.
 //! - `nopkce` leaves the PKCE methods out of its metadata.
 //! - `norotate` keeps a refresh token valid after its use, and gives no new one.
+//! - `plaintext` names a token endpoint that uses HTTP on another computer.
 //!
 //! The client id `preregistered` is always a client. `MCP_TEST_EXPIRES_IN` sets the seconds of an access token. Each
 //! authorization server event goes to the log of the server: `authorize`, `register`, and `token`. Each request to
@@ -143,6 +144,9 @@ fn metadata(issuer: &str) -> Value {
         "authorization_endpoint": format!("{issuer}/authorize"),
         "token_endpoint": format!("{issuer}/token"),
     });
+    if option("plaintext") {
+        metadata["token_endpoint"] = json!("http://auth.example.test/token");
+    }
     if !option("nopkce") {
         metadata["code_challenge_methods_supported"] = json!(["S256"]);
     }
