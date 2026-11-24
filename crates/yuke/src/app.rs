@@ -955,8 +955,8 @@ async fn save_settings(
 ///
 /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
 fn api_key(shared: &Shared, id: &str, name: &str) -> Result<Option<String>, AppError> {
-    let stored = crate::auth::api_key(id, shared.machine.paths.data.clone())
-        .map_err(|error| AppError::Internal(error.to_string()))?;
+    let stored =
+        crate::auth::api_key(id, &shared.machine.paths.data).map_err(|error| AppError::Internal(error.to_string()))?;
     Ok(stored.or_else(|| variable_key(shared, name)))
 }
 
@@ -977,7 +977,7 @@ fn login_source(shared: &Shared, id: &str, flow: Flow) -> LoginSource {
     let source = LoginSource::new(
         id.to_owned(),
         flow,
-        shared.machine.paths.data.clone(),
+        &shared.machine.paths.data,
         Arc::clone(&shared.machine.exchange),
     );
     logins.insert(id.to_owned(), source.clone());

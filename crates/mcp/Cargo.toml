@@ -30,6 +30,7 @@ sha2 = { version = "0.11.0", default-features = false }
 sse-stream = "0.2.6"
 tokio = { version = "1.53", features = ["io-util", "macros", "net", "process", "rt", "sync"] }
 yuke-ai = { path = "../ai", default-features = false }
+yuke-credentials = { path = "../credentials" }
 yuke-engine = { path = "../engine" }
 yuke-http = { path = "../http" }
 yuke-protocol = { path = "../protocol" }

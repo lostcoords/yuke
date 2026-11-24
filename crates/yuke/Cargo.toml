@@ -17,6 +17,7 @@ tokio = { version = "1.53", features = ["io-std", "io-util", "macros", "net", "p
 yuke-agent = { path = "../agent" }
 # The `yuke:test` host answers with the scripted transport.
 yuke-ai = { path = "../ai", features = ["scripted"] }
+yuke-credentials = { path = "../credentials" }
 yuke-engine = { path = "../engine" }
 yuke-http = { path = "../http" }
 yuke-js = { path = "../js" }

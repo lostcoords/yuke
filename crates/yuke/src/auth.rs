@@ -4,10 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -16,12 +13,9 @@ use serde::{Deserialize, Serialize};
 use yuke_ai::Credential;
 use yuke_ai::oauth::{Flow, Grant, OAuthError, PendingLogin, Poll};
 use yuke_ai::transport::Exchange;
+use yuke_credentials::{CredentialFile, Locked};
 use yuke_engine::{CredentialSource, chain_text};
 use yuke_protocol::UpdateCredentialParams;
-
-const FILE: &str = "auth.json";
-const TEMPORARY: &str = "auth.json.tmp";
-const LOCK: &str = "auth.lock";
 
 /// A login that ends within this margin refreshes before the attempt, so a long request does not outlive its token.
 const MARGIN: Duration = Duration::from_mins(5);
@@ -139,103 +133,35 @@ pub(crate) fn millis(time: SystemTime) -> u64 {
         .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
 }
 
-/// The files of the credentials in one data folder.
-#[derive(Debug, Clone)]
-struct Files {
-    folder: PathBuf,
+/// The credentials file of the data folder `folder`.
+fn credential_file(folder: &Path) -> CredentialFile {
+    CredentialFile::new(folder, "auth")
 }
 
-impl Files {
-    fn path(&self, name: &str) -> PathBuf {
-        self.folder.join(name)
-    }
+/// The entries of `auth.json`. A missing file has none.
+fn read(file: &CredentialFile) -> Result<BTreeMap<String, Stored>, Box<dyn Error + Send + Sync>> {
+    file.read().map_err(|error| chain_text(&error).into())
+}
 
-    fn file_error(&self, name: &str) -> impl FnOnce(io::Error) -> Box<dyn Error + Send + Sync> {
-        let path = self.path(name);
-        move |error| format!("{}: {}", path.display(), chain_text(&error)).into()
-    }
+/// Take the lock of `auth.json`. The call blocks until the holder releases it.
+fn lock_file(file: &CredentialFile) -> Result<Locked, Box<dyn Error + Send + Sync>> {
+    file.lock().map_err(|error| chain_text(&error).into())
+}
 
-    /// The entries of `auth.json`. A missing file has none.
-    fn read(&self) -> Result<BTreeMap<String, Stored>, Box<dyn Error + Send + Sync>> {
-        let path = self.path(FILE);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-            Err(error) => return Err(self.file_error(FILE)(error)),
-        };
-        serde_json::from_slice(&bytes).map_err(|error| format!("{}: {}", path.display(), chain_text(&error)).into())
-    }
-
-    /// The login of `provider`.
-    fn login(&self, provider: &str) -> Result<Option<StoredLogin>, Box<dyn Error + Send + Sync>> {
-        match self.read()?.remove(provider) {
-            Some(Stored::Login(login)) => Ok(Some(login)),
-            Some(Stored::ApiKey { .. }) | None => Ok(None),
+/// Set the entry of `provider` to `entry`, or remove it. A removal of a missing entry writes nothing.
+fn set_entry(locked: &Locked, provider: &str, entry: Option<Stored>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut entries: BTreeMap<String, Stored> = locked.read().map_err(|error| chain_text(&error))?;
+    match entry {
+        Some(entry) => {
+            entries.insert(provider.to_owned(), entry);
         }
-    }
-
-    /// Take the lock. The call blocks until the holder releases it.
-    fn lock(&self) -> Result<LockedFiles, Box<dyn Error + Send + Sync>> {
-        fs::create_dir_all(&self.folder).map_err(self.file_error(""))?;
-        // The lock is its own file, because the rename of `auth.json` changes the file of that name.
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(self.path(LOCK))
-            .map_err(self.file_error(LOCK))?;
-        file.lock().map_err(self.file_error(LOCK))?;
-        Ok(LockedFiles {
-            files: self.clone(),
-            _lock: file,
-        })
-    }
-}
-
-/// The files of the credentials while this process holds the lock. Only this type writes `auth.json`. The drop releases
-/// the lock.
-#[derive(Debug)]
-struct LockedFiles {
-    files: Files,
-    _lock: File,
-}
-
-impl LockedFiles {
-    /// Set the entry of `provider` to `entry`, or remove it. A removal of a missing entry writes nothing.
-    fn set(&self, provider: &str, entry: Option<Stored>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let mut entries = self.files.read()?;
-        match entry {
-            Some(entry) => {
-                entries.insert(provider.to_owned(), entry);
-            }
-            None => {
-                if entries.remove(provider).is_none() {
-                    return Ok(());
-                }
+        None => {
+            if entries.remove(provider).is_none() {
+                return Ok(());
             }
         }
-        self.write(&entries)
     }
-
-    /// Replace `auth.json` with `entries`. The new file is whole or absent after a crash, and only the user can read
-    /// it.
-    fn write(&self, entries: &BTreeMap<String, Stored>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let files = &self.files;
-        let bytes = serde_json::to_vec_pretty(entries)
-            .map_err(|error| format!("{}: {}", files.path(FILE).display(), chain_text(&error)))?;
-        let temporary = files.path(TEMPORARY);
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&temporary)
-            .map_err(files.file_error(TEMPORARY))?;
-        file.write_all(&bytes).map_err(files.file_error(TEMPORARY))?;
-        file.sync_all().map_err(files.file_error(TEMPORARY))?;
-        fs::rename(&temporary, files.path(FILE)).map_err(files.file_error(FILE))
-    }
+    locked.write(&entries).map_err(|error| chain_text(&error).into())
 }
 
 /// Remove the stored login or API key of `provider` from `auth.json` in the data folder `folder`. Without an entry of
@@ -267,8 +193,8 @@ pub(crate) async fn set_api_key(
 /// # Errors
 ///
 /// Returns an error when the file does not read or holds no valid content.
-pub(crate) fn api_key(provider: &str, folder: PathBuf) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    match (Files { folder }).read()?.remove(provider) {
+pub(crate) fn api_key(provider: &str, folder: &Path) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
+    match read(&credential_file(folder))?.remove(provider) {
         Some(Stored::ApiKey { api_key }) => Ok(Some(api_key)),
         Some(Stored::Login(_)) | None => Ok(None),
     }
@@ -280,7 +206,7 @@ pub(crate) fn api_key(provider: &str, folder: PathBuf) -> Result<Option<String>,
 ///
 /// Returns an error when the file does not read or holds no valid content.
 pub(crate) async fn stored_kinds(folder: PathBuf) -> Result<HashMap<String, StoredKind>, Box<dyn Error + Send + Sync>> {
-    let entries = blocking(move || Files { folder }.read()).await?;
+    let entries = blocking(move || read(&credential_file(&folder))).await?;
     let kind = |entry| match entry {
         Stored::Login(_) => StoredKind::Login,
         Stored::ApiKey { .. } => StoredKind::ApiKey,
@@ -297,9 +223,9 @@ async fn write_entry(
     entry: Option<Stored>,
     folder: PathBuf,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let files = Files { folder };
+    let file = credential_file(&folder);
     let provider = provider.to_owned();
-    blocking(move || files.lock()?.set(&provider, entry)).await
+    blocking(move || set_entry(&lock_file(&file)?, &provider, entry)).await
 }
 
 /// Run `f` on a blocking thread of tokio, because the file calls block.
@@ -320,7 +246,7 @@ impl fmt::Debug for LoginSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LoginSource")
             .field("provider", &self.0.provider)
-            .field("folder", &self.0.files.folder)
+            .field("file", &self.0.file)
             .finish_non_exhaustive()
     }
 }
@@ -328,7 +254,7 @@ impl fmt::Debug for LoginSource {
 struct Login {
     provider: String,
     flow: Flow,
-    files: Files,
+    file: CredentialFile,
     exchange: Arc<dyn Exchange>,
     /// The newest token from `credential/update`. Once set, it replaces the login for the life of the process.
     pushed: Mutex<Option<Pushed>>,
@@ -336,11 +262,11 @@ struct Login {
 
 impl LoginSource {
     /// The source of `provider` with `flow`, and with the files in `folder`.
-    pub(crate) fn new(provider: String, flow: Flow, folder: PathBuf, exchange: Arc<dyn Exchange>) -> LoginSource {
+    pub(crate) fn new(provider: String, flow: Flow, folder: &Path, exchange: Arc<dyn Exchange>) -> LoginSource {
         LoginSource(Arc::new(Login {
             provider,
             flow,
-            files: Files { folder },
+            file: credential_file(folder),
             exchange,
             pushed: Mutex::default(),
         }))
@@ -365,9 +291,13 @@ impl LoginSource {
 impl Login {
     /// The login of the provider in `auth.json`.
     async fn stored(&self) -> Result<StoredLogin, Box<dyn Error + Send + Sync>> {
-        let files = self.files.clone();
+        let file = self.file.clone();
         let provider = self.provider.clone();
-        blocking(move || files.login(&provider))
+        let stored = blocking(move || match read(&file)?.remove(&provider) {
+            Some(Stored::Login(login)) => Ok(Some(login)),
+            Some(Stored::ApiKey { .. }) | None => Ok(None),
+        });
+        stored
             .await?
             .ok_or_else(|| format!("no login for {0}: run /login {0} or `yuke login {0}`", self.provider).into())
     }
@@ -378,13 +308,13 @@ impl Login {
         if stored.valid(SystemTime::now(), MARGIN) {
             return Ok(stored);
         }
-        let files = self.files.clone();
-        let locked = blocking(move || files.lock()).await?;
+        let file = self.file.clone();
+        let locked = blocking(move || lock_file(&file)).await?;
         self.refresh(locked).await
     }
 
     /// Refresh the login while `locked` holds the lock.
-    async fn refresh(&self, locked: LockedFiles) -> Result<StoredLogin, Box<dyn Error + Send + Sync>> {
+    async fn refresh(&self, locked: Locked) -> Result<StoredLogin, Box<dyn Error + Send + Sync>> {
         // Another process can have refreshed during the wait for the lock, so the file holds the truth.
         let stored = self.stored().await?;
         let now = SystemTime::now();
@@ -417,9 +347,9 @@ impl Login {
     }
 
     /// Set the login of the provider to `login`, or remove it. The lock ends after the write.
-    async fn save(&self, locked: LockedFiles, login: Option<StoredLogin>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn save(&self, locked: Locked, login: Option<StoredLogin>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let provider = self.provider.clone();
-        blocking(move || locked.set(&provider, login.map(Stored::Login))).await
+        blocking(move || set_entry(&locked, &provider, login.map(Stored::Login))).await
     }
 
     fn ended(&self) -> Box<dyn Error + Send + Sync> {

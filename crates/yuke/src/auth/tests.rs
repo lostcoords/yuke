@@ -1,6 +1,8 @@
 //! The logins against scripted exchanges, each in a folder of its own. The tests write and read `auth.json` as plain
 //! JSON, so they check the file format apart from the code.
 
+use std::fs;
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::mpsc;
@@ -11,6 +13,8 @@ use yuke_ai::transport::{BoxFuture, ExchangeAnswer, ExchangeRequest, Fault};
 
 use super::*;
 use yuke_ai::scripted::{ScriptedExchange, SentExchange};
+
+const FILE: &str = "auth.json";
 
 const PROVIDER: &str = "xai-grok";
 
@@ -49,7 +53,7 @@ fn saved(folder: &Path) -> Option<(String, String)> {
 }
 
 fn source(folder: &Path, exchange: impl Exchange + 'static) -> LoginSource {
-    LoginSource::new(PROVIDER.to_owned(), Flow::Xai, folder.to_owned(), Arc::new(exchange))
+    LoginSource::new(PROVIDER.to_owned(), Flow::Xai, folder, Arc::new(exchange))
 }
 
 /// The access token of the next attempt, or the text of its error.
@@ -65,11 +69,9 @@ async fn token_of(source: &LoginSource) -> Result<String, String> {
 fn hold_lock(folder: &Path) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
     let (held_sender, held) = mpsc::channel();
     let (release, released) = mpsc::channel::<()>();
-    let files = Files {
-        folder: folder.to_owned(),
-    };
+    let file = credential_file(folder);
     let holder = std::thread::spawn(move || {
-        let locked = files.lock().unwrap();
+        let locked = lock_file(&file).unwrap();
         held_sender.send(()).unwrap();
         released.recv().unwrap();
         drop(locked);
@@ -366,7 +368,7 @@ async fn a_refresh_keeps_the_account_and_each_credential_names_it() {
     let source = LoginSource::new(
         "openai-codex".to_owned(),
         Flow::Codex,
-        folder.clone(),
+        &folder,
         Arc::new(answers.clone()),
     );
 
@@ -431,7 +433,7 @@ async fn a_pushed_token_of_the_codex_flow_names_its_account() {
     let source = LoginSource::new(
         "openai-codex".to_owned(),
         Flow::Codex,
-        folder("pushed_account"),
+        &folder("pushed_account"),
         Arc::new(ScriptedExchange::default()),
     );
 
