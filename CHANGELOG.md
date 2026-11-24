@@ -1,34 +1,46 @@
 # Changelog
 
-Each release has one section. The release job publishes the section of the tag as the notes of the release.
+Each release has one section. The release job publishes the section of each tag as its release notes.
 
-## Unreleased
+## 0.2.0
 
-- `yuke update` (also `yuke upgrade`) installs the newest release of your channel, or the release that you name.
-- The installer takes `YUKE_VERSION` to install one release.
-- The installer checks each download against `SHA256SUMS`.
-- Better Markdown in the TUI: tables, code blocks, and quotes inside list items now render.
-- `yuke:test`: `createHost({ frame })` gives each plugin under test a terminal on the frame, and the frame shows the
-  notices of the host. A plugin under test can be a bundled plugin, `{ bundled: "chat" }`, and can get a `dataDir`.
+### Breaking changes
+
+- A tool result keeps the `bytes` of its media without a copy, and a tool keeps its `inputSchema` without a copy. Do
+  not change them after you give them to yuke.
+- `sessions` and `catalog` reject the promise when yuke refuses an argument, such as a malformed session id. Before,
+  they threw at the call.
+- `McpServerState` has the new kind `needsLogin`. A `switch` over all kinds needs a case for it.
+- A TUI or chat listener that you add twice runs twice. Each remover removes only its own add. Before, yuke kept one
+  entry, and one remover removed both.
+
+### Features
+
+- `yuke update` (also `yuke upgrade`) installs the newest release of your channel (stable or nightly), or the
+  release that you name.
+- The installer takes `YUKE_VERSION` to install one release. It checks each download against `SHA256SUMS`.
+- MCP servers can be remote. An entry with `url` connects over Streamable HTTP and sends its `headers` on each
+  request, with `${NAME}` expanded.
+- Remote MCP servers can use OAuth. In the TUI, `/mcp` lists the servers and logs in to them, and
+  `/mcp logout <server>` removes a login. RPC clients use `mcp/login` and the related methods.
+- The chat shows a title for each built-in tool (`Read`, `Write`, `Edit`, `Exec`, `Stop`). A plugin tool sets its
+  title with `hints.title`.
+- The TUI renders tables, code blocks, and quotes inside list items.
+
+### Plugin API
+
+- `yuke:test`: `createHost({ frame })` gives each plugin under test a terminal on the frame. The frame shows host
+  notices. A test can load a bundled plugin (`{ bundled: "chat" }`) and give it a `dataDir`.
 - `yuke:test`: `FrameTest` has `rows()`, `click()`, and `drag()`.
-- `Transcript.jobs` holds the running background jobs of the session.
-- The chat pane no longer fails when its session closes while a page of history loads.
-- A request of `sessions` or `catalog` with an argument that yuke refuses, such as a malformed session id, rejects its
-  promise. Before, it threw at the call.
-- The optional fields of the options of `yuke:test` take `undefined`.
-- The built-in tools show a title in the chat: `Read`, `Write`, `Edit`, `Exec`, and `Stop`. A plugin tool shows one
-  with `hints.title`.
-- MCP servers can be remote: an entry with `url` connects over Streamable HTTP, and its `headers` go on each request,
-  with `${NAME}` expanded. The format is the same as in other agents.
-- Remote MCP servers can use OAuth (the MCP authorization spec). A server that needs a login has the state
-  `needsLogin`. In the TUI, `/mcp` lists the servers of the session and logs in to a server that needs a login, and
-  `/mcp logout <server>` removes the login. An RPC client logs in with `mcp/login`, `mcp/completeLogin`, and
-  `mcp/cancelLogin`, and removes the login with `mcp/logout`. With `yuke -p`, a server that needs a login gives a
-  notice that names `/mcp`.
-- yuke keeps a connection open for 60 seconds after a request, and the next request to the same host uses it, so it
-  skips the connection setup.
-- On a network where IPv6 drops packets, a request goes over IPv4 after 250 ms. Before, it waited for the system to
-  give up on IPv6, which takes about 75 seconds on macOS.
+- `yuke:test` options accept `undefined` for optional fields.
+- `Transcript.jobs` holds the running background jobs.
+
+### Fixes and speed
+
+- The chat pane no longer fails when its session closes while history loads.
+- yuke reuses an HTTP connection for 60 seconds, so repeated requests to a host start faster.
+- On networks where IPv6 drops packets, yuke falls back to IPv4 after 250 ms. Before, it could hang for about 75
+  seconds.
 
 ## 0.1.1
 
