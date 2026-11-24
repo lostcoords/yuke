@@ -930,7 +930,8 @@ fn start_servers(host: &Rc<Host>, folder: &Path) -> Servers {
     let trust = trust_of(Rc::clone(host), folder.to_owned(), project);
     let media = Rc::clone(host) as Rc<dyn MediaStore>;
     let http = Arc::clone(&shared.machine.http);
-    Servers::start(&user, &entries, trust, &variable, folder, media, http, on_change)
+    let data = &shared.machine.paths.data;
+    Servers::start(&user, &entries, trust, &variable, folder, data, media, http, on_change)
 }
 
 /// Whether the user trusts the project servers `project` of `folder`: a kept confirm, or a yes to the question now. A

@@ -10,22 +10,32 @@ use rmcp::transport::streamable_http_client::{
     SseError, StreamableHttpClient, StreamableHttpError, StreamableHttpPostResponse, StreamableHttpResponseLimits,
 };
 use sse_stream::{Sse, SseStream};
-use yuke_http::http::header::{ACCEPT, CONTENT_TYPE};
+use yuke_http::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use yuke_http::http::{HeaderName, HeaderValue, Method, StatusCode};
 use yuke_http::{Body, Client, Error, Request, Response};
+
+use crate::oauth::Auth;
 
 const SESSION_ID: HeaderName = HeaderName::from_static("mcp-session-id");
 
 type Failure = StreamableHttpError<Error>;
 
-/// The client of the remote servers. A clone shares the client of the app, with its connections.
+/// The client of one remote server. A clone shares the client of the app, with its connections, and the login of the
+/// server.
 #[derive(Clone)]
-pub(crate) struct HttpClient(pub(crate) Arc<Client>);
+pub(crate) struct HttpClient {
+    pub(crate) client: Arc<Client>,
+    /// `None` for a server whose headers hold the `authorization` of their own.
+    pub(crate) auth: Option<Arc<Auth>>,
+}
 
 impl HttpClient {
     /// Send a request to `uri` with the headers of the config, then the headers that the protocol owns, so a header of
     /// the config cannot replace `accept`, `content-type`, or the session. A request has no time bound: a tool call can
     /// work for long.
+    ///
+    /// With a login, the request carries its token. A `401` answer with a token refreshes the token once and sends the
+    /// request again. A `401` answer that leads to OAuth metadata marks the server as one that needs a login.
     async fn send(
         &self,
         method: Method,
@@ -48,8 +58,44 @@ impl HttpClient {
                 .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             request.body = vec![body.into()];
         }
-        self.0.send(request).await.map_err(StreamableHttpError::Client)
+        let Some(auth) = &self.auth else {
+            return self.client.send(request).await.map_err(StreamableHttpError::Client);
+        };
+        let token = auth.token().await.map_err(refused)?;
+        if let Some(token) = &token {
+            bearer(&mut request, token);
+        }
+        let response = self
+            .client
+            .send(request.clone())
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        if response.status != StatusCode::UNAUTHORIZED {
+            return Ok(response);
+        }
+        let refreshed = match token {
+            Some(rejected) => auth.refresh(Some(&rejected)).await.map_err(refused)?,
+            None => None,
+        };
+        let Some(token) = refreshed else {
+            auth.challenged(&response.headers).await;
+            return Ok(response);
+        };
+        bearer(&mut request, &token);
+        self.client.send(request).await.map_err(StreamableHttpError::Client)
     }
+}
+
+/// Set the token of the login in `request`.
+fn bearer(request: &mut Request, token: &str) {
+    if let Ok(value) = HeaderValue::try_from(format!("Bearer {token}")) {
+        request.headers.insert(AUTHORIZATION, value);
+    }
+}
+
+/// The failure of a request that the login of the server stopped.
+fn refused(text: String) -> Failure {
+    StreamableHttpError::UnexpectedServerResponse(text.into())
 }
 
 /// Read `body` until it ends or holds more than `limit` bytes.

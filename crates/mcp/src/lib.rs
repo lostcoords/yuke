@@ -4,7 +4,9 @@
 mod config;
 mod http;
 mod names;
+mod oauth;
 mod servers;
 
-pub use config::{Config, ServerConfig};
+pub use config::{Config, OAuthConfig, ServerConfig};
+pub use oauth::PendingLogin;
 pub use servers::{McpTool, OnChange, Servers};

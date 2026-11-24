@@ -21,11 +21,14 @@ rmcp = { version = "=3.11.0", default-features = false, features = [
   "transport-streamable-http-client",
 ] }
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
+# The version and the provider of yuke-http: the random bytes of a login come from its provider.
+rustls = { version = "0.23.46", default-features = false, features = ["aws-lc-rs", "std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = { version = "0.11.0", default-features = false }
 # The version that rmcp uses, so its `Sse` type is ours.
 sse-stream = "0.2.6"
-tokio = { version = "1.53", features = ["io-util", "macros", "process", "rt", "sync"] }
+tokio = { version = "1.53", features = ["io-util", "macros", "net", "process", "rt", "sync"] }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
 yuke-http = { path = "../http" }

@@ -11,4 +11,4 @@ tools: number, } | { "kind": "failed",
 /**
  * Why.
  */
-error: string, } | { "kind": "disabled" } | { "kind": "untrusted" };
+error: string, } | { "kind": "disabled" } | { "kind": "untrusted" } | { "kind": "needsLogin" };

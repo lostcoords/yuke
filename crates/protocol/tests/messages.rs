@@ -555,6 +555,7 @@ fn an_mcp_server_update_and_the_server_list_read_and_write_their_json() {
         &json!({ "servers": [
             { "name": "git", "source": "project", "state": { "kind": "failed", "error": "the server stopped" } },
             { "name": "git", "source": "project", "state": { "kind": "untrusted" } },
+            { "name": "git", "source": "project", "state": { "kind": "needsLogin" } },
         ] }),
         &ListMcpServersResult {
             servers: vec![
@@ -562,6 +563,7 @@ fn an_mcp_server_update_and_the_server_list_read_and_write_their_json() {
                     error: "the server stopped".to_owned(),
                 }),
                 server(McpServerState::Untrusted),
+                server(McpServerState::NeedsLogin),
             ],
         },
     );

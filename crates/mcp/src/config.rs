@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use yuke_http::http::{HeaderName, HeaderValue};
 
+use crate::oauth::canonical;
+
 /// The servers of one MCP config file, by name.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
@@ -38,9 +40,27 @@ pub struct ServerConfig {
     // An empty map stays out of the JSON, so the trust of a project without headers keeps its key.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    /// The OAuth settings of an HTTP server.
+    // `None` stays out of the JSON, so the trust of a project without OAuth keeps its key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OAuthConfig>,
     /// `false` keeps the server off.
     #[serde(default = "enabled")]
     pub enabled: bool,
+}
+
+/// The OAuth settings of a remote server. A server that needs OAuth works without them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthConfig {
+    /// The client id that the authorization server gave to yuke. Without it, yuke uses its own client id document, or
+    /// it registers a client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// The port of the login redirect on 127.0.0.1, for a client that the authorization server registered with a fixed
+    /// redirect. Without it, the port is free.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_port: Option<u16>,
 }
 
 fn enabled() -> bool {
@@ -50,18 +70,25 @@ fn enabled() -> bool {
 /// How a server starts: a program on this computer, or a connection to a URL.
 pub(crate) enum Launch {
     Process(Command),
-    Remote {
-        url: String,
-        headers: HashMap<HeaderName, HeaderValue>,
-    },
+    Remote(Remote),
+}
+
+/// A connection to a URL.
+#[derive(Clone)]
+pub(crate) struct Remote {
+    pub(crate) url: String,
+    /// The canonical form of `url`.
+    pub(crate) resource: String,
+    pub(crate) headers: HashMap<HeaderName, HeaderValue>,
+    pub(crate) oauth: OAuthConfig,
 }
 
 impl ServerConfig {
     /// The start of the server, or why the entry gives none. A `command` starts a program, and a `url` connects to an
     /// HTTP server.
     ///
-    /// `${NAME}` and `${NAME:-default}` take the value of the variable `NAME` from `variable`. They work in the command,
-    /// the arguments, the environment values, the folder, the URL, and the header values. The program runs in
+    /// `${NAME}` and `${NAME:-default}` take the value of the variable `NAME` from `variable`. They work in the
+    /// command, the arguments, the environment values, the folder, the URL, and the header values. The program runs in
     /// `session_folder`, in a relative `folder` of the entry under `session_folder`, or in an absolute `folder` of the
     /// entry.
     pub(crate) fn launch(
@@ -80,10 +107,13 @@ impl ServerConfig {
                         .map_err(|_| format!("the value of the header {name} is not valid"))?;
                     headers.insert(header, value);
                 }
-                return Ok(Launch::Remote {
-                    url: expand(url)?,
+                let url = expand(url)?;
+                return Ok(Launch::Remote(Remote {
+                    resource: canonical(&url)?,
+                    url,
                     headers,
-                });
+                    oauth: self.oauth.clone().unwrap_or_default(),
+                }));
             }
             _ => return Err("the server needs exactly one of command and url".to_owned()),
         };
@@ -145,7 +175,7 @@ mod tests {
     fn command(entry: &ServerConfig) -> Command {
         match entry.launch(&variable, Path::new("/work")) {
             Ok(Launch::Process(command)) => command,
-            Ok(Launch::Remote { url, .. }) => panic!("a remote server at {url}"),
+            Ok(Launch::Remote(remote)) => panic!("a remote server at {}", remote.url),
             Err(error) => panic!("{error}"),
         }
     }
@@ -233,12 +263,13 @@ mod tests {
         .unwrap();
         let launch = |name: &str| config.servers[name].launch(&variable, Path::new("/work"));
 
-        let Ok(Launch::Remote { url, headers }) = launch("docs") else {
+        let Ok(Launch::Remote(remote)) = launch("docs") else {
             panic!("no remote launch");
         };
 
-        assert_eq!(url, "https://docs.test/mcp");
-        let mut headers: Vec<_> = headers
+        assert_eq!(remote.url, "https://docs.test/mcp");
+        let mut headers: Vec<_> = remote
+            .headers
             .iter()
             .map(|(name, value)| (name.as_str(), value.to_str().unwrap()))
             .collect();
@@ -252,6 +283,32 @@ mod tests {
         assert_eq!(
             launch("unset").err().as_deref(),
             Some("the variable KEY has no value and no default")
+        );
+    }
+
+    #[test]
+    fn the_oauth_settings_of_a_remote_entry_read_in_camel_case_and_stay_out_of_the_json_when_absent() {
+        let config: Config = serde_json::from_str(
+            r#"{ "mcpServers": {
+                 "linear": { "url": "https://linear.test/mcp", "oauth": { "clientId": "abc", "callbackPort": 19876 } },
+                 "plain": { "url": "https://plain.test/mcp" }
+               } }"#,
+        )
+        .unwrap();
+
+        let Ok(Launch::Remote(linear)) = config.servers["linear"].launch(&variable, Path::new("/work")) else {
+            panic!("no remote launch");
+        };
+        let Ok(Launch::Remote(plain)) = config.servers["plain"].launch(&variable, Path::new("/work")) else {
+            panic!("no remote launch");
+        };
+
+        assert_eq!(linear.oauth.client_id.as_deref(), Some("abc"));
+        assert_eq!(linear.oauth.callback_port, Some(19876));
+        assert_eq!(plain.oauth, OAuthConfig::default());
+        assert_eq!(
+            serde_json::to_value(&config.servers["linear"]).unwrap()["oauth"],
+            serde_json::json!({ "clientId": "abc", "callbackPort": 19876 })
         );
     }
 

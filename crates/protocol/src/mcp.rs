@@ -23,6 +23,8 @@ pub enum McpServerState {
     Disabled,
     /// A project server that the user did not confirm. It does not start.
     Untrusted,
+    /// The server needs a login, or its login ended.
+    NeedsLogin,
 }
 
 /// The config file of an MCP server.

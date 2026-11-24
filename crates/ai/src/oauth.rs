@@ -248,7 +248,7 @@ fn accepted(result: Result<ExchangeAnswer, Fault>) -> Result<ExchangeAnswer, OAu
 }
 
 /// Encode `fields` as `application/x-www-form-urlencoded` (WHATWG URL, section 5.2).
-fn form(fields: &[(&str, &str)]) -> String {
+pub fn form(fields: &[(&str, &str)]) -> String {
     let mut encoded = String::new();
     for (index, (name, value)) in fields.iter().enumerate() {
         if index > 0 {

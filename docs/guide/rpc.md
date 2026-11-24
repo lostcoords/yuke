@@ -106,7 +106,7 @@ The background jobs of a session run while the session is open. `job/list` lists
 
 ## MCP servers
 
-Each open session runs the servers of the user config and of `.mcp.json` in its folder. An `mcpServer` live update holds the whole state of one server, with its `source` (`user` or `project`). Its `state` has the kind `connecting`, `connected` with its tool count, `failed` with its error, `disabled`, or `untrusted`. `mcp/list` gives each server of a session.
+Each open session runs the servers of the user config and of `.mcp.json` in its folder. An `mcpServer` live update holds the whole state of one server, with its `source` (`user` or `project`). Its `state` has the kind `connecting`, `connected` with its tool count, `failed` with its error, `disabled`, `untrusted`, or `needsLogin` (a remote server that needs an OAuth login). `mcp/list` gives each server of a session.
 
 Project servers start only after the user confirms them. yuke asks one question from `host:mcp`, with the options "Start" and "Don't start", and keeps a start for that folder and that list of servers. See [MCP servers](mcp.md).
 

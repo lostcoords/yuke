@@ -14,11 +14,16 @@
 //! With `MCP_TEST_LOG`, the server writes one line to that file for each event: `initialize <version>`, `call <id>`,
 //! or `cancelled <id>`. Over HTTP, it also writes `key <value>` for the `x-api-key` header of each POST, and
 //! `delete <session> <key>` for the end of a session. It answers a request with the key `deny` with 401.
+//!
+//! With `MCP_TEST_OAUTH`, the endpoint `/mcp` needs a bearer token, and the server is an authorization server too. See
+//! the `oauth` module.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 
 use serde_json::{Value, json};
+
+mod oauth;
 
 fn main() {
     if std::env::args().any(|arg| arg == "--http") {
@@ -86,6 +91,7 @@ fn serve_http() {
     let Ok(address) = listener.local_addr() else {
         return;
     };
+    oauth::set_port(address.port());
     let mut stdout = std::io::stdout();
     if writeln!(stdout, "{}", address.port())
         .and_then(|()| stdout.flush())
@@ -109,7 +115,7 @@ fn connection(stream: TcpStream) {
         if !matches!(reader.read_line(&mut start), Ok(1..)) {
             return;
         }
-        let (mut length, mut key, mut session) = (0, None, None);
+        let (mut length, mut key, mut session, mut authorization) = (0, None, None, None);
         loop {
             let mut line = String::new();
             if !matches!(reader.read_line(&mut line), Ok(1..)) {
@@ -123,12 +129,29 @@ fn connection(stream: TcpStream) {
                 "content-length" => length = value.parse().unwrap_or_default(),
                 "x-api-key" => key = Some(value),
                 "mcp-session-id" => session = Some(value),
+                "authorization" => authorization = Some(value),
                 _ => {}
             }
         }
         let mut body = vec![0; length];
         if reader.read_exact(&mut body).is_err() {
             return;
+        }
+        let mut parts = start.split(' ');
+        let (method, target) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+        if let Some(answer) = oauth::route(method, target, &body) {
+            if writer.write_all(answer.as_bytes()).is_err() {
+                return;
+            }
+            continue;
+        }
+        if oauth::enabled()
+            && let Some(answer) = oauth::challenge(authorization.as_deref())
+        {
+            if writer.write_all(answer.as_bytes()).is_err() {
+                return;
+            }
+            continue;
         }
         let key = key.unwrap_or_default();
         let logged = if start.starts_with("DELETE") {

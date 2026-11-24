@@ -4,7 +4,9 @@ description: Connect local MCP servers over stdio and remote MCP servers over HT
 
 # MCP servers
 
-yuke supports local MCP servers over stdio and remote MCP servers over Streamable HTTP. A remote server can take an API key in a header. yuke does not support OAuth logins or the older SSE transport yet.
+yuke supports local MCP servers over stdio and remote MCP servers over Streamable HTTP. A remote server can take an API key in a header.
+A remote server that needs an OAuth login has the state `needsLogin`. The login itself is not available yet.
+yuke does not support the older SSE transport.
 
 ## Sources and trust
 

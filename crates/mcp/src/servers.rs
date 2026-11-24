@@ -22,16 +22,18 @@ use rmcp::transport::{IntoTransport, StreamableHttpClientTransport, TokioChildPr
 use rmcp::{Peer, RoleClient, ServiceExt};
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::io::AsyncReadExt;
-use tokio::process::ChildStderr;
+use tokio::process::{ChildStderr, Command};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use yuke_ai::{Blob, Media, ToolDefinition};
 use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, ToolHints, parse_arguments};
+use yuke_http::http::header::AUTHORIZATION;
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 
-use crate::config::{Launch, ServerConfig};
+use crate::config::{Launch, Remote, ServerConfig};
 use crate::http::HttpClient;
 use crate::names::{hashed_name, tool_name};
+use crate::oauth::{Auth, PendingLogin};
 
 /// The connection to one running server.
 type Client = RunningService<RoleClient, ClientConfig>;
@@ -55,13 +57,19 @@ struct Slot {
     /// Stops the connection while the server runs.
     stop: Option<RunningServiceCancellationToken>,
     tools: Vec<McpToolInfo>,
+    /// The connection of a remote server, to connect again after its login.
+    remote: Option<Remote>,
+    /// The login of a remote server.
+    auth: Option<Arc<Auth>>,
 }
 
 /// What the servers and their tasks share.
 struct Shared {
     slots: RefCell<Vec<Slot>>,
-    http: HttpClient,
+    http: Arc<yuke_http::Client>,
     on_change: OnChange,
+    /// The number of servers that still start or wait for the trust.
+    starting: watch::Sender<usize>,
     /// After a close, a stop is no news and no gated server starts.
     closed: Cell<bool>,
     /// The task of each started server, by its slot index. The trust task has no index.
@@ -97,8 +105,6 @@ impl Shared {
 /// server ends. A drop stops each server.
 pub struct Servers {
     shared: Rc<Shared>,
-    /// The number of servers that still start or wait for the trust.
-    starting: watch::Receiver<usize>,
     media: Rc<dyn MediaStore>,
 }
 
@@ -115,8 +121,8 @@ impl Servers {
     /// waits in [`McpServerState::Untrusted`] until `trust` answers; a `true` starts it. `trust` runs only when a
     /// project server can start. `variable` gives the values of the variables of the config. A server without its own
     /// folder runs in `folder`. `media` stores the attachments of the results. `http` sends the requests of the remote
-    /// servers. `on_change` gets each later state of a server: the end of its start, the start after the trust, and its
-    /// stop.
+    /// servers, and `data` is the folder of their stored logins. `on_change` gets each later state of a server: the end
+    /// of its start, the start after the trust, and its stop.
     ///
     /// # Panics
     ///
@@ -131,6 +137,7 @@ impl Servers {
         trust: impl Future<Output = bool> + 'static,
         variable: &dyn Fn(&str) -> Option<String>,
         folder: &Path,
+        data: &Path,
         media: Rc<dyn MediaStore>,
         http: Arc<yuke_http::Client>,
         on_change: OnChange,
@@ -143,18 +150,25 @@ impl Servers {
         let mut slots = Vec::new();
         let (mut launches, mut gated) = (Vec::new(), Vec::new());
         for (index, (source, (name, config))) in entries.enumerate() {
+            let (mut remote, mut auth) = (None, None);
             let state = match config.enabled.then(|| config.launch(variable, folder)) {
                 None => McpServerState::Disabled,
-                Some(Ok(launch)) => match source {
-                    McpServerSource::User => {
-                        launches.push((index, launch));
-                        McpServerState::Connecting
+                Some(Ok(launch)) => {
+                    if let Launch::Remote(launch) = &launch {
+                        auth = Some(Arc::new(Auth::new(Arc::clone(&http), data, launch)));
+                        remote = Some(launch.clone());
                     }
-                    McpServerSource::Project => {
-                        gated.push((index, launch));
-                        McpServerState::Untrusted
+                    match source {
+                        McpServerSource::User => {
+                            launches.push((index, launch));
+                            McpServerState::Connecting
+                        }
+                        McpServerSource::Project => {
+                            gated.push((index, launch));
+                            McpServerState::Untrusted
+                        }
                     }
-                },
+                }
                 Some(Err(error)) => McpServerState::Failed { error },
             };
             slots.push(Slot {
@@ -164,45 +178,94 @@ impl Servers {
                 peer: None,
                 stop: None,
                 tools: Vec::new(),
+                remote,
+                auth,
             });
         }
         let shared = Rc::new(Shared {
             slots: RefCell::new(slots),
-            http: HttpClient(http),
+            http,
             on_change,
+            starting: watch::channel(launches.len() + gated.len()).0,
             closed: Cell::new(false),
             tasks: RefCell::default(),
         });
-        let (count, starting) = watch::channel(launches.len() + gated.len());
-        let count = Rc::new(count);
         let mut tasks = shared.tasks.borrow_mut();
         for (index, launch) in launches {
-            let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
             tasks.push((
                 Some(index),
-                tokio::task::spawn_local(run(index, launch, task_shared, count)),
+                tokio::task::spawn_local(run(index, launch, Rc::clone(&shared))),
             ));
         }
         if !gated.is_empty() {
-            let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
             tasks.push((
                 None,
-                tokio::task::spawn_local(start_trusted(gated, trust, task_shared, count)),
+                tokio::task::spawn_local(start_trusted(gated, trust, Rc::clone(&shared))),
             ));
         }
         drop(tasks);
-        Servers {
-            shared,
-            starting,
-            media,
-        }
+        Servers { shared, media }
     }
 
     /// Wait until no server starts.
     pub async fn ready(&self) {
-        let mut starting = self.starting.clone();
-        // The tasks hold the sender, so its drop means that each task ended and no server starts.
+        let mut starting = self.shared.starting.subscribe();
         _ = starting.wait_for(|starting| *starting == 0).await;
+    }
+
+    /// Start the login of the server `name`, which is in the state [`McpServerState::NeedsLogin`]. The user opens the
+    /// [`PendingLogin::url`]. The future ends when the login ends. After a success, the server connects again: its
+    /// state changes to `Connecting`, and then to `Connected` or `Failed`. A drop of the future ends the login.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the login cannot start: the server does not exist or does not need a login, or its OAuth metadata
+    /// does not allow a login.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the future runs outside a tokio local runtime or local task set.
+    pub async fn login(
+        &self,
+        name: &str,
+    ) -> Result<(PendingLogin, impl Future<Output = Result<(), String>> + use<>), String> {
+        let (index, auth) = {
+            let slots = self.shared.slots.borrow();
+            let Some((index, slot)) = slots.iter().enumerate().find(|(_, slot)| slot.name == name) else {
+                return Err(format!("there is no server {name}"));
+            };
+            match (&slot.auth, &slot.state) {
+                (Some(auth), McpServerState::NeedsLogin) => (index, Arc::clone(auth)),
+                _ => return Err(format!("the server {name} does not need a login")),
+            }
+        };
+        let (login, outcome) = auth.login().await?;
+        let shared = Rc::clone(&self.shared);
+        let outcome = async move {
+            outcome.await?;
+            reconnect(&shared, index);
+            Ok(())
+        };
+        Ok((login, outcome))
+    }
+
+    /// Remove the stored login of the remote server `name`. A server that had a login stops, and it needs a login
+    /// again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the server is not a remote server, or when the stored logins do not read or write.
+    pub async fn logout(&self, name: &str) -> Result<(), String> {
+        let auth = {
+            let slots = self.shared.slots.borrow();
+            slots
+                .iter()
+                .find(|slot| slot.name == name)
+                .and_then(|slot| slot.auth.clone())
+        };
+        auth.ok_or_else(|| format!("{name} is not a remote server"))?
+            .logout()
+            .await
     }
 
     /// Each server and its state, in config order.
@@ -277,6 +340,8 @@ impl Servers {
             // An aborted start dropped its program, and a cancelled connection closed it.
             _ = task.await;
         }
+        // An aborted start never ended its count.
+        self.shared.starting.send_replace(0);
     }
 }
 
@@ -289,30 +354,51 @@ impl Drop for Servers {
 }
 
 /// Wait for `trust`, then start each server of `gated` when it is `true`. A server that does not start stays untrusted.
-async fn start_trusted(
-    gated: Vec<(usize, Launch)>,
-    trust: impl Future<Output = bool>,
-    shared: Rc<Shared>,
-    count: Rc<watch::Sender<usize>>,
-) {
+async fn start_trusted(gated: Vec<(usize, Launch)>, trust: impl Future<Output = bool>, shared: Rc<Shared>) {
     let trusted = trust.await;
     for (index, launch) in gated {
         if !trusted || shared.closed.get() {
-            count.send_modify(|starting| *starting -= 1);
+            shared.starting.send_modify(|starting| *starting -= 1);
             continue;
         }
         shared.update(index, |slot| slot.state = McpServerState::Connecting);
-        let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
-        shared.tasks.borrow_mut().push((
-            Some(index),
-            tokio::task::spawn_local(run(index, launch, task_shared, count)),
-        ));
+        let task = tokio::task::spawn_local(run(index, launch, Rc::clone(&shared)));
+        shared.tasks.borrow_mut().push((Some(index), task));
     }
 }
 
+/// Start the server of the slot `index` again after its login.
+fn reconnect(shared: &Rc<Shared>, index: usize) {
+    let remote = {
+        let slots = shared.slots.borrow();
+        let slot = &slots[index];
+        // A second login of the same server finds the state changed already.
+        match &slot.remote {
+            Some(remote) if slot.state == McpServerState::NeedsLogin && !shared.closed.get() => remote.clone(),
+            _ => return,
+        }
+    };
+    shared.starting.send_modify(|starting| *starting += 1);
+    shared.update(index, |slot| slot.state = McpServerState::Connecting);
+    let task = tokio::task::spawn_local(run(index, Launch::Remote(remote), Rc::clone(shared)));
+    let mut tasks = shared.tasks.borrow_mut();
+    // The task of the failed start ended, and `close` needs the new task at the index.
+    tasks.retain(|(task_index, _)| *task_index != Some(index));
+    tasks.push((Some(index), task));
+}
+
 /// Start the server of the slot `index` with `launch`, and hold its connection until the server ends.
-async fn run(index: usize, launch: Launch, shared: Rc<Shared>, count: Rc<watch::Sender<usize>>) {
-    let connected = connect(launch, shared.http.clone()).await;
+async fn run(index: usize, launch: Launch, shared: Rc<Shared>) {
+    let auth = shared.slots.borrow()[index].auth.clone();
+    let connected = match launch {
+        Launch::Process(process) => connect(process).await.map_err(|error| McpServerState::Failed { error }),
+        Launch::Remote(remote) => connect_remote(remote, auth.clone(), &shared)
+            .await
+            .map(|(client, tools)| {
+                // A remote server has no process and no stderr.
+                (client, tools, Program { group: None, log: None })
+            }),
+    };
     let connection = match connected {
         Ok((client, tools, program)) => {
             shared.update(index, |slot| {
@@ -323,40 +409,78 @@ async fn run(index: usize, launch: Launch, shared: Rc<Shared>, count: Rc<watch::
             });
             Some((client, program))
         }
-        Err(error) => {
-            shared.update(index, |slot| slot.state = McpServerState::Failed { error });
+        Err(state) => {
+            shared.update(index, |slot| slot.state = state);
             None
         }
     };
-    count.send_modify(|starting| *starting -= 1);
+    shared.starting.send_modify(|starting| *starting -= 1);
     let Some((client, program)) = connection else {
         return;
     };
-    // The connection ends when the server ends or a close cancels it.
-    _ = client.waiting().await;
+    // The connection ends when the server ends, when a close cancels it, or when the server needs a login again.
+    let stop = client.cancellation_token();
+    let mut waiting = std::pin::pin!(client.waiting());
+    let login_lost = async {
+        match &auth {
+            Some(auth) => auth.wait_for_needs_login().await,
+            None => std::future::pending().await,
+        }
+    };
+    let needs_login = tokio::select! {
+        _ = &mut waiting => false,
+        () = login_lost => {
+            stop.cancel();
+            _ = waiting.await;
+            true
+        }
+    };
     let log = program.end().await;
     shared.update(index, |slot| {
         slot.peer = None;
         slot.stop = None;
         slot.tools.clear();
-        slot.state = McpServerState::Failed {
-            error: with_log("the server stopped".to_owned(), &log),
+        slot.state = if needs_login {
+            McpServerState::NeedsLogin
+        } else {
+            McpServerState::Failed {
+                error: with_log("the server stopped".to_owned(), &log),
+            }
         };
     });
 }
 
-/// Start the program of `launch`, or connect to its URL with `http`. Then agree on the protocol, and list the tools. The
-/// error of a failed start holds the last stderr lines of the program.
-async fn connect(launch: Launch, http: HttpClient) -> Result<(Client, Vec<McpToolInfo>, Program), String> {
-    let process = match launch {
-        Launch::Process(process) => process,
-        Launch::Remote { url, headers } => {
-            let config = StreamableHttpClientTransportConfig::with_uri(url).custom_headers(headers);
-            let (client, tools) = agree(StreamableHttpClientTransport::with_client(http, config)).await?;
-            // A remote server has no process and no stderr.
-            return Ok((client, tools, Program { group: None, log: None }));
-        }
+/// Connect to the URL of `remote`. Then agree on the protocol, and list the tools. A server that needs a login ends
+/// in [`McpServerState::NeedsLogin`].
+async fn connect_remote(
+    remote: Remote,
+    auth: Option<Arc<Auth>>,
+    shared: &Shared,
+) -> Result<(Client, Vec<McpToolInfo>), McpServerState> {
+    // A static `authorization` header of the config replaces the OAuth login.
+    let auth = auth.filter(|_| !remote.headers.contains_key(&AUTHORIZATION));
+    if let Some(auth) = &auth {
+        auth.set_needs_login(false);
+    }
+    let http = HttpClient {
+        client: Arc::clone(&shared.http),
+        auth: auth.clone(),
     };
+    let config = StreamableHttpClientTransportConfig::with_uri(remote.url).custom_headers(remote.headers);
+    agree(StreamableHttpClientTransport::with_client(http, config))
+        .await
+        .map_err(|error| {
+            if auth.is_some_and(|auth| auth.needs_login()) {
+                McpServerState::NeedsLogin
+            } else {
+                McpServerState::Failed { error }
+            }
+        })
+}
+
+/// Start the program `process`. Then agree on the protocol, and list the tools. The error of a failed start holds the
+/// last stderr lines of the program.
+async fn connect(process: Command) -> Result<(Client, Vec<McpToolInfo>, Program), String> {
     // A wrapper such as `npx` starts the real server as its child. In a session of its own, a kill of the server stops
     // the whole group.
     let mut process = CommandWrap::from(process);
