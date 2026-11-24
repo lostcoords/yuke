@@ -42,6 +42,7 @@ const PLUGIN_TYPES: &[&str] = &[
     "LoginId",
     "LoginOutcome",
     "LoginResult",
+    "McpLoginResult",
     "McpServer",
     "ModelReference",
     "NoticeLevel",

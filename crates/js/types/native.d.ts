@@ -26,6 +26,7 @@ declare module "yuke:internal/native" {
     LoginId,
     LoginOutcome,
     LoginResult,
+    McpLoginResult,
     McpServer,
     NoticeLevel,
     NoticeParams,
@@ -550,6 +551,10 @@ declare module "yuke:internal/native" {
   export function authCancelLogin(id: LoginId): void;
   export function authSetApiKey(params: SetApiKeyParams): Promise<void>;
   export function authLogout(provider: string): Promise<void>;
+  export function mcpLogin(request: readonly [id: SessionId, server: string]): Promise<McpLoginResult>;
+  export function mcpCompleteLogin(request: readonly [id: LoginId, redirectUrl: string]): void;
+  export function mcpCancelLogin(id: LoginId): void;
+  export function mcpLogout(request: readonly [id: SessionId, server: string]): Promise<void>;
   export function pluginsList(nothing: null): Promise<ListPluginsResult>;
   export function pluginsSync(nothing: null): Operation<SyncPluginsResult>;
   export function pluginsCheck(params: CheckPluginsParams): Operation<CheckPluginsResult>;

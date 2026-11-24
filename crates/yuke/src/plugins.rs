@@ -133,6 +133,12 @@ const BUNDLED: &[Bundled] = &[
         provides: &[],
     },
     Bundled {
+        name: "mcp",
+        module: "yuke:internal/bundled/mcp",
+        uses: &["chat"],
+        provides: &[],
+    },
+    Bundled {
         name: "plugins",
         module: "yuke:internal/bundled/plugins",
         uses: &[],

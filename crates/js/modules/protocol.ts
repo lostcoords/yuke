@@ -742,6 +742,19 @@ state: PluginState,
 load: PluginLoad, };
 
 /**
+ * The result of `mcp/login`: the page where the user approves the login.
+ */
+export type McpLoginResult = { 
+/**
+ * The login. Its `mcp/loginFinished` names it.
+ */
+loginId: LoginId, 
+/**
+ * The page where the user approves the login. The browser then goes to a redirect address on 127.0.0.1.
+ */
+url: string, };
+
+/**
  * One MCP server of a session.
  */
 export type McpServer = { 

@@ -3,9 +3,9 @@
  * takes an API key. A dialog shows the page and the code of a device login. `/logout` removes what yuke stored.
  */
 
+import { openBrowser } from "yuke:internal/browser";
 import { type Auth, auth as credentials, type LoginInProgress } from "yuke:internal/sessions";
 import type { PluginContext } from "yuke:plugins";
-import { Command } from "yuke:process";
 import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
 import type { Canvas, Tui, View } from "yuke:tui";
 
@@ -72,19 +72,6 @@ async function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider:
     },
   });
   if (saved !== undefined) ctx.notify("info", `Key saved · ${provider.id}`);
-}
-
-/** Open `url` in the browser. The module cannot read the platform, and `open` on Linux can be another program. */
-async function openBrowser(url: string, folder: string): Promise<boolean> {
-  for (const program of ["xdg-open", "open"]) {
-    try {
-      const output = await new Command(program, { args: [url], cwd: folder, stdout: "null", stderr: "null" }).output();
-      return output.success;
-    } catch {
-      // This program does not start. The next one can.
-    }
-  }
-  return false;
 }
 
 /** Run a device login of `provider` in a dialog. The close of the dialog cancels the login. */

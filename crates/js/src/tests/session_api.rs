@@ -10,9 +10,9 @@ use yuke_protocol::{
     ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId, InputKind, InputRemoved,
     InputSource, InteractionClosed, InteractionId, InteractionRequested, InteractionResponse, Job, JobUpdate,
     ListCatalogResult, ListPluginsResult, ListSessionsParams, ListSessionsResult, LiveUpdate, LoginId, LoginOutcome,
-    LoginResult, McpServer, McpServerSource, McpServerState, ModelReference, SessionId, SessionRow, SessionSettings,
-    SessionSnapshot, SessionState, SessionTitle, SessionUpdate, SetApiKeyParams, StateUpdate, StoredEvent,
-    SyncPluginsResult,
+    LoginResult, McpLoginResult, McpServer, McpServerSource, McpServerState, ModelReference, SessionId, SessionRow,
+    SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate, SetApiKeyParams, StateUpdate,
+    StoredEvent, SyncPluginsResult,
 };
 
 use super::{evaluate, folder, load_entry, options, write};
@@ -311,6 +311,28 @@ impl Sessions for Scripted {
         self.record(format!("cancel login {}", id.0));
         self.login_end.notify_one();
     }
+    async fn mcp_login(&self, id: SessionId, server: String) -> Result<McpLoginResult, SessionsError> {
+        self.record(format!("mcp login {id} {server}"));
+        Ok(McpLoginResult {
+            login_id: LoginId(8),
+            url: "https://example.com/authorize".to_owned(),
+        })
+    }
+    fn complete_mcp_login(&self, id: LoginId, redirect_url: &str) -> Result<(), SessionsError> {
+        self.record(format!("complete mcp login {} {redirect_url}", id.0));
+        if redirect_url == "bad" {
+            return Err("not the redirect of this login".into());
+        }
+        Ok(())
+    }
+    fn cancel_mcp_login(&self, id: LoginId) {
+        self.record(format!("cancel mcp login {}", id.0));
+        self.login_end.notify_one();
+    }
+    async fn mcp_logout(&self, id: SessionId, server: String) -> Result<(), SessionsError> {
+        self.record(format!("mcp logout {id} {server}"));
+        Ok(())
+    }
     async fn set_api_key(&self, params: SetApiKeyParams) -> Result<(), SessionsError> {
         self.record(format!("set api key {} {}", params.provider, params.api_key));
         Ok(())
@@ -384,12 +406,13 @@ async fn started(name: &str, scripted: &Rc<Scripted>) -> Runtime {
         &folder,
         &[(
             "index.ts",
-            "import { auth, plugins } from 'yuke:internal/sessions';
+            "import { auth, mcp, plugins } from 'yuke:internal/sessions';
              export function apply(ctx) {
                globalThis.context = ctx;
                globalThis.sessions = ctx.get('sessions');
                globalThis.catalog = ctx.get('catalog');
                globalThis.auth = auth;
+               globalThis.mcp = mcp;
                globalThis.plugins = plugins;
                globalThis.seen = [];
              }
@@ -737,6 +760,51 @@ async fn a_login_gives_its_code_and_an_abort_cancels_it_and_each_wait_shares_one
     assert_eq!(
         scripted.calls(),
         ["login xai-grok", "cancel login 7", "wait for login 7"]
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn an_mcp_login_reaches_the_app_with_its_page_its_completion_its_cancel_and_one_shared_end() {
+    let scripted = Rc::new(Scripted::default());
+    let runtime = started(
+        "an_mcp_login_reaches_the_app_with_its_page_its_completion_its_cancel_and_one_shared_end",
+        &scripted,
+    )
+    .await;
+    let id = session();
+
+    let answer = evaluate::<String>(
+        &runtime,
+        &format!(
+            "const control = new AbortController();
+             const login = await mcp.login('{id}', 'linear', {{ signal: control.signal }});
+             let refused;
+             try {{ login.complete('bad'); }} catch (error) {{ refused = String(error); }}
+             login.complete('http://127.0.0.1:1/callback?code=c');
+             control.abort();
+             const outcome = await login.waitForEnd();
+             await login.waitForEnd();
+             await mcp.logout('{id}', 'linear');
+             return JSON.stringify([login.url, refused, outcome]);"
+        ),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        answer,
+        r#"["https://example.com/authorize","Error: not the redirect of this login",{"kind":"cancelled"}]"#
+    );
+    assert_eq!(
+        scripted.calls(),
+        [
+            format!("mcp login {id} linear"),
+            "complete mcp login 8 bad".to_owned(),
+            "complete mcp login 8 http://127.0.0.1:1/callback?code=c".to_owned(),
+            "cancel mcp login 8".to_owned(),
+            "wait for login 8".to_owned(),
+            format!("mcp logout {id} linear"),
+        ]
     );
 }
 

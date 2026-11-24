@@ -155,12 +155,23 @@ struct Setup {
     origin: String,
     /// The data folder, which holds the stored logins.
     data: PathBuf,
+    /// The messages that the start and the waits for a state read.
+    seen: Vec<Value>,
 }
 
 impl Setup {
     /// Start a session with the servers `remote`, `other`, and `sh`, and wait until `remote` needs a login.
     async fn start(name: &str) -> Setup {
+        Setup::with_plugin(name, None).await
+    }
+
+    /// [`Setup::start`] with the plugin `wizard` of the source `plugin`, when there is one.
+    async fn with_plugin(name: &str, plugin: Option<&str>) -> Setup {
         let place = Place::new("rpc", name);
+        if let Some(source) = plugin {
+            place.plugin("wizard", source);
+            std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["wizard"] }"#).unwrap();
+        }
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rpc/mcp_server.sh");
         let origin = fake_server();
         let config = json!({ "mcpServers": {
@@ -171,12 +182,15 @@ impl Setup {
         std::fs::create_dir_all(&place.paths.config).unwrap();
         std::fs::write(place.paths.config.join("mcp.json"), config.to_string()).unwrap();
         let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([]))).await;
-        let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+        let id = client.request("session/new", settings(&place)).await;
+        let seen = client.until(|message| is_response(message, id)).await;
+        let session = seen.last().unwrap()["result"]["sessionId"].clone();
         let mut setup = Setup {
             client,
             session,
             origin,
             data: place.paths.data.clone(),
+            seen,
         };
         setup.until_state("remote", "needsLogin").await;
         setup
@@ -190,6 +204,7 @@ impl Setup {
             .request("mcp/list", json!({ "sessionId": self.session }))
             .await;
         let messages = self.client.until(|message| is_response(message, id)).await;
+        self.seen.extend(messages.iter().cloned());
         let listed = &messages.last().unwrap()["result"]["servers"];
         let listed = listed
             .as_array()
@@ -197,7 +212,8 @@ impl Setup {
             .iter()
             .any(|server| server["name"] == name && server["state"]["kind"] == kind);
         if !listed && !messages.iter().any(|message| mcp_state(message, name, kind)) {
-            self.client.until(|message| mcp_state(message, name, kind)).await;
+            let waited = self.client.until(|message| mcp_state(message, name, kind)).await;
+            self.seen.extend(waited);
         }
     }
 
@@ -573,5 +589,78 @@ async fn a_logout_ends_only_the_login_of_its_server() {
         (finished["loginId"].clone(), finished["outcome"].clone()),
         (remote["loginId"].clone(), json!({ "kind": "succeeded" }))
     );
+    setup.client.end().await;
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_server_that_needs_a_login_gives_a_notice_that_names_mcp() {
+    let setup = Setup::start("a_notice_for_a_login").await;
+
+    let notices: Vec<&str> = setup
+        .seen
+        .iter()
+        .filter(|message| message["method"] == "notice")
+        .map(|message| message["params"]["text"].as_str().unwrap())
+        .collect();
+
+    assert!(
+        notices.contains(&"The MCP server remote needs a login: run /mcp"),
+        "{notices:?}"
+    );
+    assert!(
+        !notices.iter().any(|text| text.contains("MCP server sh ")),
+        "{notices:?}"
+    );
+}
+
+/// A plugin that logs in to `remote` when it needs a login, waits for the end, and then logs out.
+const WIZARD: &str = "import { mcp } from 'yuke:internal/sessions';
+    export function apply(ctx) {
+      let phase = 'waiting';
+      ctx.addListener('session.update', (data) => {
+        const update = data.update;
+        if (update.kind !== 'mcpServer' || update.name !== 'remote') return;
+        const sessionId = data.sessionId;
+        if (phase === 'waiting' && update.state.kind === 'needsLogin') {
+          phase = 'login';
+          void (async () => {
+            const login = await mcp.login(sessionId, 'remote');
+            ctx.sendClientEvent('started', { url: login.url });
+            try { login.complete('http://127.0.0.1:1/callback?code=c&state=wrong'); }
+            catch (error) { ctx.sendClientEvent('refused', { text: String(error) }); }
+            const outcome = await login.waitForEnd();
+            phase = 'connecting';
+            ctx.sendClientEvent('ended', outcome);
+          })();
+        } else if (phase === 'connecting' && update.state.kind === 'connected') {
+          phase = 'logout';
+          void mcp.logout(sessionId, 'remote').then(() => ctx.sendClientEvent('loggedOut', {}));
+        }
+      });
+    }";
+
+#[tokio::test(flavor = "local")]
+async fn a_plugin_logs_in_and_out_of_an_mcp_server_through_the_internal_sessions_module() {
+    let mut setup = Setup::with_plugin("a_plugin_mcp_login", Some(WIZARD)).await;
+    let is_event = |name: &'static str| {
+        move |message: &Value| message["method"] == "extension/event" && message["params"]["event"] == name
+    };
+
+    let started = setup.client.until(is_event("started")).await.pop().unwrap();
+    let refused = setup.client.until(is_event("refused")).await.pop().unwrap();
+    let location = approve(started["params"]["data"]["url"].as_str().unwrap()).await;
+    assert_eq!(visit(&location).await, 200);
+    let ended = setup.client.until(is_event("ended")).await.pop().unwrap();
+    setup.client.until(is_event("loggedOut")).await;
+    setup.until_state("remote", "needsLogin").await;
+
+    assert_eq!(
+        refused["params"]["data"]["text"],
+        "Error: the state of the redirect is not the state of this login"
+    );
+    assert_eq!(ended["params"]["data"], json!({ "kind": "succeeded" }));
+    // The logout of the plugin removed the stored login.
+    let stored: Value = serde_json::from_slice(&std::fs::read(setup.data.join("mcp-auth.json")).unwrap()).unwrap();
+    assert_eq!(stored, json!({}));
     setup.client.end().await;
 }

@@ -204,6 +204,12 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     request.add(object, "catalogList", |sessions, all: bool| async move {
         sessions.catalog(all).await
     })?;
+    add_credential_requests(&request, object)?;
+    add_plugin_requests(&request, object)
+}
+
+/// Add the requests of the credentials and of the MCP logins of `yuke:internal/sessions`.
+fn add_credential_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Result<()> {
     request.add(object, "authLogin", |sessions, provider: String| async move {
         sessions.login(provider).await
     })?;
@@ -218,7 +224,17 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     request.add(object, "authLogout", |sessions, provider: String| async move {
         sessions.logout(provider).await
     })?;
-    add_plugin_requests(&request, object)
+    request.add(
+        object,
+        "mcpLogin",
+        |sessions, (id, server): (SessionId, String)| async move { sessions.mcp_login(id, server).await },
+    )?;
+    request.add(
+        object,
+        "mcpLogout",
+        |sessions, (id, server): (SessionId, String)| async move { sessions.mcp_logout(id, server).await },
+    )?;
+    Ok(())
 }
 
 /// Add the requests of the plugin manager of `yuke:internal/sessions`. A sync, a check, and an add fetch, so each one
@@ -270,6 +286,24 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessio
     object.set(
         "authCancelLogin",
         Function::new(ctx.clone(), move |id: Json<LoginId>| calls.cancel_login(id.0))?,
+    )?;
+    let calls = Rc::clone(sessions);
+    object.set(
+        "mcpCancelLogin",
+        Function::new(ctx.clone(), move |id: Json<LoginId>| calls.cancel_mcp_login(id.0))?,
+    )?;
+    let calls = Rc::clone(sessions);
+    object.set(
+        "mcpCompleteLogin",
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, arguments: Json<(LoginId, String)>| -> rquickjs::Result<()> {
+                let (id, redirect_url) = arguments.0;
+                calls
+                    .complete_mcp_login(id, &redirect_url)
+                    .map_err(|error| failure(&ctx, &error))
+            },
+        )?,
     )?;
     let calls = Rc::clone(sessions);
     object.set(

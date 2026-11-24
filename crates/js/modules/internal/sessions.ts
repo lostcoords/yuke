@@ -1,5 +1,5 @@
 // The sessions and the catalog of yuke for the plugins, `ctx.get("sessions")` and `ctx.get("catalog")`, and the
-// credentials and the plugin manager for the bundled plugins `login` and `plugins`.
+// credentials, the MCP logins, and the plugin manager for the bundled plugins `login`, `mcp`, and `plugins`.
 
 import { underStop } from "yuke:internal/events";
 import {
@@ -9,6 +9,10 @@ import {
   authSetApiKey,
   authWaitForLogin,
   catalogList,
+  mcpCancelLogin,
+  mcpCompleteLogin,
+  mcpLogin,
+  mcpLogout,
   type ViewEvent as NativeViewEvent,
   pluginsAdd,
   pluginsApply,
@@ -230,6 +234,34 @@ export interface Auth {
   readonly logout: (provider: string) => Promise<void>;
 }
 
+/** A login of an MCP server that has started. The user opens the URL, and the browser goes to a listener of yuke. */
+export interface McpLoginInProgress {
+  /** The page where the user approves the login. */
+  readonly url: string;
+  /**
+   * Finish the login with the address that the browser ended on, for a browser that cannot reach the listener. It
+   * throws when the address is not the redirect of this login, and the login goes on to wait.
+   */
+  readonly complete: (redirectUrl: string) => void;
+  /** Wait for the end of the login, and give its outcome. A login that has ended gives its outcome too. */
+  readonly waitForEnd: () => Promise<LoginOutcome>;
+}
+
+/** The logins of the MCP servers of an open session, for the bundled plugin `mcp`, as `mcp/login` and `mcp/logout` do. */
+export interface McpLogins {
+  /**
+   * Start the login of `server`, which is in the state `needsLogin`. A new login of the same server ends the login
+   * before it as `cancelled`. `options.signal` cancels the login while it waits for the redirect.
+   */
+  readonly login: (
+    sessionId: SessionId,
+    server: string,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<McpLoginInProgress>;
+  /** Remove the stored login of the remote `server`. A login in progress of the server ends first. */
+  readonly logout: (sessionId: SessionId, server: string) => Promise<void>;
+}
+
 /**
  * The plugin manager of the profile, for the bundled plugin `plugins`. It does the work of the requests `plugin/*`. No
  * call runs plugin code, and a new commit loads at the next reload. Git asks for no password.
@@ -260,15 +292,19 @@ export interface PluginManager {
   readonly remove: (name: string) => Promise<void>;
 }
 
+/** Call `cancel` when `signal` aborts, or at once when it aborted already. */
+function cancelOnAbort(signal: AbortSignal | undefined, cancel: () => void): void {
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
+}
+
 /** The credentials of the providers. */
 export const auth: Auth = {
   async login(provider, options) {
     const signal = options?.signal;
     signal?.throwIfAborted();
     const started = await authLogin(provider);
-    const cancel = (): void => authCancelLogin(started.loginId);
-    if (signal?.aborted) cancel();
-    else signal?.addEventListener("abort", cancel, { once: true });
+    cancelOnAbort(signal, () => authCancelLogin(started.loginId));
     let end: Promise<LoginOutcome> | undefined;
     return {
       verificationUrl: started.verificationUrl,
@@ -282,6 +318,27 @@ export const auth: Auth = {
   setApiKey: (provider, apiKey) => authSetApiKey({ provider, apiKey }),
   logout: (provider) => authLogout(provider),
 } satisfies Auth;
+
+/** The logins of the MCP servers. */
+export const mcp: McpLogins = {
+  async login(sessionId, server, options) {
+    const signal = options?.signal;
+    signal?.throwIfAborted();
+    const started = await mcpLogin([sessionId, server]);
+    cancelOnAbort(signal, () => mcpCancelLogin(started.loginId));
+    let end: Promise<LoginOutcome> | undefined;
+    return {
+      url: started.url,
+      complete: (redirectUrl) => mcpCompleteLogin([started.loginId, redirectUrl]),
+      waitForEnd: () => {
+        // The ids of the logins of providers and of MCP servers come from one counter, so one wait serves both.
+        end ??= authWaitForLogin(started.loginId);
+        return end;
+      },
+    };
+  },
+  logout: (sessionId, server) => mcpLogout([sessionId, server]),
+} satisfies McpLogins;
 
 /** The plugin manager of the profile. */
 export const plugins: PluginManager = {

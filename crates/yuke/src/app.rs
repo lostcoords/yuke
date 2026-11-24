@@ -417,8 +417,9 @@ impl Shared {
         Ok(())
     }
 
-    /// Start the login of the MCP server `server` of session `session`, and give its page. A login in progress of the
-    /// same server ends as cancelled first. A task waits for the end of the login, and it sends `mcp/loginFinished`.
+    /// Start the login of the MCP server `server` of session `session`, and give its page and a receiver of its end. A
+    /// login in progress of the same server ends as cancelled first. A task waits for the end of the login, and it
+    /// sends `mcp/loginFinished`.
     ///
     /// # Errors
     ///
@@ -429,7 +430,7 @@ impl Shared {
         session: SessionId,
         server: &str,
         servers: &Servers,
-    ) -> Result<McpLoginResult, AppError> {
+    ) -> Result<(McpLoginResult, oneshot::Receiver<LoginOutcome>), AppError> {
         // With a fixed `callbackPort`, the listener of the earlier login closes when its task next runs. The awaits of
         // the new login come before it listens.
         self.cancel_mcp_logins(session, Some(server));
@@ -441,6 +442,7 @@ impl Shared {
             url: pending.url().to_owned(),
         };
         let (shared, finished_server) = (Rc::clone(self), server.to_owned());
+        let (end, ended) = oneshot::channel();
         tokio::task::spawn_local(async move {
             let outcome = match outcome.await {
                 Ok(()) => LoginOutcome::Succeeded,
@@ -449,6 +451,8 @@ impl Shared {
                     error: error.to_string(),
                 },
             };
+            // A plugin learns the end from the receiver, and a client from the notification.
+            _ = end.send(outcome.clone());
             shared.mcp_logins.borrow_mut().remove(&login_id);
             shared
                 .observer
@@ -468,7 +472,7 @@ impl Shared {
                 login: pending,
             },
         );
-        Ok(result)
+        Ok((result, ended))
     }
 
     /// Finish the MCP login `id` with the address `redirect_url` of the redirect.

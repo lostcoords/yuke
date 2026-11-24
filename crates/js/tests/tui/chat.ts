@@ -10,6 +10,7 @@ import type {
   Job,
   ListCatalogResult,
   ListSessionsParams,
+  McpServer,
   SessionRow,
   SessionSettings,
   SessionUpdate,
@@ -102,6 +103,8 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     refuseAnswer: boolean;
     store: Promise<void> | undefined;
     jobs: readonly Job[];
+    /** The MCP servers that each handle gives. */
+    mcpServers: readonly McpServer[];
   } = {
     failing: false,
     accept: undefined,
@@ -116,6 +119,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     refuseAnswer: false,
     jobs: [],
     store: undefined,
+    mcpServers: [],
   };
   /** Give each live handle of session `id` the live update `update`. */
   const deliver = (id: string, update: SessionUpdate): void => {
@@ -188,6 +192,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
           state.backgrounds += 1;
         },
         canMoveJobsToBackground: () => state.movable,
+        mcpServers: () => state.mcpServers,
         cancelTurn() {
           state.cancels += 1;
         },

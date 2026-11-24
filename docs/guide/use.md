@@ -51,6 +51,7 @@ Some commands take text after the word, such as `/login anthropic`. A draft that
 |---|---|
 | `/login [PROVIDER]` | Connect a provider. For an API key, paste the key. For an account, open the page that yuke shows and confirm the code. In that dialog, `o` opens the page, `c` copies the code, and `u` copies the URL. |
 | `/logout [PROVIDER]` | Remove the API key or the login that yuke stored for a provider. A key in an environment variable stays: unset the variable. |
+| `/mcp [SERVER \| logout SERVER]` | List the MCP servers of the session with their states. Choose a server that needs a login to open its dialog. `/mcp SERVER` picks a server by name, and `/mcp logout SERVER` removes its stored login. See [MCP servers](mcp.md#oauth-login). |
 | `/model` | Choose the model and the reasoning level of the session. It fails while a turn runs or a message waits. |
 | `/new` | Start a new session in the pane. The old session keeps its work, and `/sessions` finds it. |
 | `/rename` | Rename the session in a dialog. |

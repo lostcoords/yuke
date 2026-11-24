@@ -11,9 +11,9 @@ use serde::Serialize;
 use yuke_protocol::{
     AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult, EventNumber,
     FindPluginsParams, FindPluginsResult, Input, InputId, InteractionId, InteractionResponse, Job, ListCatalogResult,
-    ListPluginsResult, ListSessionsParams, ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpServer,
-    NoticeParams, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate,
-    SetApiKeyParams, StoredEvent, SyncPluginsResult,
+    ListPluginsResult, ListSessionsParams, ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpLoginResult,
+    McpServer, NoticeParams, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState, SessionTitle,
+    SessionUpdate, SetApiKeyParams, StoredEvent, SyncPluginsResult,
 };
 
 /// The failure of a request. The plugin gets its text.
@@ -259,6 +259,31 @@ pub trait Sessions {
 
     /// Ask the login `id` to stop, as `auth/cancelLogin` does. A login that ended has nothing to stop.
     fn cancel_login(&self, id: LoginId);
+
+    /// Start the login of the MCP server `server` of the open session `id`, and give its page, as `mcp/login` does.
+    /// [`Sessions::wait_for_login`] waits for its end.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn mcp_login(&self, id: SessionId, server: String) -> Result<McpLoginResult, SessionsError>;
+
+    /// Finish the MCP login `id` with the address of the redirect, as `mcp/completeLogin` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the address is not the redirect of the login, or why the login is not in progress.
+    fn complete_mcp_login(&self, id: LoginId, redirect_url: &str) -> Result<(), SessionsError>;
+
+    /// Ask the MCP login `id` to stop, as `mcp/cancelLogin` does. A login that ended has nothing to stop.
+    fn cancel_mcp_login(&self, id: LoginId);
+
+    /// Remove the stored login of the MCP server `server` of the open session `id`, as `mcp/logout` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn mcp_logout(&self, id: SessionId, server: String) -> Result<(), SessionsError>;
 
     /// Store an API key, as `auth/setApiKey` does.
     ///

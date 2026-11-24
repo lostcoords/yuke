@@ -69,6 +69,7 @@ yuke loads these plugins before yours. A bundled plugin adds the slash commands 
 | `bar` | Draws the status bar. | `hide` and `order`: lists of item keys, such as `"core:keys"`. | — |
 | `toasts` | Shows notices and their history. | — | `/messages` |
 | `login` | Connects providers from the TUI. | — | `/login`, `/logout` |
+| `mcp` | Lists the MCP servers of the session and logs in to them. | — | `/mcp` |
 | `plugins` | Manages your plugins with the `/plugins` dashboard. | — | `/plugins` |
 
 The TUI core adds `/quit` and `/reload`. These two do not belong to a plugin.

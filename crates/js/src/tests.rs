@@ -238,6 +238,20 @@ impl crate::Sessions for NoSessions {
         no_sessions()
     }
     fn cancel_login(&self, _: yuke_protocol::LoginId) {}
+    async fn mcp_login(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: String,
+    ) -> Result<yuke_protocol::McpLoginResult, crate::SessionsError> {
+        no_sessions()
+    }
+    fn complete_mcp_login(&self, _: yuke_protocol::LoginId, _: &str) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    fn cancel_mcp_login(&self, _: yuke_protocol::LoginId) {}
+    async fn mcp_logout(&self, _: yuke_protocol::SessionId, _: String) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
     async fn set_api_key(&self, _: yuke_protocol::SetApiKeyParams) -> Result<(), crate::SessionsError> {
         no_sessions()
     }

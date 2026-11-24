@@ -10,8 +10,8 @@ use std::sync::Arc;
 use yuke_protocol::{
     CommitEvent, EventNumber, ExtensionRequestParams, Input, InputAccepted, InputId, InputRemoved, InteractionClosed,
     InteractionId, InteractionRequest, InteractionRequested, InteractionResponse, Job, JobId, JobUpdate, LiveUpdate,
-    McpServer, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings,
-    SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StateUpdate, StoredEvent,
+    McpServer, McpServerState, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId,
+    SessionSettings, SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StateUpdate, StoredEvent,
 };
 
 use async_trait::async_trait;
@@ -931,7 +931,16 @@ fn start_servers(host: &Rc<Host>, folder: &Path) -> Servers {
             yuke_mcp::Config::default()
         }
     };
-    let on_change: OnChange = Rc::new(move |server| output.publish(SessionUpdate::Live(LiveUpdate::McpServer(server))));
+    let on_change: OnChange = Rc::new(move |server| {
+        // The notice names the command of the TUI. It is also what the log of a `yuke -p` run shows.
+        if server.state == McpServerState::NeedsLogin {
+            output.notice(
+                NoticeLevel::Warn,
+                &format!("The MCP server {} needs a login: run /mcp", server.name),
+            );
+        }
+        output.publish(SessionUpdate::Live(LiveUpdate::McpServer(server)));
+    });
     let shared = &host.shared;
     let variable = |name: &str| (shared.machine.variable)(name).and_then(|value| value.into_string().ok());
     let user: Vec<_> = shared.mcp.servers.clone().into_iter().collect();

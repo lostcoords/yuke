@@ -21,8 +21,10 @@ Each release has one section. The release job publishes the section of the tag a
 - MCP servers can be remote: an entry with `url` connects over Streamable HTTP, and its `headers` go on each request,
   with `${NAME}` expanded. The format is the same as in other agents.
 - Remote MCP servers can use OAuth (the MCP authorization spec). A server that needs a login has the state
-  `needsLogin`. An RPC client logs in with `mcp/login`, `mcp/completeLogin`, and `mcp/cancelLogin`, and removes the
-  login with `mcp/logout`. The command in the TUI comes in a later change.
+  `needsLogin`. In the TUI, `/mcp` lists the servers of the session and logs in to a server that needs a login, and
+  `/mcp logout <server>` removes the login. An RPC client logs in with `mcp/login`, `mcp/completeLogin`, and
+  `mcp/cancelLogin`, and removes the login with `mcp/logout`. With `yuke -p`, a server that needs a login gives a
+  notice that names `/mcp`.
 - yuke keeps a connection open for 60 seconds after a request, and the next request to the same host uses it, so it
   skips the connection setup.
 - On a network where IPv6 drops packets, a request goes over IPv4 after 250 ms. Before, it waited for the system to

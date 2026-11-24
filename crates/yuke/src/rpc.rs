@@ -447,7 +447,9 @@ impl Server {
             })),
             // The discovery of the OAuth metadata makes this future large.
             ClientRequest::McpLogin(params) => Ok(ServerResult::McpLogin(
-                Box::pin(app.sessions().mcp_login(params.session_id, &params.server)).await?,
+                Box::pin(app.sessions().mcp_login(params.session_id, &params.server))
+                    .await?
+                    .0,
             )),
             ClientRequest::McpCompleteLogin(params) => {
                 app.shared().complete_mcp_login(params.login_id, &params.redirect_url)?;

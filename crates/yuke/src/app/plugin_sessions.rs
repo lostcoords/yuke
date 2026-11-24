@@ -13,7 +13,8 @@ use yuke_protocol::{
     AddPluginsParams, AddPluginsResult, ApplyPluginsParams, CheckPluginsParams, CheckPluginsResult, EventNumber,
     FindPluginsParams, FindPluginsResult, Input, InputId, InteractionId, InteractionResponse, Job, JobId,
     ListCatalogResult, ListPluginsResult, ListSessionsParams, ListSessionsResult, LoginId, LoginOutcome, LoginResult,
-    McpServer, SessionId, SessionRow, SessionSettings, SessionTitle, SetApiKeyParams, StoredEvent, SyncPluginsResult,
+    McpLoginResult, McpServer, SessionId, SessionRow, SessionSettings, SessionTitle, SetApiKeyParams, StoredEvent,
+    SyncPluginsResult,
 };
 
 use super::sessions::SessionService;
@@ -23,7 +24,8 @@ use super::{AppError, Shared};
 pub(super) struct PluginSessions {
     pub(super) service: Weak<SessionService>,
     pub(super) shared: Rc<Shared>,
-    /// The end of each login of the plugins that no call waits for yet. It keeps the end of a login that has ended.
+    /// The end of each login of the plugins, of a provider or of an MCP server, that no call waits for yet. It keeps
+    /// the end of a login that has ended.
     pub(super) login_ends: RefCell<HashMap<LoginId, oneshot::Receiver<LoginOutcome>>>,
 }
 
@@ -158,6 +160,25 @@ impl Sessions for PluginSessions {
         let (result, end) = self.shared.login(provider).await?;
         self.login_ends.borrow_mut().insert(result.login_id, end);
         Ok(result)
+    }
+
+    async fn mcp_login(&self, id: SessionId, server: String) -> Result<McpLoginResult, SessionsError> {
+        let (result, end) = self.service()?.mcp_login(id, &server).await?;
+        self.login_ends.borrow_mut().insert(result.login_id, end);
+        Ok(result)
+    }
+
+    fn complete_mcp_login(&self, id: LoginId, redirect_url: &str) -> Result<(), SessionsError> {
+        Ok(self.shared.complete_mcp_login(id, redirect_url)?)
+    }
+
+    fn cancel_mcp_login(&self, id: LoginId) {
+        // The login ended, so it has nothing to stop.
+        _ = self.shared.cancel_mcp_login(id);
+    }
+
+    async fn mcp_logout(&self, id: SessionId, server: String) -> Result<(), SessionsError> {
+        Ok(self.service()?.mcp_logout(id, &server).await?)
     }
 
     async fn wait_for_login(&self, id: LoginId) -> Result<LoginOutcome, SessionsError> {

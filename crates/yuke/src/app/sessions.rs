@@ -7,13 +7,15 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::oneshot;
+
 use yuke_agent::{EventPage, ListPosition, Session};
 use yuke_engine::chain_text;
 use yuke_js::{FactSink, Handle, ViewSink};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, JobId, ListSessionsParams,
-    ListSessionsResult, McpLoginResult, NoticeLevel, NoticeParams, ServerNotification, SessionId, SessionRow,
-    SessionSettings, SessionState, SessionSummary, SessionTitle, StoredEvent,
+    ListSessionsResult, LoginOutcome, McpLoginResult, NoticeLevel, NoticeParams, ServerNotification, SessionId,
+    SessionRow, SessionSettings, SessionState, SessionSummary, SessionTitle, StoredEvent,
 };
 
 use super::facts::Watch;
@@ -697,12 +699,17 @@ impl SessionService {
         Ok(self.live(id)?.mcp_servers())
     }
 
-    /// Start the login of the MCP server `server` of session `id`, and give its page. See [`Shared::mcp_login`].
+    /// Start the login of the MCP server `server` of session `id`, and give its page and a receiver of its end. See
+    /// [`Shared::mcp_login`].
     ///
     /// # Errors
     ///
     /// Returns [`AppError::NotOpen`], and the errors of [`Shared::mcp_login`].
-    pub(crate) async fn mcp_login(&self, id: SessionId, server: &str) -> Result<McpLoginResult, AppError> {
+    pub(crate) async fn mcp_login(
+        &self,
+        id: SessionId,
+        server: &str,
+    ) -> Result<(McpLoginResult, oneshot::Receiver<LoginOutcome>), AppError> {
         let live = self.live(id)?;
         self.shared.mcp_login(id, server, live.servers()).await
     }
