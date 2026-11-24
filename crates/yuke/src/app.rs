@@ -71,8 +71,9 @@ pub(crate) struct Machine {
     pub(crate) transport: Arc<dyn Transport>,
     /// Sends the requests of the logins.
     pub(crate) exchange: Arc<dyn Exchange>,
-    /// Sends the requests of `fetch` in the plugins. A fetch sets no idle timeout, so only the signal stops a slow fetch.
-    pub(crate) fetch: Arc<yuke_http::Client>,
+    /// Sends the requests of `fetch` in the plugins and of the remote MCP servers. Neither sets an idle timeout: a fetch
+    /// stops by its signal, and a tool call can work for long.
+    pub(crate) http: Arc<yuke_http::Client>,
     /// The terminal interface, or `None` with no view.
     /// Each runtime of a reload draws on its display.
     pub(crate) interface: Option<yuke_js::Interface>,
@@ -853,7 +854,7 @@ async fn start_runtime(
             service: Rc::downgrade(sessions),
             shared: Rc::clone(shared),
         }),
-        http: Arc::clone(&shared.machine.fetch),
+        http: Arc::clone(&shared.machine.http),
         interface: shared.machine.interface.clone(),
         internal_imports: shared.machine.internal_imports,
         test_host: test.map(|test| Rc::clone(&test.host) as Rc<dyn yuke_js::TestHost>),

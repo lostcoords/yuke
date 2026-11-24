@@ -6,6 +6,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use yuke_protocol::{
     CommitEvent, EventNumber, ExtensionRequestParams, Input, InputAccepted, InputId, InputRemoved, InteractionClosed,
     InteractionId, InteractionRequest, InteractionRequested, InteractionResponse, Job, JobId, JobUpdate, LiveUpdate,
@@ -928,7 +929,8 @@ fn start_servers(host: &Rc<Host>, folder: &Path) -> Servers {
     let entries: Vec<_> = project.servers.clone().into_iter().collect();
     let trust = trust_of(Rc::clone(host), folder.to_owned(), project);
     let media = Rc::clone(host) as Rc<dyn MediaStore>;
-    Servers::start(&user, &entries, trust, &variable, folder, media, on_change)
+    let http = Arc::clone(&shared.machine.http);
+    Servers::start(&user, &entries, trust, &variable, folder, media, http, on_change)
 }
 
 /// Whether the user trusts the project servers `project` of `folder`: a kept confirm, or a yes to the question now. A

@@ -584,7 +584,7 @@ fn machine() -> Result<Machine, String> {
         variable: Box::new(|name| std::env::var_os(name)),
         transport: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Transport>,
         exchange: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Exchange>,
-        fetch: http,
+        http,
         interface: None,
         internal_imports: false,
         test: None,

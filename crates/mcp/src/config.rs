@@ -1,10 +1,11 @@
 //! The MCP config: `{ "mcpServers": { name: server } }`, as in a user `mcp.json` and a project `.mcp.json`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use yuke_http::http::{HeaderName, HeaderValue};
 
 /// The servers of one MCP config file, by name.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,9 +31,13 @@ pub struct ServerConfig {
     // The file key stays `cwd`: other tools share the format of `mcp.json`.
     #[serde(default, rename = "cwd")]
     pub folder: Option<PathBuf>,
-    /// The URL of an HTTP server. The parse keeps it, so one remote server does not reject the file of other tools.
+    /// The URL of an HTTP server.
     #[serde(default)]
     pub url: Option<String>,
+    /// The headers that an HTTP server gets on each request.
+    // An empty map stays out of the JSON, so the trust of a project without headers keeps its key.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
     /// `false` keeps the server off.
     #[serde(default = "enabled")]
     pub enabled: bool,
@@ -42,20 +47,44 @@ fn enabled() -> bool {
     true
 }
 
+/// How a server starts: a program on this computer, or a connection to a URL.
+pub(crate) enum Launch {
+    Process(Command),
+    Remote {
+        url: String,
+        headers: HashMap<HeaderName, HeaderValue>,
+    },
+}
+
 impl ServerConfig {
-    /// The command that starts the server, or why the entry gives none. The command runs in `session_folder`, in a
-    /// relative `folder` of the entry under `session_folder`, or in an absolute `folder` of the entry.
-    /// `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values, and the folder take the
-    /// value of the variable `NAME` from `variable`.
-    pub(crate) fn command(
+    /// The start of the server, or why the entry gives none. A `command` starts a program, and a `url` connects to an
+    /// HTTP server.
+    ///
+    /// `${NAME}` and `${NAME:-default}` take the value of the variable `NAME` from `variable`. They work in the command,
+    /// the arguments, the environment values, the folder, the URL, and the header values. The program runs in
+    /// `session_folder`, in a relative `folder` of the entry under `session_folder`, or in an absolute `folder` of the
+    /// entry.
+    pub(crate) fn launch(
         &self,
         variable: &dyn Fn(&str) -> Option<String>,
         session_folder: &Path,
-    ) -> Result<Command, String> {
+    ) -> Result<Launch, String> {
         let expand = |text: &str| expand(text, variable);
         let program = match (&self.command, &self.url) {
             (Some(program), None) => program,
-            (None, Some(_)) => return Err("yuke supports only stdio servers, and this entry names a url".to_owned()),
+            (None, Some(url)) => {
+                let mut headers = HashMap::new();
+                for (name, value) in &self.headers {
+                    let header = HeaderName::try_from(name).map_err(|_| format!("{name} is not a header name"))?;
+                    let value = HeaderValue::try_from(expand(value)?)
+                        .map_err(|_| format!("the value of the header {name} is not valid"))?;
+                    headers.insert(header, value);
+                }
+                return Ok(Launch::Remote {
+                    url: expand(url)?,
+                    headers,
+                });
+            }
             _ => return Err("the server needs exactly one of command and url".to_owned()),
         };
         let mut command = Command::new(expand(program)?);
@@ -70,7 +99,7 @@ impl ServerConfig {
             None => PathBuf::new(),
         };
         command.current_dir(session_folder.join(folder));
-        Ok(command)
+        Ok(Launch::Process(command))
     }
 }
 
@@ -112,6 +141,15 @@ mod tests {
         }
     }
 
+    /// The command of the program entry `entry`, with `/work` as the session folder.
+    fn command(entry: &ServerConfig) -> Command {
+        match entry.launch(&variable, Path::new("/work")) {
+            Ok(Launch::Process(command)) => command,
+            Ok(Launch::Remote { url, .. }) => panic!("a remote server at {url}"),
+            Err(error) => panic!("{error}"),
+        }
+    }
+
     #[test]
     fn a_variable_takes_its_value_or_its_default_and_other_text_stays() {
         assert_eq!(expand("${HOME}/bin", &variable), Ok("/home/me/bin".to_owned()));
@@ -141,12 +179,8 @@ mod tests {
         )
         .unwrap();
 
-        let relative = config.servers["relative"]
-            .command(&variable, Path::new("/work"))
-            .unwrap();
-        let absolute = config.servers["absolute"]
-            .command(&variable, Path::new("/work"))
-            .unwrap();
+        let relative = command(&config.servers["relative"]);
+        let absolute = command(&config.servers["absolute"]);
 
         let relative = relative.as_std();
         assert_eq!(relative.get_program(), "/home/me/bin/x");
@@ -171,9 +205,9 @@ mod tests {
         )
         .unwrap();
 
-        let git = config.servers["git"].command(&variable, Path::new("/work")).unwrap();
-        let both = config.servers["both"].command(&variable, Path::new("/work"));
-        let none = config.servers["none"].command(&variable, Path::new("/work"));
+        let git = command(&config.servers["git"]);
+        let both = config.servers["both"].launch(&variable, Path::new("/work"));
+        let none = config.servers["none"].launch(&variable, Path::new("/work"));
 
         let git = git.as_std();
         assert_eq!(git.get_program(), "uvx");
@@ -183,5 +217,53 @@ mod tests {
         assert_eq!(both.err().as_deref(), Some(transport));
         assert_eq!(none.err().as_deref(), Some(transport));
         assert!(!config.servers["none"].enabled);
+    }
+
+    #[test]
+    fn a_remote_entry_expands_its_url_and_header_values_and_checks_each_header() {
+        let config: Config = serde_json::from_str(
+            r#"{ "mcpServers": {
+                 "docs": { "type": "http", "url": "https://${HOST:-docs.test}/mcp",
+                           "headers": { "Authorization": "Bearer ${HOME}", "X-Plain": "a" } },
+                 "bad name": { "url": "https://example.test", "headers": { "X Key": "a" } },
+                 "bad value": { "url": "https://example.test", "headers": { "X-Key": "a\nb" } },
+                 "unset": { "url": "https://example.test", "headers": { "X-Key": "${KEY}" } }
+               } }"#,
+        )
+        .unwrap();
+        let launch = |name: &str| config.servers[name].launch(&variable, Path::new("/work"));
+
+        let Ok(Launch::Remote { url, headers }) = launch("docs") else {
+            panic!("no remote launch");
+        };
+
+        assert_eq!(url, "https://docs.test/mcp");
+        let mut headers: Vec<_> = headers
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.to_str().unwrap()))
+            .collect();
+        headers.sort_unstable();
+        assert_eq!(headers, [("authorization", "Bearer /home/me"), ("x-plain", "a")]);
+        assert_eq!(launch("bad name").err().as_deref(), Some("X Key is not a header name"));
+        assert_eq!(
+            launch("bad value").err().as_deref(),
+            Some("the value of the header X-Key is not valid")
+        );
+        assert_eq!(
+            launch("unset").err().as_deref(),
+            Some("the variable KEY has no value and no default")
+        );
+    }
+
+    #[test]
+    fn an_entry_without_headers_writes_the_json_of_before() {
+        let entry: ServerConfig = serde_json::from_str(r#"{ "command": "x" }"#).unwrap();
+
+        let json = serde_json::to_value(&entry).unwrap();
+
+        assert_eq!(
+            json,
+            serde_json::json!({ "command": "x", "args": [], "env": {}, "cwd": null, "url": null, "enabled": true })
+        );
     }
 }

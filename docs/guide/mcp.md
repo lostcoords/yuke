@@ -1,10 +1,10 @@
 ---
-description: Connect local MCP servers over stdio, and approve the servers of a project.
+description: Connect local MCP servers over stdio and remote MCP servers over HTTP, and approve the servers of a project.
 ---
 
 # MCP servers
 
-yuke supports local MCP servers over stdio. It does not support remote HTTP, SSE, or OAuth servers. A server with a `url` fails alone with the notice "yuke supports only stdio servers, and this entry names a url", and the other servers still start. This lets one `mcp.json` serve other tools too.
+yuke supports local MCP servers over stdio and remote MCP servers over Streamable HTTP. A remote server can take an API key in a header. yuke does not support OAuth logins or the older SSE transport yet.
 
 ## Sources and trust
 
@@ -22,13 +22,28 @@ The user `mcp.json` in the config folder and the `.mcp.json` in the session fold
 }
 ```
 
-A server entry uses `command`, `args`, `env`, `cwd`, and `enabled`. The file key stays `cwd` because other tools share this format. `enabled: false` keeps the server off. The command starts directly, without a shell. A relative `cwd` starts in the session folder.
+A local server entry uses `command`, `args`, `env`, `cwd`, and `enabled`. The file key stays `cwd` because other tools share this format. `enabled: false` keeps the server off. The command starts directly, without a shell. A relative `cwd` starts in the session folder.
 
-The command, arguments, environment values, and `cwd` expand `${NAME}` and `${NAME:-default}`. The default applies when the variable is not set and when it is empty. A variable without a value and without a default fails that server.
+A remote server entry uses `url`, `headers`, and `enabled`. yuke sends the headers on each request to the server:
+
+```json
+{
+  "mcpServers": {
+    "context7": {
+      "url": "https://mcp.context7.com/mcp",
+      "headers": { "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}" }
+    }
+  }
+}
+```
+
+An entry needs exactly one of `command` and `url`. yuke reads `"type": "http"` and ignores it, so an entry of another tool works as it is. A header name or value that HTTP does not allow fails that server.
+
+The command, arguments, environment values, `cwd`, URL, and header values expand `${NAME}` and `${NAME:-default}`. The default applies when the variable is not set and when it is empty. A variable without a value and without a default fails that server.
 
 Both files accept `//` and `/* */` comments. yuke ignores a field that it does not know, on purpose: a file that other tools read can hold their own fields.
 
-User servers start without a question. Project servers need approval: yuke asks with the options "Start" and "Don't start". yuke keeps a "Start" answer in `mcp-trust` in the [data folder](config.md), for that folder and that list of servers. A change of the list asks again. yuke does not keep "Don't start", so it asks again in the next session. Without an answering client, such as in `yuke -p`, only a kept approval starts project servers.
+User servers start without a question. Project servers need approval: yuke asks with the options "Start" and "Don't start". The question shows each server as the file writes it: its command line or URL, and its folder, environment variables, and headers. yuke keeps a "Start" answer in `mcp-trust` in the [data folder](config.md), for that folder and that list of servers. A change of the list asks again. yuke does not keep "Don't start", so it asks again in the next session. Without an answering client, such as in `yuke -p`, only a kept approval starts project servers.
 
 ## Tools
 

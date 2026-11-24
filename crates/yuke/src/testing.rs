@@ -71,7 +71,7 @@ impl Place {
             variable,
             transport: transport.into(),
             exchange: Arc::new(ScriptedExchange::default()),
-            fetch: Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
+            http: Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
                 "yuke-test",
             ))),
             interface: None,

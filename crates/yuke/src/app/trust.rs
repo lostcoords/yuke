@@ -38,7 +38,7 @@ pub(super) fn trust(data: &Path, key: &str) -> io::Result<()> {
 }
 
 /// The question that asks the user to start the servers `config` of `folder`: for each enabled server, its name, its
-/// command line or URL, and its folder and environment variables when it sets them, as the file holds them.
+/// command line or URL, and its folder, environment variables, and headers when it sets them, as the file holds them.
 pub(super) fn question(folder: &Path, config: &yuke_mcp::Config) -> InteractionRequest {
     let lines = config
         .servers
@@ -60,10 +60,11 @@ pub(super) fn question(folder: &Path, config: &yuke_mcp::Config) -> InteractionR
                 parts.push(format!("in {}", folder.display()));
             }
             parts.extend(server.env.iter().map(|(name, value)| format!("{name}={value}")));
+            parts.extend(server.headers.iter().map(|(name, value)| format!("{name}: {value}")));
             format!("- {name}: {}", parts.join(", "))
         });
     let head = format!(
-        "Start the MCP servers of this project?\n{} has these MCP servers. Each runs on this computer.",
+        "Start the MCP servers of this project?\n{} has these MCP servers. A command runs on this computer.",
         folder.display()
     );
     let option = |label: &str| QuestionOption {
@@ -93,10 +94,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_question_shows_each_enabled_server_with_its_folder_and_environment() {
+    fn the_question_shows_each_enabled_server_with_its_folder_environment_and_headers() {
         let config: yuke_mcp::Config = serde_json::from_str(
             r#"{ "mcpServers": {
                  "db": { "command": "node", "args": ["db.js"], "cwd": "tools", "env": { "NODE_OPTIONS": "--inspect" } },
+                 "docs": { "url": "https://docs.test/mcp", "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" } },
                  "off": { "command": "rm", "enabled": false },
                  "web": { "command": "uvx", "args": ["web"] }
                } }"#,
@@ -107,8 +109,9 @@ mod tests {
 
         assert_eq!(
             questions[0].question,
-            "Start the MCP servers of this project?\n/work has these MCP servers. Each runs on this computer.\n\
+            "Start the MCP servers of this project?\n/work has these MCP servers. A command runs on this computer.\n\
              - db: node db.js, in tools, NODE_OPTIONS=--inspect\n\
+             - docs: https://docs.test/mcp, Authorization: Bearer ${DOCS_TOKEN}\n\
              - web: uvx web"
         );
     }

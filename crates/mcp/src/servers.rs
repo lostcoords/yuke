@@ -6,6 +6,7 @@ use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::process::Stdio;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -16,7 +17,8 @@ use rmcp::model::{
     ContentBlock, Implementation, JsonObject, ProtocolVersion, ResourceContents, ServerResult, Tool as McpToolInfo,
 };
 use rmcp::service::{PeerRequestOptions, RunningService, RunningServiceCancellationToken};
-use rmcp::transport::TokioChildProcess;
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::{IntoTransport, StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{Peer, RoleClient, ServiceExt};
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::io::AsyncReadExt;
@@ -27,7 +29,8 @@ use yuke_ai::{Blob, Media, ToolDefinition};
 use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, ToolHints, parse_arguments};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 
-use crate::config::ServerConfig;
+use crate::config::{Launch, ServerConfig};
+use crate::http::HttpClient;
 use crate::names::{hashed_name, tool_name};
 
 /// The connection to one running server.
@@ -57,6 +60,7 @@ struct Slot {
 /// What the servers and their tasks share.
 struct Shared {
     slots: RefCell<Vec<Slot>>,
+    http: HttpClient,
     on_change: OnChange,
     /// After a close, a stop is no news and no gated server starts.
     closed: Cell<bool>,
@@ -110,12 +114,17 @@ impl Servers {
     /// Start each server of `user` in the background. Each server of `project` replaces a user server of its name, and
     /// waits in [`McpServerState::Untrusted`] until `trust` answers; a `true` starts it. `trust` runs only when a
     /// project server can start. `variable` gives the values of the variables of the config. A server without its own
-    /// folder runs in `folder`. `media` stores the attachments of the results. `on_change` gets each later state of a
-    /// server: the end of its start, the start after the trust, and its stop.
+    /// folder runs in `folder`. `media` stores the attachments of the results. `http` sends the requests of the remote
+    /// servers. `on_change` gets each later state of a server: the end of its start, the start after the trust, and its
+    /// stop.
     ///
     /// # Panics
     ///
     /// Panics outside a tokio local runtime or local task set when a server can start.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is an independent input of the start"
+    )]
     pub fn start(
         user: &[(String, ServerConfig)],
         project: &[(String, ServerConfig)],
@@ -123,6 +132,7 @@ impl Servers {
         variable: &dyn Fn(&str) -> Option<String>,
         folder: &Path,
         media: Rc<dyn MediaStore>,
+        http: Arc<yuke_http::Client>,
         on_change: OnChange,
     ) -> Servers {
         let overridden: HashSet<&str> = project.iter().map(|(name, _)| name.as_str()).collect();
@@ -133,15 +143,15 @@ impl Servers {
         let mut slots = Vec::new();
         let (mut launches, mut gated) = (Vec::new(), Vec::new());
         for (index, (source, (name, config))) in entries.enumerate() {
-            let state = match config.enabled.then(|| config.command(variable, folder)) {
+            let state = match config.enabled.then(|| config.launch(variable, folder)) {
                 None => McpServerState::Disabled,
-                Some(Ok(process)) => match source {
+                Some(Ok(launch)) => match source {
                     McpServerSource::User => {
-                        launches.push((index, process));
+                        launches.push((index, launch));
                         McpServerState::Connecting
                     }
                     McpServerSource::Project => {
-                        gated.push((index, process));
+                        gated.push((index, launch));
                         McpServerState::Untrusted
                     }
                 },
@@ -158,6 +168,7 @@ impl Servers {
         }
         let shared = Rc::new(Shared {
             slots: RefCell::new(slots),
+            http: HttpClient(http),
             on_change,
             closed: Cell::new(false),
             tasks: RefCell::default(),
@@ -165,11 +176,11 @@ impl Servers {
         let (count, starting) = watch::channel(launches.len() + gated.len());
         let count = Rc::new(count);
         let mut tasks = shared.tasks.borrow_mut();
-        for (index, process) in launches {
+        for (index, launch) in launches {
             let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
             tasks.push((
                 Some(index),
-                tokio::task::spawn_local(run(index, process, task_shared, count)),
+                tokio::task::spawn_local(run(index, launch, task_shared, count)),
             ));
         }
         if !gated.is_empty() {
@@ -279,13 +290,13 @@ impl Drop for Servers {
 
 /// Wait for `trust`, then start each server of `gated` when it is `true`. A server that does not start stays untrusted.
 async fn start_trusted(
-    gated: Vec<(usize, tokio::process::Command)>,
+    gated: Vec<(usize, Launch)>,
     trust: impl Future<Output = bool>,
     shared: Rc<Shared>,
     count: Rc<watch::Sender<usize>>,
 ) {
     let trusted = trust.await;
-    for (index, process) in gated {
+    for (index, launch) in gated {
         if !trusted || shared.closed.get() {
             count.send_modify(|starting| *starting -= 1);
             continue;
@@ -294,14 +305,14 @@ async fn start_trusted(
         let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
         shared.tasks.borrow_mut().push((
             Some(index),
-            tokio::task::spawn_local(run(index, process, task_shared, count)),
+            tokio::task::spawn_local(run(index, launch, task_shared, count)),
         ));
     }
 }
 
-/// Start the server of the slot `index` with `process`, and hold its connection until the server ends.
-async fn run(index: usize, process: tokio::process::Command, shared: Rc<Shared>, count: Rc<watch::Sender<usize>>) {
-    let connected = connect(process).await;
+/// Start the server of the slot `index` with `launch`, and hold its connection until the server ends.
+async fn run(index: usize, launch: Launch, shared: Rc<Shared>, count: Rc<watch::Sender<usize>>) {
+    let connected = connect(launch, shared.http.clone()).await;
     let connection = match connected {
         Ok((client, tools, program)) => {
             shared.update(index, |slot| {
@@ -334,9 +345,18 @@ async fn run(index: usize, process: tokio::process::Command, shared: Rc<Shared>,
     });
 }
 
-/// Start the program of `process`, agree on the protocol, and list its tools. The error of a failed start holds the
-/// last stderr lines of the program.
-async fn connect(process: tokio::process::Command) -> Result<(Client, Vec<McpToolInfo>, Program), String> {
+/// Start the program of `launch`, or connect to its URL with `http`. Then agree on the protocol, and list the tools. The
+/// error of a failed start holds the last stderr lines of the program.
+async fn connect(launch: Launch, http: HttpClient) -> Result<(Client, Vec<McpToolInfo>, Program), String> {
+    let process = match launch {
+        Launch::Process(process) => process,
+        Launch::Remote { url, headers } => {
+            let config = StreamableHttpClientTransportConfig::with_uri(url).custom_headers(headers);
+            let (client, tools) = agree(StreamableHttpClientTransport::with_client(http, config)).await?;
+            // A remote server has no process and no stderr.
+            return Ok((client, tools, Program { group: None, log: None }));
+        }
+    };
     // A wrapper such as `npx` starts the real server as its child. In a session of its own, a kill of the server stops
     // the whole group.
     let mut process = CommandWrap::from(process);
@@ -357,7 +377,10 @@ async fn connect(process: tokio::process::Command) -> Result<(Client, Vec<McpToo
 }
 
 /// Agree on the protocol with the server of `transport`, and list its tools.
-async fn agree(transport: TokioChildProcess) -> Result<(Client, Vec<McpToolInfo>), String> {
+async fn agree<E, A>(transport: impl IntoTransport<RoleClient, E, A>) -> Result<(Client, Vec<McpToolInfo>), String>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
     // Each server of this era speaks `initialize`. A version without it needs the newer requests that yuke lacks yet.
     let config = ClientConfig::new(
         ClientCapabilities::default(),

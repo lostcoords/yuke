@@ -422,7 +422,7 @@ impl TestPlace {
     ) -> Result<(TestPlace, mpsc::UnboundedReceiver<Report>), TestError> {
         let (reports, report_receiver) = mpsc::unbounded_channel();
         let host = Rc::new(AppTestHost::new(reports.clone()));
-        let fetch = Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
+        let http = Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
             "yuke-test",
         )));
         let machine = Machine {
@@ -435,8 +435,8 @@ impl TestPlace {
             // Each provider key exists, so a session can name any model of the catalog.
             variable: Box::new(|name| name.ends_with("_API_KEY").then(|| OsString::from("test-key"))),
             transport: Arc::new(host.transport.clone()),
-            exchange: Arc::clone(&fetch) as _,
-            fetch,
+            exchange: Arc::clone(&http) as _,
+            http,
             interface: None,
             internal_imports,
             test: Some(TestSetup {

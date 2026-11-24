@@ -144,7 +144,9 @@ async fn a_project_mcp_server_starts_after_a_yes_and_the_trust_lasts_until_the_l
     let text = question["request"]["questions"][0]["question"].as_str().unwrap();
     assert!(text.starts_with("Start the MCP servers of this project?\n"), "{text}");
     assert!(
-        text.ends_with(&format!("has these MCP servers. Each runs on this computer.\n{line}")),
+        text.ends_with(&format!(
+            "has these MCP servers. A command runs on this computer.\n{line}"
+        )),
         "{text}"
     );
     assert!(!second.iter().any(is_question), "{second:?}");

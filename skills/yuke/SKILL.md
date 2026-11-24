@@ -52,5 +52,5 @@ Use these names. An older name fails the type check.
 - The keys of `providers.json` are camelCase, such as `apiKeyEnv`, `baseUrl`, and `reasoningLevels`. The values of an enum stay snake_case, such as `openai_chat`. A repeated provider or model id applies in file order, and the last wins. `apiKeyEnv` is an error on `openai-codex` and `xai-grok`.
 - A plugin name is one folder name: not empty, not `.` or `..`, and with no `/` or `\`. It is the name in `plugin.json`.
 - A skill name is any text that is not empty, and its `description` is required with at most 1024 characters. A skill with a bad front matter is skipped with a warning.
-- `mcp.json` has stdio servers only. An entry with a `url` fails alone with "yuke supports only stdio servers".
+- An `mcp.json` entry has `command` for a stdio server, or `url` and `headers` for a remote server over Streamable HTTP. `${NAME}` expands in the URL and the header values. yuke has no OAuth for MCP yet.
 - The terminal user interface is the TUI. A `message` is what a user sends. A `notice` is what a user reads.

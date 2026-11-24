@@ -789,6 +789,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-body-util"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23169fe34a5fbcdd3f3862e78fb9b6fccd5f02a6dc6f732547005d45631ce71c"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "http",
+ "http-body",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1965,8 +1978,11 @@ version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "391f153431ab68664d946513ea0cb3edbca78eaf99c5a983036cacab6220d85b"
 dependencies = [
+ "base64",
+ "bytes",
  "chrono",
  "futures",
+ "http",
  "indexmap",
  "libc",
  "percent-encoding",
@@ -1975,6 +1991,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sse-stream",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -2267,6 +2284,19 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sse-stream"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c25ac7aff0abd1dbc474536e40416e1102c7dd9bfba0b9861c6d357f835dcfb4"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -3314,14 +3344,17 @@ version = "0.2.0-dev"
 dependencies = [
  "async-trait",
  "base64",
+ "futures-util",
  "process-wrap",
  "rmcp",
  "rustix",
  "serde",
  "serde_json",
+ "sse-stream",
  "tokio",
  "yuke-ai",
  "yuke-engine",
+ "yuke-http",
  "yuke-protocol",
  "yuke-testing",
 ]

@@ -5,12 +5,13 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use tokio::io::AsyncBufReadExt;
 use yuke_ai::scripted::{ScriptedTransport, text_reply, tool_reply};
 use yuke_ai::{Blob, Block, Target};
 use yuke_engine::NoWait;
@@ -58,8 +59,46 @@ fn test_server(env: &[(&str, &str)]) -> ServerConfig {
             .collect(),
         folder: None,
         url: None,
+        headers: std::collections::BTreeMap::new(),
         enabled: true,
     }
+}
+
+/// The test server over HTTP with `env`, and its entry with the header `X-Api-Key: ${SET}`. The drop of the child
+/// stops the server.
+async fn http_server(env: &[(&str, &str)]) -> (ServerConfig, tokio::process::Child) {
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_yuke-mcp-test-server"))
+        .arg("--http")
+        .envs(env.iter().copied())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut port = String::new();
+    tokio::io::BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut port)
+        .await
+        .unwrap();
+    let entry = ServerConfig {
+        command: None,
+        url: Some(format!("http://127.0.0.1:{}/mcp", port.trim())),
+        headers: [("X-Api-Key".to_owned(), "${SET}".to_owned())].into(),
+        ..test_server(&[])
+    };
+    (entry, child)
+}
+
+/// The entry of the test server over stdio and over HTTP, each with `env`, and the child of the HTTP server.
+async fn both_servers(env: &[(&str, &str)]) -> ([(&'static str, ServerConfig); 2], tokio::process::Child) {
+    let (remote, child) = http_server(env).await;
+    ([("stdio", test_server(env)), ("http", remote)], child)
+}
+
+/// A client for the requests of the remote servers.
+fn http() -> Arc<yuke_http::Client> {
+    Arc::new(yuke_http::Client::new(yuke_http::http::HeaderValue::from_static(
+        "yuke-test",
+    )))
 }
 
 /// A new empty folder for the test `name`.
@@ -88,7 +127,7 @@ async fn started_with(
     let kept = Rc::clone(&changes);
     let on_change = Rc::new(move |server| kept.borrow_mut().push(server));
     let trust = async move { trusted };
-    let servers = Servers::start(&user, &project, trust, &variable, folder, media, on_change);
+    let servers = Servers::start(&user, &project, trust, &variable, folder, media, http(), on_change);
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
         .await
         .unwrap();
@@ -163,44 +202,101 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_remote_server_gets_its_headers_on_each_request_and_the_end_of_its_session_at_the_close() {
+    let folder = folder("a_remote_server_gets_its_headers");
+    let log = folder.join("log");
+    let (entry, _child) = http_server(&[("MCP_TEST_LOG", log.to_str().unwrap())]).await;
+    let (servers, _changes) = started(vec![("remote".to_owned(), entry)], &folder, Rc::default()).await;
+
+    let connected = servers.states();
+    servers.close().await;
+
+    assert_eq!(connected, [server("remote", McpServerState::Connected { tools: 6 })]);
+    let lines = std::fs::read_to_string(&log).unwrap();
+    // `initialize`, `notifications/initialized`, and `tools/list` each carry the header.
+    assert_eq!(
+        lines.lines().collect::<Vec<_>>(),
+        [
+            "key set",
+            "initialize \"2025-11-25\"",
+            "key set",
+            "key set",
+            "delete s1 set"
+        ]
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_remote_server_that_refuses_the_key_fails_with_its_status_and_its_text() {
+    let folder = folder("a_remote_server_that_refuses_the_key");
+    let (entry, _child) = http_server(&[]).await;
+    let denied = ServerConfig {
+        headers: [("X-Api-Key".to_owned(), "deny".to_owned())].into(),
+        ..entry
+    };
+
+    let (servers, _changes) = started(vec![("remote".to_owned(), denied)], &folder, Rc::default()).await;
+
+    let states = servers.states();
+    let McpServerState::Failed { error } = &states[0].state else {
+        panic!("{states:?}");
+    };
+    assert!(error.starts_with("the server did not initialize: "), "{error}");
+    assert!(error.contains("HTTP 401 Unauthorized: no access"), "{error}");
+}
+
+#[tokio::test(flavor = "local")]
 async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_results() {
     let folder = folder("the_model_reads_the_results");
-    let media = Rc::new(Recorded::default());
-    let (servers, _changes) = started(vec![("test".to_owned(), test_server(&[]))], &folder, Rc::clone(&media)).await;
-    let toolset = toolset(&servers);
-    let transport = ScriptedTransport::new([
-        tool_reply(&[
-            ("c1", "mcp__test__echo", r#"{"text":"hello"}"#),
-            ("c2", "mcp__test__picture", "{}"),
-            ("c3", "mcp__test__fail", "{}"),
-            ("c4", "mcp__test__structured", "{}"),
-        ]),
-        text_reply("done"),
-    ]);
-    let model = model_of(native_target());
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
+    let (entries, _child) = both_servers(&[]).await;
+    for (transport_name, entry) in entries {
+        let media = Rc::new(Recorded::default());
+        let (servers, _changes) = started(vec![("test".to_owned(), entry)], &folder, Rc::clone(&media)).await;
+        let toolset = toolset(&servers);
+        let transport = ScriptedTransport::new([
+            tool_reply(&[
+                ("c1", "mcp__test__echo", r#"{"text":"hello"}"#),
+                ("c2", "mcp__test__picture", "{}"),
+                ("c3", "mcp__test__fail", "{}"),
+                ("c4", "mcp__test__structured", "{}"),
+            ]),
+            text_reply("done"),
+        ]);
+        let model = model_of(native_target());
+        let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
-    driver
-        .turn(&mut Vec::new(), vec![Block::user_text("go")])
-        .blobs(&*media)
-        .run()
-        .await
-        .unwrap();
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .blobs(&*media)
+            .run()
+            .await
+            .unwrap();
 
-    let request = &transport.requests()[1];
-    for text in ["hello", "a picture", "it broke", r#"{\"answer\":42}"#] {
-        assert!(request.contains(text), "{text}: {request}");
+        let request = &transport.requests()[1];
+        for text in ["hello", "a picture", "it broke", r#"{\"answer\":42}"#] {
+            assert!(request.contains(text), "{transport_name}, {text}: {request}");
+        }
+        assert_eq!(*media.0.lock().unwrap(), [STANDARD.decode(PIXEL).unwrap()]);
+        servers.close().await;
     }
-    assert_eq!(*media.0.lock().unwrap(), [STANDARD.decode(PIXEL).unwrap()]);
-    servers.close().await;
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
     let folder = folder("a_cancel_of_a_call");
     let log = folder.join("log");
-    let entry = test_server(&[("MCP_TEST_LOG", log.to_str().unwrap())]);
-    let (servers, _changes) = started(vec![("test".to_owned(), entry)], &folder, Rc::default()).await;
+    let (entries, _child) = both_servers(&[("MCP_TEST_LOG", log.to_str().unwrap())]).await;
+    for (transport_name, entry) in entries {
+        _ = std::fs::remove_file(&log);
+        cancel_reaches(entry, &folder, &log).await;
+        let lines = std::fs::read_to_string(&log).unwrap();
+        assert!(lines.contains("cancelled "), "{transport_name}: {lines}");
+    }
+}
+
+/// Cancel a call of the `wait` tool of `entry`, and wait until the server writes the cancel to `log`.
+async fn cancel_reaches(entry: ServerConfig, folder: &Path, log: &Path) {
+    let (servers, _changes) = started(vec![("test".to_owned(), entry)], folder, Rc::default()).await;
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "mcp__test__wait", "{}")]), text_reply("done")]);
     let model = model_of(native_target());
@@ -210,7 +306,7 @@ async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
     let received = async {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let lines = std::fs::read_to_string(&log).unwrap();
+            let lines = std::fs::read_to_string(log).unwrap();
             if lines.lines().any(|line| line.starts_with("call ")) {
                 cancel.cancel();
             }
@@ -286,6 +382,7 @@ async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and
         &|_| None,
         &folder,
         Rc::new(Recorded::default()),
+        http(),
         Rc::new(move |server| changed.send(server).unwrap()),
     );
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
@@ -380,6 +477,7 @@ async fn a_close_stops_a_server_that_never_answers_its_start() {
         &|_| None,
         &folder,
         Rc::new(Recorded::default()),
+        http(),
         on_change,
     );
 
@@ -522,6 +620,7 @@ async fn the_trust_runs_only_when_a_project_server_can_start() {
         &|_| None,
         &folder,
         Rc::new(Recorded::default()),
+        http(),
         Rc::new(|_| {}),
     );
     servers.ready().await;
@@ -542,6 +641,7 @@ async fn a_close_during_the_trust_starts_no_project_server() {
         &|_| None,
         &folder,
         Rc::new(Recorded::default()),
+        http(),
         Rc::new(|_| {}),
     );
 
@@ -563,9 +663,10 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
         command: Some("/no/such/program".to_owned()),
         ..test_server(&[])
     };
-    let http = ServerConfig {
+    let remote = ServerConfig {
         command: None,
         url: Some("https://example.test/mcp".to_owned()),
+        headers: [("bad name".to_owned(), "x".to_owned())].into(),
         ..test_server(&[])
     };
     let unset = ServerConfig {
@@ -578,7 +679,7 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
     };
     let entries = [
         ("missing", missing),
-        ("http", http),
+        ("http", remote),
         ("unset", unset),
         ("disabled", disabled),
     ];
@@ -604,7 +705,7 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
             server(
                 "http",
                 McpServerState::Failed {
-                    error: "yuke supports only stdio servers, and this entry names a url".to_owned()
+                    error: "bad name is not a header name".to_owned()
                 }
             ),
             server(

@@ -2,6 +2,7 @@
 //! a server is a deferred engine tool named `mcp__<server>__<tool>`.
 
 mod config;
+mod http;
 mod names;
 mod servers;
 
