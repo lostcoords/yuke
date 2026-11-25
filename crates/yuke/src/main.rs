@@ -190,7 +190,7 @@ enum PluginCommand {
 /// What the program runs.
 #[derive(Debug, PartialEq)]
 enum Mode {
-    /// The terminal interface. Its start pane shows the session of the choice.
+    /// The terminal interface. Its chat shows the session of the choice.
     Tui(SessionChoice),
     /// The protocol server on the Unix socket at `listen`, or else on stdin and stdout.
     Rpc { listen: Option<PathBuf> },
@@ -553,7 +553,7 @@ async fn serve_rpc(listen: Option<PathBuf>) -> Result<ExitCode, String> {
     }
 }
 
-/// Run the terminal interface until a quit or a signal. Its start pane shows the session of `session`.
+/// Run the terminal interface until a quit or a signal. Its chat shows the session of `session`.
 async fn run_tui(session: SessionChoice) -> Result<ExitCode, String> {
     let shutdown = CancellationToken::new();
     match run_until_signal(tui::run(machine()?, session, shutdown.clone()), &shutdown).await? {

@@ -1,10 +1,10 @@
-// The core of the terminal interface on a fake 20×6 driver: placement, clipping, input routing, focus, overlays, panes,
-// the plugin surface and restore.
+// The core of the terminal interface on a fake 20×6 driver: placement, clipping, input routing, focus, overlays, the
+// main view, the plugin surface, and the snapshot of a reload.
 
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
 import { assert, assertEquals, assertThrows, test } from "yuke:test";
-import { type Cursor, type MouseEvent, type RestoreView, stack, type View } from "yuke:tui";
+import { type Cursor, type JsonValue, type Mount, type MouseEvent, stack, type View } from "yuke:tui";
 import { atoms, click, fakeTerminal, key, named } from "./terminal.ts";
 
 test("a placed child draws in its rect and is cut to it", () => {
@@ -237,64 +237,95 @@ test("a press on a view without focusOnPress reaches it and focuses its parent, 
   assertEquals([presses, pressed, core.scene.focusedView === inner], [["press"], true, true]);
 });
 
-test("the view of a pane takes a press without focusOnPress", () => {
+test("the main view takes a press and the focus without focusable", () => {
   const core = new Core(fakeTerminal().driver);
-  const panes = createSurface(core, "test", new AbortController().signal).panes;
-  const view = (): View => ({ focusable: true, focusOnPress: false, draw() {} });
-  // The split puts the pane right of the empty pane. A press on the empty pane takes the focus away first.
-  const right = panes.split(view);
-  core.event(click(1, 1));
-  const away = core.scene.focusedView !== right.view;
-  core.event(click(12, 1));
-  assertEquals([away, core.scene.focusedView === right.view], [true, true]);
+  const tui = createSurface(core, "test", new AbortController().signal);
+  const main = label("main");
+  const side: View = { focusable: true, draw() {} };
+  tui.setMain(() => main);
+  tui.wrapRoot((_mount, inner) =>
+    stack("row", [
+      { view: inner, size: "fill" },
+      { view: side, size: 4 },
+    ]),
+  );
+  core.event({ type: "start" });
+  core.scene.layout();
+  const away = tui.focus(side);
+  core.event(click(1, 0));
+  assertEquals([away, tui.focusedView === main], [true, true]);
 });
 
-test("panes split focus and close and the last close gives an empty pane without a default", () => {
+test("the main view shows at the start, the last factory wins, and its remover brings back the one before", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
-  const pane = (name: string) => (): View => ({
-    draw: (canvas, focused) => {
-      canvas.text(0, 0, focused ? name.toUpperCase() : name);
-    },
-  });
-  const panes = createSurface(core, "test", new AbortController().signal).panes;
-  // The first split puts `a` right of the empty pane, the second puts `b` below `a`.
-  const a = panes.split(pane("a"));
-  const b = panes.split(pane("b"), { direction: "column" });
-  assertEquals(terminal.screen(core), [
-    "          │a",
-    "          │",
-    "          │",
-    "          │─────────",
-    "          │B",
-    "          │",
-  ]);
-  core.commands.run("core:focus-left");
-  assertEquals(terminal.screen(core)[0], "          │a");
-  // A close goes back to `a`.
-  core.commands.run("core:focus-right");
-  b.close();
-  assertEquals(terminal.screen(core).slice(0, 3), ["          │A", "          │", "          │"]);
-  assert(panes.activePane === a, "the close of b makes a active");
-  // The close of `a` leaves the empty pane; without a default pane, a last close gives an empty pane.
-  core.commands.run("core:close");
-  core.commands.run("core:close");
-  assertEquals(terminal.screen(core)[0], "");
-  assertEquals(panes.activePane, undefined);
-  assertEquals(a.signal.aborted, true);
-  // A plugin pane as the last pane gives way to an empty pane too.
-  const c = panes.split(pane("c"));
-  // Focus by direction reads the rects of the last layout, which each key runs first.
-  terminal.screen(core);
-  core.commands.run("core:focus-left");
-  core.commands.run("core:close");
-  assertEquals(terminal.screen(core)[0], "C");
-  c.close();
-  assertEquals(terminal.screen(core)[0], "");
+  const tui = createSurface(core, "test", new AbortController().signal);
+  const mounts: Mount[] = [];
+  const make =
+    (name: string) =>
+    (mount: Mount, saved: JsonValue): View => {
+      mounts.push(mount);
+      return { draw: (canvas) => canvas.text(0, 0, `${name} ${String(saved)}`) };
+    };
+  tui.setMain(make("a"));
+  const beforeStart = terminal.screen(core)[0];
+  core.event({ type: "start" });
+  const started = terminal.screen(core)[0];
+  const removeB = tui.setMain(make("b"));
+  const replaced = terminal.screen(core)[0];
+  removeB();
+  assertEquals([beforeStart, started, replaced, terminal.screen(core)[0]], ["", "a null", "b null", "a null"]);
+  // Each change closes the main view before it, and the factory that comes back makes a new view.
+  assertEquals(
+    mounts.map((mount) => mount.signal.aborted),
+    [true, true, false],
+  );
 });
 
-test("a pane gets its inner focus back and focus changes reach the path", () => {
+test("a main factory that throws gives one fault, and the close of its mount empties the main view", () => {
+  const terminal = fakeTerminal();
+  const core = new Core(terminal.driver);
+  core.event({ type: "start" });
+  let mount: Mount | undefined;
+  createSurface(core, "notes", new AbortController().signal).setMain((given) => {
+    mount = given;
+    return label("notes");
+  });
+  const shown = terminal.screen(core)[0];
+  mount?.close();
+  const closed = terminal.screen(core)[0];
+  createSurface(core, "broken", new AbortController().signal).setMain(() => {
+    throw new Error("no disk");
+  });
+  const fault = core.notices.list().at(-1);
+  assertEquals([shown, closed, terminal.screen(core)[0]], ["notes", "", ""]);
+  assertEquals([fault?.source, fault?.text.split("\n")[0]], ["broken", "A view did not start: Error: no disk"]);
+});
+
+test("a new main view takes the focus from a view beside it", () => {
   const core = new Core(fakeTerminal().driver);
+  const tui = createSurface(core, "test", new AbortController().signal);
+  const side: View = { focusable: true, draw() {} };
+  const first = label("first");
+  const second = label("second");
+  tui.setMain(() => first);
+  tui.wrapRoot((_mount, inner) =>
+    stack("row", [
+      { view: inner, size: "fill" },
+      { view: side, size: 4 },
+    ]),
+  );
+  core.event({ type: "start" });
+  core.scene.layout();
+  tui.focus(side);
+  tui.setMain(() => second);
+  core.scene.layout();
+  assertEquals(tui.focusedView === second, true);
+});
+
+test("the main view gets its inner focus back, and a focus change drops a pending key sequence", () => {
+  const core = new Core(fakeTerminal().driver);
+  const tui = createSurface(core, "test", new AbortController().signal);
   const log: string[] = [];
   const composer: View = { focusable: true, draw() {}, onFocusChange: (focused) => log.push(`composer ${focused}`) };
   const transcript: View = { focusable: true, draw() {} };
@@ -306,79 +337,74 @@ test("a pane gets its inner focus back and focus changes reach the path", () => 
       { view: composer, rect: { column: 0, row: size.height - 1, width: size.width, height: 1 } },
     ],
   };
-  const panes = createSurface(core, "test", new AbortController().signal).panes;
-  panes.split(() => chat);
+  const sidebar: View = { focusable: true, draw() {} };
+  tui.setMain(() => chat);
+  tui.wrapRoot((_mount, inner) =>
+    stack("row", [
+      { view: inner, size: "fill" },
+      { view: sidebar, size: 4 },
+    ]),
+  );
+  core.event({ type: "start" });
   core.scene.layout();
-  core.scene.focus(composer);
-  core.commands.add({ name: "test:none", run() {} });
-  core.keymap.add("ctrl+k x", "test:none");
-  core.commands.run("core:focus-left");
-  core.scene.layout();
+  tui.focus(composer);
+  tui.commands.add({ name: "none", run() {} });
+  tui.keys.add("ctrl+k x", "none");
   core.event(key("k", { ctrl: true }));
-  assertEquals(core.keymap.pending(), "ctrl+k");
-  core.commands.run("core:focus-right");
+  const pending = core.keymap.pending();
+  tui.focus(sidebar);
+  tui.focus(chat);
   core.scene.layout();
-  // Back in the chat pane the composer has the focus again; the focus change drops the pending `ctrl+k`.
-  assert(core.scene.focusedView === composer, "the composer has the focus again");
-  assertEquals(core.keymap.pending(), "");
+  assertEquals([pending, core.keymap.pending(), tui.focusedView === composer], ["ctrl+k", "", true]);
   assertEquals(log, ["chat true", "composer true", "chat false", "composer false", "chat true", "composer true"]);
 });
 
-test("a pane starts at its initial focus and each focus change names the view and the pane", () => {
+test("the main view starts at its initial focus, and a focus beneath a modal changes no focused view", () => {
   const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
-  /** A chat pane: a transcript above a composer, and the composer takes the first focus. */
-  const chat = (name: string) => {
-    const composer: View = { focusable: true, draw() {} };
-    const transcript: View = { focusable: true, draw() {} };
-    const view: View = {
-      draw() {},
-      initialFocus: composer,
-      layout: (size) => [
-        { view: transcript, rect: { column: 0, row: 0, width: size.width, height: size.height - 1 } },
-        { view: composer, rect: { column: 0, row: size.height - 1, width: size.width, height: 1 } },
-      ],
-    };
-    names.set(composer, `${name} composer`).set(transcript, `${name} transcript`);
-    return { view, composer, transcript };
-  };
-  const names = new Map<View | undefined, string>();
+  const composer: View = { focusable: true, draw() {} };
+  const transcript: View = { focusable: true, draw() {} };
+  const input: View = { focusable: true, draw() {} };
+  const names = new Map<View | undefined, string>([
+    [composer, "composer"],
+    [transcript, "transcript"],
+    [input, "modal input"],
+  ]);
   const changes: string[] = [];
   tui.addFocusListener((change) => {
-    const pane = change.pane === undefined ? "no pane" : change.pane === a ? "pane a" : "pane b";
-    changes.push(`${names.get(change.previousView) ?? "none"} -> ${names.get(change.focusedView) ?? "?"} in ${pane}`);
+    changes.push(`${names.get(change.previousView) ?? "none"} -> ${names.get(change.focusedView) ?? "?"}`);
   });
-  const first = chat("a");
-  const second = chat("b");
-  const a = tui.panes.split(() => first.view);
-  const b = tui.panes.split(() => second.view);
+  tui.setMain(() => ({
+    draw() {},
+    initialFocus: composer,
+    layout: (size) => [
+      { view: transcript, rect: { column: 0, row: 0, width: size.width, height: size.height - 1 } },
+      { view: composer, rect: { column: 0, row: size.height - 1, width: size.width, height: 1 } },
+    ],
+  }));
+  core.event({ type: "start" });
   core.draw();
-  assertEquals(tui.focusedView, second.composer);
-  tui.focus(first.transcript);
+  tui.focus(transcript);
   core.draw();
-  b.focus();
-  core.draw();
-  const input: View = { focusable: true, draw() {} };
-  names.set(input, "modal input");
   const modal = tui.overlay(() => ({
     draw() {},
     initialFocus: input,
     layout: () => [{ view: input, rect: { column: 0, row: 0, width: 5, height: 1 } }],
   }));
   core.draw();
-  // A focus beneath the modal moves the active pane but not `tui.focusedView`, so it gives no change.
-  tui.focus(first.composer);
+  // A focus beneath the modal waits there, so `tui.focusedView` stays the modal input until the close.
+  tui.focus(composer);
   core.draw();
+  const atomsUnderModal = atoms(core);
   modal.close();
   core.draw();
-  // The modal input belongs to no pane; after the modal the focus is the one beneath it.
   assertEquals(changes, [
-    "none -> b composer in pane b",
-    "b composer -> a transcript in pane a",
-    "a transcript -> b composer in pane b",
-    "b composer -> modal input in no pane",
-    "modal input -> a composer in pane a",
+    "none -> composer",
+    "composer -> transcript",
+    "transcript -> modal input",
+    "modal input -> composer",
   ]);
+  assertEquals(atomsUnderModal, ["global", "overlay"]);
 });
 
 test("a timer runs once in time order, asks for a frame, and its disposer or the stop of its plugin cancels it", () => {
@@ -490,7 +516,7 @@ test("a root that does not place `inner` covers the root below until the close",
   assertEquals(below.signal.aborted, false);
 });
 
-test("a view beside the panes gets the mouse and leaves the focus on the active pane", () => {
+test("a view beside the main view gets the mouse and leaves the focus on the main view", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   const tui = createSurface(core, "test", new AbortController().signal);
@@ -502,28 +528,18 @@ test("a view beside the panes gets the mouse and leaves the focus on the active 
       return true;
     },
   };
-  const left = tui.panes.split(() => label("left"));
-  const right = tui.panes.split(() => label("right"));
-  const root = tui.wrapRoot((_mount, inner) =>
+  const main = label("main");
+  tui.setMain(() => main);
+  tui.wrapRoot((_mount, inner) =>
     stack("row", [
       { view: inner, size: "fill" },
       { view: side, size: 4 },
     ]),
   );
+  core.event({ type: "start" });
   terminal.screen(core);
-  assertEquals(tui.panes.activePane, right);
-  // The view gets the press. The active pane keeps the focus.
   core.event(click(18, 0));
-  assertEquals(pressed.includes("press"), true);
-  assertEquals(tui.panes.activePane, right);
-  assertEquals(tui.focusedView, right.view);
-  // No pane is to the right. The focus stays.
-  assertEquals(tui.panes.moveFocus("right"), false);
-  assertEquals(tui.panes.moveFocus("left"), true);
-  assertEquals(tui.panes.activePane, left);
-  root.close();
-  terminal.screen(core);
-  assertEquals(tui.panes.activePane, left);
+  assertEquals([pressed.includes("press"), tui.focusedView === main], [true, true]);
 });
 
 test("the first command with a slash word keeps it, and a later one shows its full name", () => {
@@ -580,23 +596,7 @@ test("the core commands reach the driver", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   for (const name of ["quit", "suspend", "reload"]) core.commands.run(`core:${name}`);
-  assertEquals(terminal.calls, ["quit", "suspend", ["reload", { tree: null, focus: 0 }]]);
-});
-
-test("a focus change beneath a modal moves the active pane", () => {
-  const terminal = fakeTerminal();
-  const core = new Core(terminal.driver);
-  const panes = createSurface(core, "test", new AbortController().signal).panes;
-  const a = panes.split(() => ({ draw() {} }));
-  panes.split(() => ({ draw() {} }));
-  terminal.screen(core);
-  core.scene.overlay("test", () => ({ draw() {} }));
-  terminal.screen(core);
-  // A focus of the scene beneath the modal, as `tui.focus` gives, moves the active pane too.
-  core.scene.focus(a.view);
-  terminal.screen(core);
-  assert(panes.activePane === a, "the focus makes a active");
-  assertEquals(atoms(core), ["global", "overlay"]);
+  assertEquals(terminal.calls, ["quit", "suspend", ["reload", {}]]);
 });
 
 test("a view that leaves the tree gets its focus loss and its capture cancel", () => {
@@ -660,9 +660,7 @@ test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
     },
   });
   tui.keys.add("ctrl+n", "open");
-  tui.views.add("note", () => ({ draw() {} }));
   assert(assertThrows(() => tui.commands.add({ name: "other:x", run() {} })) instanceof TypeError);
-  assert(assertThrows(() => tui.views.add("core:note", () => ({ draw() {} }))) instanceof TypeError);
   tui.commands.add({ name: "notes:close", run() {} });
   assertEquals([tui.commands.run("open"), tui.commands.run("core:quit")], [true, true]);
   assertEquals(log, ["open"]);
@@ -675,7 +673,6 @@ test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
     ["notes:open", "notes:close"],
   );
   assertEquals(tui.keys.list("open"), ["ctrl+n"]);
-  assert(core.views.get("notes:note") !== undefined, "the view type has the plugin prefix");
 });
 
 test("the stop of a plugin removes its registrations and mounts and later calls throw", () => {
@@ -695,12 +692,12 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
   tui.keys.add("ctrl+n", "open");
   tui.styles.add({ "notes.title": { bold: true } });
   tui.notices.addListener((notice) => heard.push(notice));
-  tui.views.add("note", () => ({ draw() {} }));
-  const pane = tui.panes.split(() => ({
-    draw: (canvas) => {
-      canvas.text(0, 0, "pane");
-    },
-  }));
+  let main: Mount | undefined;
+  tui.setMain((mount) => {
+    main = mount;
+    return label("main");
+  });
+  core.event({ type: "start" });
   const overlay = tui.overlay(() => ({ draw() {} }), {
     modal: false,
     place: () => ({ column: 0, row: 5, width: 1, height: 1 }),
@@ -716,16 +713,15 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
   assert(assertThrows(() => tui.commands.add({ name: "late", run() {} })) instanceof TypeError);
   once();
   root.close();
-  // After the stop the pane tree is an empty pane again: the root, the pane, and the overlay of the plugin are gone.
+  // After the stop the main view is empty again: the root, the main view, and the overlay of the plugin are gone.
   assertEquals(terminal.screen(core)[0], "");
-  assertEquals([pane.signal.aborted, overlay.signal.aborted, root.signal.aborted], [true, true, true]);
+  assertEquals([main?.signal.aborted, overlay.signal.aborted, root.signal.aborted], [true, true, true]);
   assertEquals(
     core.commands.list().some((item) => item.name.startsWith("notes:")),
     false,
   );
   assertEquals(core.keymap.list("notes:open"), []);
   assertEquals(core.styles.resolve("notes.title"), {});
-  assertEquals(core.views.get("notes:note"), undefined);
   assertEquals(heard, []);
   assertEquals(thrownDuringStop.length, 1);
   assert(thrownDuringStop[0] instanceof TypeError);
@@ -760,99 +756,27 @@ test("a command of a plugin keeps its this and its fault names the plugin", () =
   );
 });
 
-/** The state of a note: its id. */
-type NoteState = { readonly id: number };
-
-/** A note shows its id and saves its state. */
-function note(state: NoteState): View {
-  return {
-    draw: (canvas, focused) => {
-      canvas.text(0, 0, `${focused ? "N" : "n"}ote ${state.id}`);
-    },
-    snapshot: () => ({ type: "note", state }),
-  };
-}
-
-/** The restore of a note. The tests save only notes, so the state is a `NoteState`. */
-const restoreNote: RestoreView = (state) => note(state as NoteState);
-
-test("the panes of a snapshot come back with their views and focus", () => {
+test("a reload gives the saved value of the main view back to a factory of the same plugin only", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
-  const tui = createSurface(core, "notes", new AbortController().signal);
-  tui.views.add("note", restoreNote);
-  const one = tui.panes.split(() => note({ id: 1 }));
-  tui.panes.split(() => note({ id: 2 }), { direction: "column" });
-  tui.panes.split(() => ({ draw() {} }));
-  terminal.screen(core);
-  one.focus();
-  const before = terminal.screen(core);
+  const note = (id: JsonValue): View => ({
+    draw: (canvas) => canvas.text(0, 0, `note ${String(id)}`),
+    snapshot: () => id,
+  });
+  createSurface(core, "notes", new AbortController().signal).setMain((_mount, saved) => note(saved ?? 1));
+  core.event({ type: "start" });
   const snapshot = core.snapshot();
-  const restored = new Core(terminal.driver);
-  createSurface(restored, "notes", new AbortController().signal).views.add("note", restoreNote);
-  restored.restore(snapshot);
-  // The empty pane and the view without `snapshot()` save as `null`; the focus is the index of note 1.
-  assertEquals(JSON.parse(snapshot), {
-    tree: {
-      split: "row",
-      first: null,
-      second: {
-        split: "column",
-        first: { type: "notes:note", state: { id: 1 } },
-        second: {
-          split: "row",
-          first: { type: "notes:note", state: { id: 2 } },
-          second: null,
-        },
-      },
-    },
-    focus: 1,
-  });
-  assertEquals(before, [
-    "          │Note 1",
-    "          │",
-    "          │",
-    "          │─────────",
-    "          │note│",
-    "          │    │",
-  ]);
-  // After the restore the layout and the focus are the same, and the view without a snapshot is an empty pane.
-  assertEquals(terminal.screen(restored), [
-    "          │Note 1",
-    "          │",
-    "          │",
-    "          │─────────",
-    "          │note│",
-    "          │    │",
-  ]);
-});
-
-test("a restore drops a pane without its plugin and keeps an empty pane for a failed one", () => {
-  const terminal = fakeTerminal();
-  const core = new Core(terminal.driver);
-  const notes = new AbortController();
-  const tui = createSurface(core, "notes", notes.signal);
-  tui.views.add("note", restoreNote);
-  const earlier = tui.panes.split(() => note({ id: 9 }));
-  createSurface(core, "broken", new AbortController().signal).views.add("view", () => {
-    throw new Error("old state");
-  });
-  const split = (first: unknown, second: unknown) => ({ split: "row", first, second });
-  const saved = {
-    tree: split(split({ type: "gone:view", state: 1 }, { type: "notes:note", state: { id: 3 } }), {
-      type: "broken:view",
-      state: 2,
-    }),
-    focus: 0,
+  /** The first row of a new core whose plugin `owner` makes the main view, after a start with `saved`. */
+  const restored = (owner: string, saved: string | undefined): string | undefined => {
+    const next = new Core(terminal.driver);
+    createSurface(next, owner, new AbortController().signal).setMain((_mount, value) => note(value ?? 2));
+    next.event(saved === undefined ? { type: "start" } : { type: "start", snapshot: saved });
+    return terminal.screen(next)[0];
   };
-  core.restore(JSON.stringify(saved));
-  // `gone:view` has no factory: its pane goes, and note 3 takes its place, with the focus of the gone leaf.
-  assertEquals(terminal.screen(core)[0], "Note 3    │");
-  // The restore closes the panes from before it.
-  assertEquals(earlier.signal.aborted, true);
-  const fault = core.notices.list().at(-1);
-  assertEquals([fault?.source, fault?.text.split("\n")[0]], ["broken", "A view did not start: Error: old state"]);
-  // The stop of `notes` closes its restored pane too.
-  notes.abort();
-  assertEquals(terminal.screen(core)[0], "");
+  assertEquals(JSON.parse(snapshot), { main: { owner: "notes", state: 1 } });
+  // A snapshot of an older yuke has no `main`, so its factory starts new.
+  assertEquals(
+    [restored("notes", snapshot), restored("other", snapshot), restored("notes", '{"tree":null,"focus":0}')],
+    ["note 1", "note 2", "note 2"],
+  );
 });

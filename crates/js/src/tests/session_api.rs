@@ -568,13 +568,13 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     let scripted = Rc::new(Scripted::default());
     let runtime = started("an_aborted_handle_ends_its_hold_and_gets_no_later_update", &scripted).await;
 
-    open(&runtime, "(globalThis.pane = new AbortController()).signal").await;
+    open(&runtime, "(globalThis.view = new AbortController()).signal").await;
     evaluate::<()>(
         &runtime,
         &format!(
             "globalThis.later = [];
              await sessions.open('{}', {{ tail: 5, onEvent: (e) => later.push(e) }});
-             pane.abort();",
+             view.abort();",
             session()
         ),
     )
@@ -607,9 +607,9 @@ async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
     let opened = evaluate::<String>(
         &runtime,
         &format!(
-            "const pane = new AbortController();
-             const opening = sessions.open('{}', {{ tail: 5, signal: pane.signal, onEvent: () => undefined }});
-             pane.abort(new Error('the pane closed'));
+            "const view = new AbortController();
+             const opening = sessions.open('{}', {{ tail: 5, signal: view.signal, onEvent: () => undefined }});
+             view.abort(new Error('the view closed'));
              try {{ await opening; return 'opened'; }} catch (error) {{ return error.message; }}",
             session()
         ),
@@ -617,7 +617,7 @@ async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
     .await
     .unwrap();
 
-    assert_eq!(opened, "the pane closed");
+    assert_eq!(opened, "the view closed");
     assert_eq!(scripted.released.get(), 1);
 }
 

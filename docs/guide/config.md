@@ -34,7 +34,7 @@ This profile uses `~/.config/yuke-work`, `~/.local/share/yuke-work`, and `~/.cac
 | `plugins` | `[]` | Your plugins: local folders or Git repositories. See [Plugins](#plugins). |
 | `disable` | `[]` | [Bundled plugins](plugins.md#bundled-plugins) to turn off, by name, such as `["toasts"]`. |
 | `bundled` | `{}` | Options for [bundled plugins](plugins.md#bundled-plugins), by name. |
-| `sessionIdleMinutes` | `30` | How long background jobs keep running in a session that no pane or client has open. After this time, yuke closes the session and stops its jobs. |
+| `sessionIdleMinutes` | `30` | How long background jobs keep running in a session that no view or client has open. After this time, yuke closes the session and stops its jobs. |
 
 ## Plugins
 

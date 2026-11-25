@@ -1,9 +1,9 @@
-// The questions of plugins in the bundled chat: the place of the composer, the keys of the pages, the count, a late
-// answer, and two panes on one session.
+// The questions of plugins in the bundled chat: the place of the composer, the keys of the pages, the count, and a late
+// answer.
 
 import type { InteractionRequest, InteractionResponse, Question, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import { composerOf, EMPTY, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
+import { composerOf, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
 
 /** The update of the question `id` of the plugin `guard`. */
 function asked(id: number, request: InteractionRequest): SessionUpdate {
@@ -262,24 +262,6 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   assertEquals(
     [chat.notices, stays, frame.rows().at(-2)],
     [["error The answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
-  );
-});
-
-test("each pane of a session shows its question, and the focused pane takes the keys", async () => {
-  const pane = { type: "chat:pane", state: { session: "s1", draft: EMPTY } };
-  const saved = JSON.stringify({ tree: { split: "row", first: pane, second: pane }, focus: 0 });
-  using frame = createFrame({ width: 61, height: 6 });
-  const sessions = fakeSessions();
-  await loadChat(frame, sessions);
-  frame.start(saved);
-  await waitForSettled();
-  sessions.push(asked(7, DELETE));
-  frame.draw();
-  const both = frame.rows().at(-3);
-  frame.key("enter");
-  assertEquals(
-    [both, sessions.responses],
-    [` guard · Branch${" ".repeat(15)}│ guard · Branch`, [[7, answered(["Yes"])]]],
   );
 });
 

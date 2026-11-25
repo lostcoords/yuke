@@ -4,7 +4,7 @@ import { ChatDocument, type ChatPresentation, type ChatPresentationOptions } fro
 import type { Block, StoredEvent, ToolCall } from "yuke:protocol";
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import type { Transcript } from "yuke:transcript";
-import type { TextDocument, View } from "yuke:tui";
+import type { TextDocument } from "yuke:tui";
 import { commit, fakeSessions, fixedClock, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
 
 const GROUP = "group";
@@ -206,7 +206,7 @@ test("requestUpdate shows new state of a presentation with no session event, and
   assertEquals([framed, shown(frame)], [["● tools: 1"], ["● running: 1"]]);
 });
 
-test("a session change, a new factory, and a pane close abort the signal, and each presentation gets the key of its session", async () => {
+test("a session change, a new factory, and the close of the chat abort the signal, and each presentation gets the key of its session", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a")));
   const options: ChatPresentationOptions[] = [];
@@ -217,26 +217,18 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
   chat.chat.setPresentation(factory);
   frame.start();
   await waitForSettled();
-  const pane = chat.tui.panes.activePane?.view as View;
   await chat.chat.show("s2");
   const afterShow = [options[0]?.signal.aborted, options[1]?.signal.aborted];
   chat.chat.setPresentation((given) => factory(given));
   frame.draw();
   const afterFactory = [options[1]?.signal.aborted, options[2]?.signal.aborted];
-  chat.tui.commands.run("core:split-right");
-  frame.draw();
-  chat.tui.commands.run("core:close");
+  const shown = chat.chat.sessionId();
+  // Another main view closes the chat.
+  frame.surface("other").tui.setMain(() => ({ draw() {} }));
   frame.draw();
   assertEquals(
-    [
-      options.map((given) => given.id),
-      afterShow,
-      afterFactory,
-      options[3]?.signal.aborted,
-      options[2]?.signal.aborted,
-      chat.chat.sessionIdOf(pane),
-    ],
-    [["session:s1", "session:s2", "session:s2", "session:new"], [true, false], [true, false], true, false, "s2"],
+    [options.map((given) => given.id), afterShow, afterFactory, options[2]?.signal.aborted, shown],
+    [["session:s1", "session:s2", "session:s2"], [true, false], [true, false], true, "s2"],
   );
 });
 

@@ -3,8 +3,8 @@
 import { assertEquals, assertThrows, createFrame, createHost, test } from "yuke:test";
 import type { StatusEntry, View } from "yuke:tui";
 
-/** A pane view that draws `text` in its first row. */
-function pane(text: string): () => View {
+/** A main view that draws `text` in its first row. */
+function main(text: string): () => View {
   return () => ({
     draw: (canvas) => {
       canvas.text(0, 0, text);
@@ -89,7 +89,7 @@ test("a listener added twice and removed once stays, and a listener that an earl
 
 test("the bar takes the last row: the left side from the start and the right side to the end", async () => {
   using frame = createFrame({ width: 24, height: 3 });
-  frame.surface("panes").tui.panes.setDefault(pane("pane"));
+  frame.surface("main").tui.setMain(main("main"));
   await using _host = await createHost({ frame, plugins: [{ bundled: "bar" }] });
   frame.start();
   const tui = frame.surface("vim").tui;
@@ -97,7 +97,7 @@ test("the bar takes the last row: the left side from the start and the right sid
   tui.status.set("model", item("luna", "right", 10));
   tui.status.set("jobs", item("jobs 2", "right", 1));
   frame.draw();
-  assertEquals(frame.rows(), ["pane", "", "NORMAL     jobs 2 · luna"]);
+  assertEquals(frame.rows(), ["main", "", "NORMAL     jobs 2 · luna"]);
   // The items are dim, and the bar has no background.
   const last = frame.frame.cells[2] ?? [];
   assertEquals([last[0]?.style, last[7]?.style], [{ dim: true }, {}]);

@@ -312,14 +312,8 @@ export function transcriptRows(frame: FrameTest): string[] {
   return shown.slice(0, rule);
 }
 
-/** The composer of the active pane of `chat`. */
+/** The composer of `chat`. */
 export function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
-  return chat.tui.widgets
-    .list()
-    .find(
-      (mount) =>
-        mount.widget instanceof TextEditor &&
-        mount.widget.role === "composer" &&
-        mount.pane?.view === chat.tui.panes.activePane?.view,
-    )?.widget as TextEditor;
+  return chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor && mount.widget.role === "composer")
+    ?.widget as TextEditor;
 }

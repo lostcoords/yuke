@@ -57,7 +57,7 @@ import type { Tui } from "yuke:tui";
  * - `sessions`: the sessions, in each mode.
  * - `catalog`: the providers and their models, in each mode.
  *
- * The bundled chat provides `chat`, the chat panes of the terminal interface. A plugin that uses it needs a `uses`
+ * The bundled chat provides `chat`, the chat of the terminal interface. A plugin that uses it needs a `uses`
  * entry.
  */
 export interface Services {

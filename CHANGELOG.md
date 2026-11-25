@@ -2,6 +2,16 @@
 
 Each release has one section. The release job publishes the section of each tag as its release notes.
 
+## Unreleased
+
+### Breaking changes
+
+- The TUI shows one session. The panes, their split, close, and focus commands, and their `ctrl+k` keys are gone. To
+  work on more sessions at once, start yuke in more terminals, for example in the panes of tmux.
+- `tui.setMain((mount, saved) => view)` makes the main view, in place of `tui.panes` and `tui.views.add`. A reload
+  gives the value of `View.snapshot()` back as `saved`. `FocusChange.pane` and `PlacedWidget.pane` are gone.
+- `chat.sessionId()` replaces `chat.sessionIdOf(view)`.
+
 ## 0.2.0
 
 ### Breaking changes

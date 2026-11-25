@@ -1,4 +1,4 @@
-// The bundled plugin `mcp`: the list of the MCP servers of the session in the pane, the login dialog, and the logout.
+// The bundled plugin `mcp`: the list of the MCP servers of the shown session, the login dialog, and the logout.
 
 import { apply } from "yuke:internal/bundled/mcp";
 import type { McpLogins } from "yuke:internal/sessions";
@@ -259,7 +259,7 @@ test("a server that needs no login gives a notice, a failed one shows its whole 
   ]);
 });
 
-test("/mcp gives a notice for a session without servers and for a pane without a session", async () => {
+test("/mcp gives a notice for a session without servers and for a chat without a session", async () => {
   using frame = frameOf();
   const none = await load(frame, []);
   await none.run();
@@ -268,5 +268,5 @@ test("/mcp gives a notice for a session without servers and for a pane without a
   using bare = createFrame({ width: 80, height: 16 }, undefined, { folder: "/w" });
   const mcp = await load(bare);
   await mcp.run();
-  assertEquals(mcp.notices, ["info No session is shown in this pane"]);
+  assertEquals(mcp.notices, ["info No session is shown"]);
 });

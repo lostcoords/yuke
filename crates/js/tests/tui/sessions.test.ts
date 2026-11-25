@@ -46,7 +46,7 @@ async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadCh
   return frame.rows();
 }
 
-test("the list shows the sessions of the folder of the pane, and tab shows every folder", async () => {
+test("the list shows the sessions of the folder of the shown session, and tab shows every folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { folder: "/start", sessionId: "s1" });
   const loaded = await load(frame);
   await waitForSettled();
@@ -65,7 +65,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
     [
       here.some((line) => line.trim() === "/w"),
       shows(here, "tab: every folder · esc: close"),
-      shows(here, "●", "fix the flaky test"),
+      shows(here, "fix the flaky test"),
       shows(here, "add the bar"),
     ],
     [true, true, true, true],
@@ -75,7 +75,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
       shows(here, "refactor"),
       every.some((line) => line.trim() === "every folder"),
       shows(every, "tab: this folder · esc: close"),
-      shows(every, "○", "refactor sqlgen", "other"),
+      shows(every, "refactor sqlgen", "other"),
     ],
     [false, true, true, true],
   );
@@ -108,7 +108,7 @@ test("a query matches the first prompt, and else the model, the folder, or the i
   );
 });
 
-test("enter shows the chosen session in the focused chat pane and closes the list", async () => {
+test("enter shows the chosen session in the chat and closes the list", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { folder: "/start", sessionId: "s1" });
   const loaded = await load(frame);
   await waitForSettled();
@@ -152,7 +152,7 @@ test("a match of the first prompt comes before a match of the folder of a newer 
   assertEquals([at("add the bar") >= 0, at("add the bar") < at("deploy notes")], [true, true]);
 });
 
-test("the list of a pane whose session is gone starts with the start folder", async () => {
+test("the list of a chat whose session is gone starts with the start folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { folder: "/start", sessionId: "s9" });
   const loaded = await load(frame);
   await waitForSettled();

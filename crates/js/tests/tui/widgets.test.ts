@@ -6,7 +6,7 @@ import { assertEquals, test } from "yuke:test";
 import { type PlacedWidget, TextEditor, type View } from "yuke:tui";
 import { atoms, fakeTerminal, key, named } from "./terminal.ts";
 
-/** A pane that shows `widget` on its first row. */
+/** A main view that shows `widget` on its first row. */
 function holder(widget: View): View {
   return {
     draw() {},
@@ -18,17 +18,18 @@ function holder(widget: View): View {
 test("a watch gets each mount once and its cleanup when the widget leaves", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
-  const panes = createSurface(core, "chat", new AbortController().signal).panes;
+  const tui = createSurface(core, "chat", new AbortController().signal);
+  core.event({ type: "start" });
   const editor = new TextEditor();
   const log: string[] = [];
   const signals: AbortSignal[] = [];
   const watcher = (name: string) => (mount: PlacedWidget) => {
-    log.push(`${name} attach ${mount.pane === undefined ? "no pane" : "pane"}`);
+    log.push(`${name} attach`);
     signals.push(mount.signal);
     return () => log.push(`${name} cleanup`);
   };
   core.widgets.addWatcher("early", watcher("early"));
-  const pane = panes.split(() => holder(editor));
+  const remove = tui.setMain(() => holder(editor));
   terminal.screen(core);
   terminal.screen(core);
   // A modal covers the widget but does not unmount it.
@@ -37,18 +38,11 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
   core.widgets.addWatcher("late", watcher("late"));
   modal.close();
   terminal.screen(core);
-  pane.close();
+  remove();
   terminal.screen(core);
-  panes.split(() => holder(editor));
+  tui.setMain(() => holder(editor));
   terminal.screen(core);
-  assertEquals(log, [
-    "early attach pane",
-    "late attach pane",
-    "early cleanup",
-    "late cleanup",
-    "early attach pane",
-    "late attach pane",
-  ]);
+  assertEquals(log, ["early attach", "late attach", "early cleanup", "late cleanup", "early attach", "late attach"]);
   assertEquals(
     signals.map((signal) => signal.aborted),
     [true, true, false, false],
@@ -89,7 +83,8 @@ test("an early handler takes a continuation before the keymap and enter alone re
   const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const editor = new TextEditor();
-  tui.panes.split(() => holder(editor));
+  tui.setMain(() => holder(editor));
+  core.event({ type: "start" });
   let submits = 0;
   tui.commands.add({
     name: "submit",
@@ -128,7 +123,7 @@ test("an early handler takes a continuation before the keymap and enter alone re
   assertEquals(core.keymap.pending(), "");
 });
 
-test("a wrap and a close of a root keep the mount of a widget in a pane", () => {
+test("a wrap and a close of a root keep the mount of a widget in the main view", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
@@ -137,7 +132,8 @@ test("a wrap and a close of a root keep the mount of a widget in a pane", () => 
     log.push("attach");
     return () => log.push("cleanup");
   });
-  tui.panes.split(() => holder(new TextEditor()));
+  tui.setMain(() => holder(new TextEditor()));
+  core.event({ type: "start" });
   terminal.screen(core);
   const root = tui.wrapRoot((_mount, inner) => inner);
   terminal.screen(core);
@@ -181,7 +177,8 @@ test("a contexts change ends a pending sequence", () => {
   const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const editor = new TextEditor();
-  tui.panes.split(() => holder(editor));
+  tui.setMain(() => holder(editor));
+  core.event({ type: "start" });
   tui.commands.add({ name: "none", run() {} });
   tui.keys.add("ctrl+k x", "none");
   core.draw();
@@ -205,7 +202,8 @@ test("the remover of a set method brings back the value before it, also when a l
   const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const editor = new TextEditor();
-  tui.panes.split(() => holder(editor));
+  tui.setMain(() => holder(editor));
+  core.event({ type: "start" });
   core.draw();
   const extension = editor.extend(new AbortController().signal);
   const removeFirst = extension.setContexts(["first"]);

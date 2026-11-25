@@ -1,5 +1,5 @@
 /**
- * The core of the terminal interface: the registries, the scene, the pane tree, and the text widgets on a driver of
+ * The core of the terminal interface: the registries, the scene, the main view, and the text widgets on a driver of
  * the terminal. A key goes to the `beforeKeymap` handlers of the focused text widget first. Then it goes to the keymap
  * and along the focus path. An Escape that nothing takes closes the top modal.
  */
@@ -14,25 +14,43 @@ import type { After } from "yuke:internal/tui/clock";
 import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { strokeOf } from "yuke:internal/tui/keys";
+import { createMount, startView } from "yuke:internal/tui/mount";
 import { Notices } from "yuke:internal/tui/notices";
-import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
-import { type SavedPane, type SavedPanes, ViewTypes } from "yuke:internal/tui/restore";
 import { Scene } from "yuke:internal/tui/scene";
 import { StatusItems } from "yuke:internal/tui/status";
 import { Styles } from "yuke:internal/tui/styles";
 import { PlacedWidgets } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
-import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, InputEvent, Startup, View } from "yuke:tui";
+import type {
+  CanvasStyle,
+  ClipboardImage,
+  Cursor,
+  FocusChange,
+  InputEvent,
+  JsonValue,
+  MainFactory,
+  Mount,
+  Startup,
+  View,
+} from "yuke:tui";
 
-/** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
-interface DefaultPaneSlot extends DefaultPaneEntry {
-  readonly signal: AbortSignal;
+/** A factory of the main view and its plugin. */
+interface MainSlot {
+  readonly owner: string;
+  readonly create: MainFactory;
 }
 
-/** A window title and the signal of its plugin. */
-interface TitleSlot {
-  readonly title: () => string;
-  readonly signal: AbortSignal;
+/** The main view now: its slot, its mount, and its view. A closed mount leaves `view` empty. */
+interface Main {
+  readonly slot: MainSlot;
+  readonly mount: Mount;
+  view: View | undefined;
+}
+
+/** What a reload keeps of the main view: its plugin, and the value of its `snapshot`. */
+interface SavedMain {
+  readonly owner: string;
+  readonly state: JsonValue;
 }
 
 /** A guard of a quit: it calls `quit` to let the quit go on, later or never. */
@@ -74,21 +92,22 @@ const KEYS_ITEM = `${CORE}:keys`;
 export class Core {
   readonly notices = new Notices();
   readonly status: StatusItems;
-  readonly views = new ViewTypes();
   readonly styles: Styles;
   readonly commands: Commands;
   readonly keymap: Keymap;
-  readonly panes: PaneTree;
   readonly scene: Scene;
   readonly widgets: PlacedWidgets;
   readonly driver: Driver;
   readonly startup: Startup;
-  readonly #defaultPanes = new Stack<DefaultPaneSlot>();
-  readonly #titles = new Stack<TitleSlot>();
+  readonly #mains = new Stack<MainSlot>();
+  #main: Main | undefined;
+  /** The start event came, so a new slot shows at once. */
+  #started = false;
+  /** The main view of the snapshot of a reload. The first main view after the start takes it, or drops it. */
+  #saved: SavedMain | undefined;
+  readonly #titles = new Stack<() => string>();
   /** The guards that decide on a quit, in add order. */
   readonly #quitGuards = new Set<{ readonly guard: QuitGuard }>();
-  /** The start event came without a snapshot and found no default pane. The next default pane makes the start pane. */
-  #startWaits = false;
   readonly #focusListeners = new Listeners<[FocusChange]>();
   readonly #inputHandlers = new Set<{ readonly handler: (event: InputEvent) => boolean }>();
 
@@ -128,12 +147,6 @@ export class Core {
       },
       report,
     );
-    this.panes = new PaneTree({
-      defaultPane: () => this.#defaultPanes.top((slot) => !slot.signal.aborted),
-      focus: (view) => this.scene.focusRoot(view),
-      report,
-      requestFrame: frame,
-    });
     this.scene = new Scene(
       {
         screen: {
@@ -145,17 +158,21 @@ export class Core {
         cursor: driver.cursor,
         requestFrame: frame,
         report,
-        paneOf: (view) => this.panes.leafOf(view),
-        fallbackFocus: () => this.panes.activeView(),
-        focusMoved: (rootPath, change) => {
-          this.panes.noteFocus(rootPath);
+        main: () => this.#main?.view,
+        focusMoved: (change) => {
           // A key sequence belongs to the focus where it started.
           this.keymap.cancel();
-          if (change !== undefined) this.#focusChanged(change);
+          if (change !== undefined) this.#focusListeners.call(change);
         },
         placed: (widgets) => this.widgets.update(widgets),
       },
-      this.panes.view,
+      {
+        layout: (size) => {
+          const view = this.#main?.view;
+          return view === undefined ? [] : [{ view, rect: { column: 0, row: 0, ...size } }];
+        },
+        draw() {},
+      },
     );
     this.#addCommands();
   }
@@ -187,21 +204,24 @@ export class Core {
   }
 
   /**
-   * Make `slot` the default pane until its remover runs. The last call wins, and the remover brings back the slot
-   * before it. A start that waits gets its first pane now.
+   * Make `slot` the factory of the main view until its remover runs. The last call wins, and the remover brings back
+   * the slot before it. After the start, each change shows a new main view at once, and the view before closes.
    */
-  setDefaultPane(slot: DefaultPaneSlot): () => void {
-    const remove = this.#defaultPanes.add(slot);
-    if (this.#startWaits) this.#startWaits = !this.panes.start();
-    return remove;
+  setMain(slot: MainSlot): () => void {
+    const remove = this.#mains.add(slot);
+    this.#showMain();
+    return () => {
+      remove();
+      this.#showMain();
+    };
   }
 
   /**
-   * Make `slot` the window title until its remover runs. The last call wins, and the remover brings back the title
+   * Make `title` the window title until its remover runs. The last call wins, and the remover brings back the title
    * before it. Without a title, the terminal shows the title of the shell.
    */
-  setTitle(slot: TitleSlot): () => void {
-    const remove = this.#titles.add(slot);
+  setTitle(title: () => string): () => void {
+    const remove = this.#titles.add(title);
     this.driver.requestFrame();
     return () => {
       remove();
@@ -251,8 +271,11 @@ export class Core {
         return;
       case "start":
         // The plugins of a first start load after this event, and those of a reload before it.
-        if (event.snapshot !== undefined) this.restore(event.snapshot);
-        else this.#startWaits = !this.panes.start();
+        this.#started = true;
+        // A snapshot of an older yuke has no `main`, so its main view starts new.
+        this.#saved =
+          event.snapshot === undefined ? undefined : (JSON.parse(event.snapshot) as { main?: SavedMain }).main;
+        this.#showMain();
         return;
       case "background":
         announce("theme.changed", { name: this.styles.theme, background: event.background });
@@ -262,32 +285,50 @@ export class Core {
     }
   }
 
-  /** The saved panes for a reload: the tree, the focus, and the saved view of each pane. */
+  /** What a reload keeps: the plugin of the main view and the value of its `snapshot`. */
   snapshot(): string {
-    return JSON.stringify(this.panes.snapshot((view, owner) => this.#save(view, owner)));
-  }
-
-  /** Rebuild the panes of a snapshot that `snapshot` gave. */
-  restore(text: string): void {
-    this.panes.restore(JSON.parse(text) as SavedPanes, (type) => this.views.get(type));
+    const main = this.#main;
+    const state = main?.view?.snapshot?.();
+    return JSON.stringify(main === undefined || state === undefined ? {} : { main: { owner: main.slot.owner, state } });
   }
 
   /** Lay out and draw each view, and give the terminal the window title. */
   draw(): void {
     this.scene.layout();
     this.scene.draw();
-    this.driver.title(this.#titles.top((slot) => !slot.signal.aborted)?.title());
+    this.driver.title(this.#titles.top()?.());
   }
 
   /**
-   * The saved view of a pane of `owner`, or `null` without a snapshot.
-   * A bare type gets the prefix of `owner`.
+   * Show the main view of the top slot, after the start. The main view before closes. The saved main view of a reload
+   * goes to the first main view, when the same plugin makes it.
    */
-  #save(view: View, owner: string): SavedPane {
-    if (view.snapshot === undefined) return null;
-    const saved = view.snapshot();
-    if (saved === undefined) return null;
-    return { type: saved.type.includes(":") ? saved.type : `${owner}:${saved.type}`, state: saved.state };
+  #showMain(): void {
+    if (!this.#started) return;
+    const slot = this.#mains.top();
+    if (slot === this.#main?.slot) return;
+    this.#main?.mount.close();
+    this.#main = undefined;
+    this.driver.requestFrame();
+    if (slot === undefined) return;
+    const saved = this.#saved?.owner === slot.owner ? this.#saved.state : null;
+    this.#saved = undefined;
+    const main: Main = {
+      slot,
+      mount: createMount(() => {
+        main.view = undefined;
+        this.driver.requestFrame();
+      }),
+      view: undefined,
+    };
+    this.#main = main;
+    main.view = startView(
+      slot.owner,
+      (own) => slot.create(own, saved),
+      main.mount,
+      (source, text) => this.notices.add("error", source, text),
+    );
+    if (main.view !== undefined) this.scene.focusRoot(main.view);
   }
 
   /** Give `event` to the input handlers, newest first, until one takes it. */
@@ -297,10 +338,6 @@ export class Core {
       if (this.#inputHandlers.has(entry) && entry.handler(event)) return true;
     }
     return false;
-  }
-
-  #focusChanged(change: FocusChange): void {
-    this.#focusListeners.call(change);
   }
 
   #addCommands(): void {
@@ -337,18 +374,5 @@ export class Core {
     );
     add("suspend", "Suspend yuke to the shell", () => driver.suspend());
     add("reload", "Reload the plugins", () => driver.reload(this.snapshot()), "reload");
-    add("split-right", "Split the pane to the right", () => this.panes.splitDefault("row"));
-    add("split-down", "Split the pane down", () => this.panes.splitDefault("column"));
-    add("close", "Close the pane", () => this.panes.closeActive());
-    for (const direction of ["left", "right", "up", "down"] as const) {
-      add(
-        `focus-${direction}`,
-        `Focus the pane ${direction === "up" || direction === "down" ? direction : `on the ${direction}`}`,
-        () => {
-          this.panes.moveFocus(direction);
-        },
-      );
-    }
-    add("focus-next", "Focus the next pane", () => this.panes.focusNext());
   }
 }

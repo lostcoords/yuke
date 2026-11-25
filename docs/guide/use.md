@@ -53,9 +53,9 @@ Some commands take text after the word, such as `/login anthropic`. A draft that
 | `/logout [PROVIDER]` | Remove the API key or the login that yuke stored for a provider. A key in an environment variable stays: unset the variable. |
 | `/mcp [SERVER \| logout SERVER]` | List the MCP servers of the session with their states. Choose a server that needs a login to open its dialog. `/mcp SERVER` picks a server by name, and `/mcp logout SERVER` removes its stored login. See [MCP servers](mcp.md#oauth-login). |
 | `/model` | Choose the model and the reasoning level of the session. It fails while a turn runs or a message waits. |
-| `/new` | Start a new session in the pane. The old session keeps its work, and `/sessions` finds it. |
+| `/new` | Start a new session. The old session keeps its work, and `/sessions` finds it. |
 | `/rename` | Rename the session in a dialog. |
-| `/sessions` | Show the recent sessions of this folder, and show one in the pane. `tab` switches between this folder and every folder. Type to filter. |
+| `/sessions` | Show the recent sessions of this folder, and show one of them. `tab` switches between this folder and every folder. Type to filter. |
 | `/plugins` | Manage your plugins. See [Plugins](plugins.md#install-plugins). |
 | `/themes` | Choose a theme. The arrow keys show a theme, `enter` keeps it, and `esc` goes back. See [Themes](themes.md). |
 | `/messages` | Show the last notices, newest first. |
@@ -88,26 +88,15 @@ A plugin or a hook can ask you a question. For example, an [approval hook](engin
 - `ctrl+o` opens or folds the tool calls.
 - Drag the mouse to select text. yuke copies the selection when you release the button.
 
-## Use panes
-
-The TUI can show more than one session. Each pane has its own session, composer, and scroll place. Press `ctrl+k`, then one key:
-
-| Keys | Action |
-|---|---|
-| `ctrl+k v` | Split the pane to the right. |
-| `ctrl+k s` | Split the pane down. |
-| `ctrl+k c` | Close the pane. |
-| `ctrl+k w` | Focus the next pane. |
-| `ctrl+k h`, `ctrl+k j`, `ctrl+k k`, `ctrl+k l` | Focus the pane on the left, below, above, or on the right. |
-| `ctrl+k left`, `ctrl+k down`, `ctrl+k up`, `ctrl+k right` | The same, with the arrow keys. |
-
-`esc` after `ctrl+k` cancels the sequence.
-
 ## Continue a session
 
-yuke saves each session. Start yuke with `-c` to continue the newest session of the folder, or with `-r ID` to continue a session by its ID. See [Command line](cli.md). In the TUI, `/sessions` shows a saved session in the pane.
+yuke saves each session. Start yuke with `-c` to continue the newest session of the folder, or with `-r ID` to continue a session by its ID. See [Command line](cli.md). In the TUI, `/sessions` shows a saved session.
 
-When you quit, yuke prints `To resume this session, run: yuke -r ID` for each session that the panes show.
+When you quit, yuke prints `To resume this session, run: yuke -r ID`.
+
+## Work on more sessions at once
+
+The TUI shows one session. To work on more sessions at the same time, start yuke in more terminals, for example in the panes of tmux.
 
 ## Quit
 
@@ -119,7 +108,7 @@ Press `ctrl+q` or type `/quit`. If a turn or a job runs, yuke asks "Stop everyth
 
 This list holds the default keys of yuke. A plugin can add more. See [TUI plugin API](ui.md#keys).
 
-### Chat pane
+### Chat
 
 | Key | Action |
 |---|---|
@@ -134,7 +123,7 @@ This list holds the default keys of yuke. A plugin can add more. See [TUI plugin
 | `pageup`, `pagedown` | Scroll one page. |
 | `ctrl+home`, `ctrl+end` | Scroll to the top or to the bottom. |
 | `ctrl+k m` | Choose the model (`/model`). |
-| `ctrl+k n` | Start a new session in the pane (`/new`). |
+| `ctrl+k n` | Start a new session (`/new`). |
 
 ### Everywhere
 
@@ -143,8 +132,6 @@ This list holds the default keys of yuke. A plugin can add more. See [TUI plugin
 | `ctrl+q` | Quit. |
 | `ctrl+z` | Suspend yuke to the shell. |
 | `ctrl+l` | Dismiss the notices on screen. |
-| `ctrl+k v`, `ctrl+k s`, `ctrl+k c` | Split right, split down, and close a pane. |
-| `ctrl+k w`, `ctrl+k h`, `ctrl+k j`, `ctrl+k k`, `ctrl+k l` | Move the focus between panes. |
 | `esc` | Close the dialog on top. |
 
 ### Text field

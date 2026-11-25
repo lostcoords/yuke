@@ -63,7 +63,7 @@ yuke loads these plugins before yours. A bundled plugin adds the slash commands 
 |---|---|---|---|
 | `compaction` | Summarizes old context, in every mode. | — | — |
 | `themes` | Loads and selects themes. | — | `/themes` |
-| `chat` | Draws the chat panes and provides the `chat` service. | `emptyView`: boolean, default `true`. Set `false` to hide the header of an empty chat pane. | `/model`, `/new`, `/rename` |
+| `chat` | Draws the chat and provides the `chat` service. | `emptyView`: boolean, default `true`. Set `false` to hide the header of an empty chat. | `/model`, `/new`, `/rename` |
 | `sessions` | Browses saved sessions. | — | `/sessions` |
 | `files` | Completes `@` file paths in a chat draft. | — | — |
 | `bar` | Draws the status bar. | `hide` and `order`: lists of item keys, such as `"core:keys"`. | — |

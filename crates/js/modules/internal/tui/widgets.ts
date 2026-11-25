@@ -10,7 +10,6 @@ import type {
   Decoration,
   KeyEvent,
   MouseEvent,
-  Pane,
   PasteEvent,
   PlacedWidget,
   TextAppearance,
@@ -195,10 +194,9 @@ export class TextSupport<P, E> {
   }
 }
 
-/** A hosted view at its place: its pane and the layer that holds it. */
+/** A hosted view and the layer that holds it. */
 export interface PlacedView {
   readonly view: View;
-  readonly pane: Pane | undefined;
   readonly layer: object;
 }
 
@@ -267,7 +265,7 @@ export class PlacedWidgets {
 
   /**
    * Publish the hosted views of a layout. A view that leaves loses the host, and a new one gets it. A widget that stays
-   * in its pane and layer keeps its mount, also under a modal. The mounts of the widgets that leave or move end first.
+   * in its layer keeps its mount, also under a modal. The mounts of the widgets that leave or move end first.
    * Then each watch gets each new mount.
    */
   update(placed: readonly PlacedView[]): void {
@@ -284,7 +282,7 @@ export class PlacedWidgets {
     }
     for (const [view, mounted] of [...this.#mounted]) {
       const entry = now.get(view);
-      if (entry !== undefined && entry.pane === mounted.mount.pane && entry.layer === mounted.layer) continue;
+      if (entry !== undefined && entry.layer === mounted.layer) continue;
       this.#mounted.delete(view);
       mounted.controller.abort();
       for (const watch of this.#watches) {
@@ -300,7 +298,6 @@ export class PlacedWidgets {
       const controller = new AbortController();
       const mount = {
         widget: found.widget,
-        pane: entry.pane,
         group: found.support.group,
         signal: controller.signal,
       };

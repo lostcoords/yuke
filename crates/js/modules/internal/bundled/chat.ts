@@ -1,8 +1,8 @@
 /**
- * The bundled plugin `chat`: the default pane of the terminal interface. Each pane has its own transcript, composer,
- * folds, and handle of its session. The start pane shows the session of `tui.startup`, and `/new` empties a pane. A
- * reload keeps the session, the draft, the folds, the scroll place, and the folder of the next session of each pane.
- * Each command acts on the active pane. The service `chat` shows a session in a pane for other plugins.
+ * The bundled plugin `chat`: the main view of the terminal interface, with its transcript, composer, folds, and handle
+ * of its session. It starts on the session of `tui.startup`, and `/new` empties it. A reload keeps the session, the
+ * draft, the folds, the scroll place, and the folder of the next session. The service `chat` shows a session for other
+ * plugins.
  */
 
 import type {
@@ -36,7 +36,7 @@ import type { Mount, StatusEntry, View } from "yuke:tui";
 /** The cells of the gauge of the token share of the last answer. */
 const GAUGE = 6;
 
-/** The commands of the chat: the name, the description, the keys, their context, and the action. Each action uses the active pane. */
+/** The commands of the chat: the name, the description, the keys, their context, and the action. */
 const COMMANDS: readonly {
   readonly slash?: string;
   readonly name: string;
@@ -105,7 +105,7 @@ const COMMANDS: readonly {
   {
     name: "new",
     slash: "new",
-    description: "Start a new session in the pane",
+    description: "Start a new session",
     keys: ["ctrl+k n"],
     in: "chat",
     run: (pane) => pane.newSession(),
@@ -172,7 +172,7 @@ export const optionsSchema = {
   properties: {
     emptyView: {
       type: "boolean",
-      description: "Show the header in an empty chat pane. Terminal.app omits the icon. The default is true.",
+      description: "Show the header in an empty chat. Terminal.app omits the icon. The default is true.",
     },
   },
 } as const;
@@ -187,7 +187,7 @@ interface PaneWatcher {
 
 export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const tui = ctx.get("tui");
-  const listeners = new Listeners<[View]>();
+  const listeners = new Listeners<[]>();
   // A disposer can run after this plugin stops, and a stopped `tui` throws.
   const repaint = (): void => {
     if (!ctx.signal.aborted) tui?.requestFrame();
@@ -202,7 +202,8 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   };
   // One entry per call of `addComposerView`, so each disposer removes its own.
   const composerViews = new Set<ComposerViewEntry>();
-  const panes = new Map<View, PaneActions>();
+  // The actions of the chat view, while it shows.
+  let current: PaneActions | undefined;
   const paneWatchers = new Set<PaneWatcher>();
   const startWatcher = (entry: PaneWatcher, actions: PaneActions): void => {
     // A failed watcher of another plugin must not stop the open of the pane.
@@ -223,22 +224,11 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   let defaultEmptyView: ((mount: Mount, pane: ChatPane) => View) | undefined;
   ctx.provide("chat", {
     show: async (id) => {
-      if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
-      const pane = active();
-      if (pane !== undefined) return pane.show(id);
-      // A focused pane of another plugin keeps its place, and a new chat pane shows the session. A failed open closes
-      // the new pane again.
-      const created = tui.panes.split((mount) => chatPane(chat, mount, {}));
-      try {
-        const actions = panes.get(created.view);
-        if (actions === undefined) throw new Error("the new chat pane did not open");
-        await actions.show(id);
-      } catch (error) {
-        created.close();
-        throw error;
-      }
+      if (tui === undefined) throw new Error("no chat: yuke runs without the terminal interface");
+      if (current === undefined) throw new Error("no chat: another plugin shows the main view");
+      return current.show(id);
     },
-    sessionIdOf: (view) => panes.get(view)?.session(),
+    sessionId: () => current?.session(),
     addChangeListener: (listener) => listeners.add(listener),
     addComposerView: (place, create) => {
       const entry = { place, create, stop: new AbortController() };
@@ -253,7 +243,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     addPaneWatcher: (watch) => {
       const entry = { watch, stop: new AbortController() };
       paneWatchers.add(entry);
-      for (const actions of panes.values()) startWatcher(entry, actions);
+      if (current !== undefined) startWatcher(entry, current);
       return () => {
         if (paneWatchers.delete(entry)) entry.stop.abort();
       };
@@ -298,7 +288,6 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const chat: Chat = {
     ctx,
     tui,
-    panes,
     refresh: () => publish(),
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `The model choice did not load: ${String(error)}`);
@@ -314,20 +303,28 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       return undefined;
     },
     composerViews: (place) => [...composerViews].filter((entry) => entry.place === place),
-    moved: (view) => {
-      listeners.call(view);
+    moved: () => {
+      listeners.call();
     },
     opened: (actions) => {
+      current = actions;
+      actions.signal.addEventListener(
+        "abort",
+        () => {
+          if (current !== actions) return;
+          current = undefined;
+          // The bar shows no session of a closed chat.
+          publish();
+        },
+        { once: true },
+      );
       for (const entry of paneWatchers) startWatcher(entry, actions);
+      publish();
     },
     completionProviders: () => [...completionProviders].map((entry) => entry.provider).toReversed(),
   };
   // The slash commands are the oldest provider, so a plugin can take their place.
   completionProviders.add({ provider: slashCompletions(tui.commands) });
-  const active = (): PaneActions | undefined => {
-    const view = tui.panes.activePane?.view;
-    return view === undefined ? undefined : chat.panes.get(view);
-  };
   // The models of the ready providers. A change of the providers reads them again.
   let models: Map<string, ModelInfo> | undefined;
   const readModels = (): Promise<void> =>
@@ -408,7 +405,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const publish = (): void => {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
-    const status = active()?.status();
+    const status = current?.status();
     const target = status === undefined ? {} : targetOf(status);
     setFolder(target.folder);
     setModel(target.model);
@@ -439,11 +436,11 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   defaultEmptyView =
     ctx.options.emptyView === false
       ? undefined
-      : (_mount, pane) =>
+      : () =>
           emptyHeader({
             version: tui.startup.version,
             target: () => {
-              const status = panes.get(pane.view)?.status();
+              const status = current?.status();
               return status === undefined ? {} : targetOf(status);
             },
             // Without the catalog, the header keeps the usual hint.
@@ -451,7 +448,6 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
             // Terminal.app finds no font with sextant glyphs and draws boxes.
             icon: env.get("TERM_PROGRAM") !== "Apple_Terminal",
           });
-  tui.addFocusListener(() => publish());
   ctx.addListener("catalog.changed", () => {
     // The bar and the header of an empty pane name the models of the ready providers.
     void readModels().then(() => {
@@ -461,7 +457,8 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   });
   tui.addQuitGuard((quit) => {
     // The resume text names each shown session, and each session whose work the quit stops.
-    const resumed = new Set([...panes.values()].flatMap((pane) => pane.resumeSession() ?? []));
+    const shown = current?.resumeSession();
+    const resumed = new Set(shown === undefined ? [] : [shown]);
     let turns = 0;
     let jobs = 0;
     for (const [session, entry] of work) {
@@ -499,24 +496,18 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       asked = undefined;
     });
   });
-  tui.views.add("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
-  tui.panes.setDefault((mount, reason) =>
-    chatPane(chat, mount, { session: reason === "start" ? tui.startup.sessionId : undefined }),
+  // A saved chat of a reload keeps its session, and a new chat shows the session of the start.
+  tui.setMain((mount, saved) =>
+    chatPane(chat, mount, saved === null ? { session: tui.startup.sessionId } : (saved as PaneState)),
   );
   for (const command of COMMANDS) {
     tui.commands.add({
       name: command.name,
       slash: command.slash,
       description: command.description,
-      run: () => {
-        const pane = active();
-        return pane === undefined ? undefined : command.run(pane);
-      },
-      // A command of the chat runs only in a chat pane, so a list of commands in another pane leaves it out.
-      enabled: () => {
-        const pane = active();
-        return pane !== undefined && (command.enabled?.(pane) ?? true);
-      },
+      run: () => (current === undefined ? undefined : command.run(current)),
+      // A command of the chat runs only while the chat shows, so a list of commands leaves it out otherwise.
+      enabled: () => current !== undefined && (command.enabled?.(current) ?? true),
     });
     for (const key of command.keys) tui.keys.add(key, command.name, { in: command.in });
   }

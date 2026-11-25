@@ -33,7 +33,7 @@ impl Observer for Notices {
     }
 }
 
-/// Run the interface on the terminal of the process until a quit or `shutdown`. The start pane shows the session of
+/// Run the interface on the terminal of the process until a quit or `shutdown`. The chat shows the session of
 /// `choice`. The drop of the terminal restores the device, also after an error. Then each unread notice goes to stderr,
 /// and the quit text goes to stdout.
 pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: CancellationToken) -> Result<(), String> {

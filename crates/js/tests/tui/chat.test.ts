@@ -1,34 +1,20 @@
-// The bundled chat pane in a frame: the default pane of each split, its own draft and session handle, a reload, and a
-// drag over the transcript.
+// The bundled chat in a frame: the main view, its draft and session handle, a reload, and a drag over the transcript.
 
 import type { StoredEvent } from "yuke:protocol";
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { commit, EMPTY, fakeSessions, loadChat, replies, SETTINGS, transcriptRows } from "./chat.ts";
 
-test("a split opens a new empty chat with its own draft", async () => {
-  using frame = createFrame({ width: 21, height: 4 });
-  const chat = await loadChat(frame);
-  frame.start();
-  assertEquals(frame.rows(), ["", "─────────────────────", "Message…", "─────────────────────"]);
-  frame.paste("hi");
-  chat.tui.commands.run("core:split-right");
-  frame.paste("yo");
-  assertEquals(frame.rows(), ["          │", "──────────│──────────", "hi        │yo", "──────────│──────────"]);
-});
-
-test("a reload keeps the draft of each pane and the focus", async () => {
+test("a reload keeps the draft", async () => {
   using before = createFrame({ width: 21, height: 4 });
-  const chat = await loadChat(before);
+  await loadChat(before);
   before.start();
   before.paste("a");
-  chat.tui.commands.run("core:split-right");
-  before.paste("x");
   const snapshot = before.snapshot();
   using after = createFrame({ width: 21, height: 4 });
   await loadChat(after);
   after.start(snapshot);
   after.paste("b");
-  assertEquals(after.rows().at(-2), "a         │xb");
+  assertEquals(after.rows().at(-2), "ab");
 });
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
@@ -45,46 +31,25 @@ test("a drag over the transcript copies at the release, and the composer keeps t
   );
 });
 
-test("the start pane holds the session of the startup, and a split opens a new chat without one", async () => {
+test("the chat starts on the session of the startup, and a reload keeps its session", async () => {
   using frame = createFrame({ width: 21, height: 4 }, undefined, { folder: "/work", sessionId: "s1" });
   const chat = await loadChat(frame);
   frame.start();
-  chat.tui.commands.run("core:split-right");
-  assertEquals(
-    chat.opened.map((open) => open.id),
-    ["s1"],
-  );
-  // The close of the start pane ends its handle. Focus by direction reads the rects of the last frame.
-  frame.draw();
-  chat.tui.commands.run("core:focus-left");
-  chat.tui.commands.run("core:close");
-  assertEquals(chat.opened[0]?.signal.aborted, true);
-  assertEquals(JSON.parse(frame.snapshot()).tree.state.session, undefined);
+  const snapshot = frame.snapshot();
+  using after = createFrame({ width: 21, height: 4 }, undefined, { folder: "/work", sessionId: "s2" });
+  const restored = await loadChat(after);
+  after.start(snapshot);
+  assertEquals([chat.opened.map((open) => open.id), restored.opened.map((open) => open.id)], [["s1"], ["s1"]]);
+  assertEquals(JSON.parse(snapshot).main, { owner: "chat", state: { session: "s1", draft: EMPTY, folds: [] } });
 });
 
-test("two panes on one session hold their own handles, and a reload keeps the session of each", async () => {
-  const pane = { type: "chat:pane", state: { session: "s1", draft: EMPTY } };
-  const saved = JSON.stringify({ tree: { split: "row", first: pane, second: pane }, focus: 0 });
+test("a saved session that does not open gives one notice, and the chat keeps it for the next reload", async () => {
   using frame = createFrame({ width: 21, height: 4 });
   const chat = await loadChat(frame);
-  frame.start(saved);
-  assertEquals(
-    chat.opened.map((open) => open.id),
-    ["s1", "s1"],
-  );
-  chat.tui.commands.run("core:close");
-  assertEquals(
-    chat.opened.map((open) => open.signal.aborted),
-    [true, false],
-  );
-  assertEquals(JSON.parse(frame.snapshot()).tree.state.session, "s1");
-  // A session that does not open gives one notice, and the pane keeps the session for the next reload.
-  using other = createFrame({ width: 21, height: 4 });
-  const failed = await loadChat(other);
-  other.start(JSON.stringify({ tree: { type: "chat:pane", state: { session: "missing", draft: EMPTY } }, focus: 0 }));
+  frame.start(JSON.stringify({ main: { owner: "chat", state: { session: "missing", draft: EMPTY } } }));
   await waitForSettled();
-  assertEquals(failed.notices, ["error The session missing did not open: Error: no session missing"]);
-  assertEquals(JSON.parse(other.snapshot()).tree.state.session, "missing");
+  assertEquals(chat.notices, ["error The session missing did not open: Error: no session missing"]);
+  assertEquals(JSON.parse(frame.snapshot()).main.state.session, "missing");
 });
 
 test("each kind of entry draws its rows, and a click on a thought opens it", async () => {

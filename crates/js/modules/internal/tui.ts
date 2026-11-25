@@ -5,8 +5,6 @@ import { CORE, Core } from "yuke:internal/tui/core";
 import { setSurfaces } from "yuke:internal/tui/host";
 import { createSurface } from "yuke:internal/tui/surface";
 
-const LEADER = "ctrl+k";
-
 const core = new Core({
   width: () => term.width,
   height: () => term.height,
@@ -34,23 +32,8 @@ const core = new Core({
   startup: () => term.startup,
 });
 
-const bindings: readonly (readonly [string, string])[] = [
-  ["ctrl+q", "quit"],
-  ["ctrl+z", "suspend"],
-  [`${LEADER} v`, "split-right"],
-  [`${LEADER} s`, "split-down"],
-  [`${LEADER} c`, "close"],
-  [`${LEADER} w`, "focus-next"],
-  [`${LEADER} h`, "focus-left"],
-  [`${LEADER} j`, "focus-down"],
-  [`${LEADER} k`, "focus-up"],
-  [`${LEADER} l`, "focus-right"],
-  [`${LEADER} left`, "focus-left"],
-  [`${LEADER} down`, "focus-down"],
-  [`${LEADER} up`, "focus-up"],
-  [`${LEADER} right`, "focus-right"],
-];
-for (const [spec, command] of bindings) core.keymap.add(spec, `${CORE}:${command}`);
+core.keymap.add("ctrl+q", `${CORE}:quit`);
+core.keymap.add("ctrl+z", `${CORE}:suspend`);
 setSurfaces((owner, signal) => createSurface(core, owner, signal));
 
 term.run({

@@ -120,9 +120,9 @@ declare module "yuke:test" {
     drag: (from: Point, to: Point) => void;
     paste: (text: string) => void;
     resize: (size: Size) => void;
-    /** Send the start event of the frame loop. With `snapshot` from `snapshot()`, the saved panes come back. */
+    /** Send the start event, so the main view shows. A `snapshot` from `snapshot()` gives it its saved value. */
     start: (snapshot?: string) => void;
-    /** The saved panes that a reload gives the start event of the next runtime. */
+    /** What a reload gives the start event of the next runtime: the saved value of the main view. */
     snapshot: () => string;
     /** Send a notice of the host or of a plugin, as the terminal does. */
     notice: (notice: NoticeParams) => void;
@@ -134,8 +134,8 @@ declare module "yuke:test" {
   }
 
   /**
-   * A frame test of `size`. `create` makes the root view. Without it, the root is the pane tree. `startup` is the
-   * `tui.startup` of each surface. The default is `{ folder: "/" }`, and a missing `version` is `0.0.0`.
+   * A frame test of `size`. `create` makes a root that covers the main view. `startup` is the `tui.startup` of each
+   * surface. The default is `{ folder: "/" }`, and a missing `version` is `0.0.0`.
    */
   export function createFrame(
     size: Size,

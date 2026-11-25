@@ -76,7 +76,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
   // A close by another client ends the handle, and its jobs leave the bar.
   sessions.close("s1");
   const closed = shownItems(chat).map((item) => item[0]);
-  frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
+  frame.surface("other").tui.setMain(() => ({ draw() {} }));
   frame.draw();
   assertEquals(
     [shown, live, closed, shownItems(chat)],
@@ -174,17 +174,14 @@ test("a saved pick that the catalog no longer has shows nothing", async () => {
   assertEquals(shownItems(chat), []);
 });
 
-test("a pane whose session does not open shows no saved pick", async () => {
+test("a chat whose session does not open shows no saved pick", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
     folder: folder(),
   });
   using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w", sessionId: "missing" });
   const chat = await loadChat(frame);
   frame.start();
-  // Activation loaded the pick, so the new pane shows it at once.
-  chat.tui.commands.run("core:split-right");
-  frame.draw();
-  chat.tui.commands.run("core:focus-left");
+  await waitForSettled();
   frame.draw();
   assertEquals(shownItems(chat), []);
 });

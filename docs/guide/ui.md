@@ -8,7 +8,7 @@ This page is for plugin authors. To use the TUI, see [Use the TUI](use.md).
 
 Use `ctx.get("tui")` in the `apply` export of a plugin. It returns a `Tui` from `yuke:tui`, or `undefined` outside the TUI, so check it before TUI work. It needs no `uses` entry. Imports from `yuke:tui` start no terminal work in any mode.
 
-This page covers commands, keys, status items, and styles. For dialogs (`tui.dialog`, `tui.prompt`, and `tui.confirm`), views, panes, and the `chat` service, read `types/tui.d.ts` and `types/chat.d.ts`. See [Find the API](plugins.md#find-the-api).
+This page covers commands, keys, status items, and styles. For dialogs (`tui.dialog`, `tui.prompt`, and `tui.confirm`), views, the main view, and the `chat` service, read `types/tui.d.ts` and `types/chat.d.ts`. See [Find the API](plugins.md#find-the-api).
 
 ## Commands
 

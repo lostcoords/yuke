@@ -17,8 +17,8 @@ export class Stack<T> {
     };
   }
 
-  /** The newest value for which `accept` is true, or the newest value without `accept`. */
-  top(accept?: (value: T) => boolean): T | undefined {
-    return this.#entries.findLast((entry) => accept?.(entry.value) ?? true)?.value;
+  /** The newest value. */
+  top(): T | undefined {
+    return this.#entries.at(-1)?.value;
   }
 }

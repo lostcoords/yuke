@@ -13,20 +13,15 @@ import type {
   Command,
   CommandItem,
   ConfirmOptions,
-  DefaultPaneFactory,
   DialogOptions,
-  Direction,
   FocusChange,
-  FocusDirection,
   InputEvent,
+  MainFactory,
   Mount,
   Notice,
   OverlayOptions,
-  Pane,
-  Panes,
   PlacedWidget,
   PromptOptions,
-  RestoreView,
   RootFactory,
   SelectOptions,
   Size,
@@ -132,23 +127,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     return mount;
   };
 
-  const panes: Panes = {
-    view: core.panes.view,
-    get activePane(): Pane | undefined {
-      scope.check();
-      return core.panes.activePane;
-    },
-    split: live(
-      (create: ViewFactory, options?: { readonly direction?: Direction | undefined }): Pane =>
-        mounted(core.panes.split(owner, create, options?.direction ?? "row")),
-    ),
-    moveFocus: live((direction: FocusDirection): boolean => core.panes.moveFocus(direction)),
-    setDefault: live((create: DefaultPaneFactory): (() => void) => {
-      return scope.own(core.setDefaultPane({ owner, create, adopt: (mount) => scope.ownMount(mount), signal }));
-    }),
-  };
-
-  const setTitle = live((title: () => string): (() => void) => scope.own(core.setTitle({ title, signal })));
+  const setTitle = live((title: () => string): (() => void) => scope.own(core.setTitle(title)));
 
   const addQuitGuard = live((guard: (quit: (text?: string) => void) => void): (() => void) =>
     scope.own(core.addQuitGuard(guard)),
@@ -308,7 +287,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       scope.check();
       return core.startup;
     },
-    panes,
+    setMain: live((create: MainFactory): (() => void) => scope.own(core.setMain({ owner, create }))),
     get focusedView(): View | undefined {
       scope.check();
       return core.scene.focusedView;
@@ -383,11 +362,6 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       addWatcher: live((attach: (mount: PlacedWidget) => (() => void) | undefined): (() => void) =>
         scope.own(core.widgets.addWatcher(owner, attach)),
       ),
-    },
-    views: {
-      add: live((type: string, restore: RestoreView): (() => void) => {
-        return scope.own(core.views.add(own(type), { owner, restore, adopt: (mount) => scope.ownMount(mount) }));
-      }),
     },
     requestFrame: live((delay?: number): void => core.driver.requestFrame(delay)),
     clipboard: {

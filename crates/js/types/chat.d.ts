@@ -470,18 +470,18 @@ declare module "yuke:chat" {
    */
   export interface ChatService {
     /**
-     * Show the session `id` in the focused chat pane, or in a new chat pane when the focused pane is no chat pane. The
-     * pane keeps its draft for its old session. A pane without a session carries its draft to `id`. It rejects when the
-     * open fails or the pane is busy, as with a send.
+     * Show the session `id` in the chat. The chat keeps its draft for its old session. A chat without a session carries
+     * its draft to `id`. It rejects when the open fails or the chat is busy, as with a send, and when another plugin
+     * shows the main view.
      */
     readonly show: (id: SessionId) => Promise<void>;
-    /** The id of the session of the chat pane `view`, or `undefined` for a pane without a session or no chat pane. */
-    readonly sessionIdOf: (view: View) => SessionId | undefined;
+    /** The id of the shown session, or `undefined` for a chat without a session or no chat. */
+    readonly sessionId: () => SessionId | undefined;
     /**
-     * Call `listener` after a chat pane moves to another session or to no session. It gets no call for a pane that starts on a session,
-     * or for a close.
+     * Call `listener` after the chat moves to another session or to no session. It gets no call for a chat that starts
+     * on a session, or for a close.
      */
-    readonly addChangeListener: (listener: (view: View) => void) => () => void;
+    readonly addChangeListener: (listener: () => void) => () => void;
     /**
      * Call `watch` once for each chat pane, now and later. Its `signal` aborts when the pane closes or the returned
      * function runs, so a plugin ends its work on that pane there. A throw of `watch` gives a notice.

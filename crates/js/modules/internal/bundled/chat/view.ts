@@ -151,8 +151,6 @@ export interface Chat {
   /** The context of the chat plugin. A pane reads no option. */
   readonly ctx: PluginContext<object>;
   readonly tui: Tui;
-  /** The actions of each open pane, by its view. A pane leaves the map when its mount closes. */
-  readonly panes: Map<View, PaneActions>;
   /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
   readonly refresh: () => void;
   /** The saved pick of a new session. */
@@ -167,9 +165,9 @@ export interface Chat {
   readonly frame: () => ComposerFrame | undefined;
   /** The factory of the view of an empty pane, or `undefined` when an empty pane shows nothing. */
   readonly emptyView: () => ((mount: Mount, pane: ChatPane) => View) | undefined;
-  /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
-  readonly moved: (view: View) => void;
-  /** Start each pane watcher of the `chat` service on the new pane of `actions`. */
+  /** Tell the listeners of the `chat` service that the chat shows another session. */
+  readonly moved: () => void;
+  /** Make `actions` the chat until the close of its mount, and start each pane watcher of the `chat` service on it. */
   readonly opened: (actions: PaneActions) => void;
   /** The completion providers of the `chat` service, the newest first. */
   readonly completionProviders: () => readonly CompletionProvider[];
@@ -244,7 +242,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         view.scroll.followTail();
       }
       bound = chatSession.id;
-      chat.moved(pane);
+      chat.moved();
     }
     changed();
   });
@@ -740,21 +738,18 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     get initialFocus(): View {
       return input();
     },
-    snapshot: () => {
+    snapshot: (): JsonValue => {
       const scroll = view.scroll.state;
       const viewport = restore ?? (scroll.following ? undefined : scroll.anchor);
       return {
-        type: "pane",
-        state: {
-          ...(chatSession.id !== undefined
-            ? { session: chatSession.id }
-            : nextFolder !== undefined
-              ? { nextFolder }
-              : {}),
-          draft: composer.state as unknown as JsonValue,
-          folds: document.folds,
-          ...(viewport === undefined ? {} : { viewport }),
-        },
+        ...(chatSession.id !== undefined
+          ? { session: chatSession.id }
+          : nextFolder !== undefined
+            ? { nextFolder }
+            : {}),
+        draft: composer.state as unknown as JsonValue,
+        folds: document.folds,
+        ...(viewport === undefined ? {} : { viewport }),
       };
     },
   };
@@ -848,8 +843,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     resumeSession: () => (chatSession.id === undefined ? undefined : (locked()?.back ?? chatSession.id)),
     cancelQuestion: () => questions.cancel(),
   };
-  chat.panes.set(pane, actions);
-  mount.signal.addEventListener("abort", () => chat.panes.delete(pane), { once: true });
   chat.opened(actions);
   return pane;
 }

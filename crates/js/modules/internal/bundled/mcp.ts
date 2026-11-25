@@ -1,5 +1,5 @@
 /**
- * The bundled plugin `mcp` adds `/mcp`. It lists the MCP servers of the session in the active pane with their states. A
+ * The bundled plugin `mcp` adds `/mcp`. It lists the MCP servers of the shown session with their states. A
  * server that needs a login opens a dialog with the page of the login, and a field for the address of the redirect for
  * a browser that cannot reach yuke. `/mcp logout <server>` removes the stored login of a server.
  */
@@ -133,10 +133,9 @@ function choose(ctx: PluginContext, tui: Tui, sessionId: SessionId, server: McpS
 
 /** Run `/mcp`. `args` is the text after the command: empty, a server name, or `logout <server>`. */
 async function run(ctx: PluginContext, tui: Tui, args: unknown, mcp: McpLogins): Promise<void> {
-  const pane = tui.panes.activePane?.view;
-  const sessionId = pane === undefined ? undefined : ctx.get("chat").sessionIdOf(pane);
+  const sessionId = ctx.get("chat").sessionId();
   if (sessionId === undefined) {
-    ctx.notify("info", "No session is shown in this pane");
+    ctx.notify("info", "No session is shown");
     return;
   }
   const words = typeof args === "string" ? args.trim() : "";

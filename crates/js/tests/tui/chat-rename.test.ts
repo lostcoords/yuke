@@ -59,9 +59,9 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
   applySessions(ctx);
   assertEquals(chat.tui.commands.run("sessions:open"), true);
   await waitForSettled();
-  frame.paste("new title");
   frame.draw();
-  assertEquals([frame.rows().some((line) => line.includes("○ new title")), notices], [true, []]);
+  // The empty search shows each row, so only the row of the session holds the title.
+  assertEquals([frame.rows().some((line) => line.includes("new title")), notices], [true, []]);
 });
 
 test("a rename failure shows an error and retains the editor", async () => {

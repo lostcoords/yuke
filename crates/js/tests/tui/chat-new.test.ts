@@ -1,9 +1,8 @@
-// The command `new` of the bundled chat: the pane lets go of its session, shows the empty header, and its next message
+// The command `new` of the bundled chat: the chat lets go of its session, shows the empty header, and its next message
 // creates a session in the folder of the session before.
 
 import { writeTextFile } from "yuke:fs";
 import { assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
-import type { View } from "yuke:tui";
 import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
 
 /** Save the pick `p/m` at the level high, so a send needs no picker. */
@@ -30,13 +29,12 @@ const SAVED = [
   }),
 ];
 
-test("/new empties the pane, ends the old handle, and shows the header with the saved model and the old folder", async () => {
+test("/new empties the chat, ends the old handle, and shows the header with the saved model and the old folder", async () => {
   await savedPick();
   using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/start", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
-  const view = chat.tui.panes.activePane?.view as View;
   const before = items(chat);
   frame.key("/ n e w enter");
   await waitForSettled();
@@ -47,7 +45,7 @@ test("/new empties the pane, ends the old handle, and shows the header with the 
     [
       before,
       items(chat),
-      chat.chat.sessionIdOf(view),
+      chat.chat.sessionId(),
       chat.opened.map((open) => [open.id, open.signal.aborted]),
       shown.includes("old answer"),
       shown.includes("m high · /w"),
@@ -98,10 +96,7 @@ test("ctrl+k n empties a draft", async () => {
   frame.key("ctrl+k n");
   frame.draw();
 
-  assertEquals(
-    [chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View), frame.rows().at(-2)],
-    [undefined, "Message…"],
-  );
+  assertEquals([chat.chat.sessionId(), frame.rows().at(-2)], [undefined, "Message…"]);
 });
 
 test("a pane with a session lists /new, and a pane without a session does not", async () => {
@@ -135,10 +130,7 @@ test("ctrl+k n during a send keeps the session and its handle", async () => {
   await waitForSettled();
 
   assertEquals(
-    [
-      chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View),
-      chat.opened.map((open) => [open.id, open.signal.aborted]),
-    ],
+    [chat.chat.sessionId(), chat.opened.map((open) => [open.id, open.signal.aborted])],
     ["s1", [["s1", false]]],
   );
 });
@@ -157,7 +149,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
 
   assertEquals(
     [
-      chat.chat.sessionIdOf(chat.tui.panes.activePane?.view as View),
+      chat.chat.sessionId(),
       sessions.state.cancels,
       chat.notices,
       shown.includes("Type / for commands"),

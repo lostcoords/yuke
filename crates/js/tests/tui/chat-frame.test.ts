@@ -127,7 +127,8 @@ test("a frame gets the view in the input area, the focus, and the state of the t
   frame.draw();
   assertEquals(seen.at(-1), "readOnly true false 0 s1");
   end();
-  chat.tui.panes.split(() => ({ draw() {} }));
+  // A modal takes the focus from the input.
+  chat.tui.overlay(() => ({ draw() {} }));
   frame.draw();
   assertEquals(seen.at(-1)?.split(" ")[1], "false");
 });

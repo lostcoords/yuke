@@ -136,7 +136,7 @@ test("a height of 0 places no view, and the next view gets the rows that remain"
   assertEquals([heights.at(-1), drawnEmpty], [4, 0]);
 });
 
-test("each pane makes one view per call and gives its live fields, and a close ends each mount", async () => {
+test("the chat makes one view per call and gives its live fields, and its close or the remover ends the mount", async () => {
   using frame = createFrame({ width: 60, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(1)));
   const made: { readonly pane: ChatPane; readonly signal: AbortSignal }[] = [];
@@ -154,19 +154,20 @@ test("each pane makes one view per call and gives its live fields, and a close e
     [1, "s1", false, true],
   );
 
-  chat.tui.commands.run("core:split-right");
-  await waitForSettled();
+  // Another main view closes the chat, and its end brings a new chat with a new view.
+  const cover = frame.surface("other").tui.setMain(() => ({ draw() {} }));
   frame.draw();
-  assertEquals(made.length, 2);
-  // The close of a pane ends only its own mount.
-  chat.tui.panes.activePane?.close();
+  cover();
   frame.draw();
-  assertEquals(
-    made.map((entry) => entry.signal.aborted),
-    [false, true],
-  );
+  const closed = made.map((entry) => entry.signal.aborted);
   remove();
-  assertEquals(made[0]?.signal.aborted, true);
+  assertEquals(
+    [closed, made.map((entry) => entry.signal.aborted)],
+    [
+      [true, false],
+      [true, true],
+    ],
+  );
 });
 
 test("a view that closes its mount stays closed in the pane, and its factory runs once", async () => {

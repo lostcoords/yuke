@@ -4,9 +4,8 @@
  * The types of the terminal interface and its stateless helpers. An import of this module starts nothing, so a plugin
  * can import it in each mode. Coordinates are local cells from 0. Text offsets are UTF-16 units, as in JavaScript
  * strings. An `add*` or `set*` method that registers something returns a remover, `() => void`. A second call of a
- * remover does nothing. `wrapRoot`, `overlay`, and `dialog` return a `Mount`, and `panes.split` returns a `Pane`: its
- * `close` removes the view. `setDocument`, `setText`, and `setItems` change the content of a widget, so they return
- * nothing.
+ * remover does nothing. `wrapRoot`, `overlay`, and `dialog` return a `Mount`: its `close` removes the view.
+ * `setDocument`, `setText`, and `setItems` change the content of a widget, so they return nothing.
  */
 declare module "yuke:tui" {
   import type { Media, NoticeLevel, SessionId } from "yuke:protocol";
@@ -34,11 +33,8 @@ declare module "yuke:tui" {
     readonly shape?: CursorShape | undefined;
   }
 
-  /** The axis of a split or a stack. `row` places the children from left to right, and `column` from top to bottom. */
+  /** The axis of a stack. `row` places the children from left to right, and `column` from top to bottom. */
   export type Direction = "row" | "column";
-
-  /** The way that `panes.moveFocus` moves the focus: to the nearest pane on that side. */
-  export type FocusDirection = "left" | "right" | "up" | "down";
 
   /** The modifiers of a key or a mouse event. A terminal reports only shift, alt, and ctrl with a mouse event. */
   export interface Modifiers {
@@ -324,11 +320,11 @@ declare module "yuke:tui" {
      * and a later style wins per field.
      */
     readonly style?: CanvasStyle | undefined;
-    /** True when a click or `tui.focus` can give the view the focus. The view of a pane can take it without this. */
+    /** True when a click or `tui.focus` can give the view the focus. The main view can take it without this. */
     readonly focusable?: boolean | undefined;
     /**
-     * False when a press gives the focus to the nearest parent that takes it. `tui.focus` still works. The view of a
-     * pane takes a press anyway.
+     * False when a press gives the focus to the nearest parent that takes it. `tui.focus` still works. The main view
+     * takes a press anyway.
      */
     readonly focusOnPress?: boolean | undefined;
     readonly onFocusChange?: ((focused: boolean) => void) | undefined;
@@ -342,8 +338,11 @@ declare module "yuke:tui" {
     readonly cursor?: (() => Cursor | undefined) | undefined;
     /** The view inside this one that takes the first focus of this view. A later focus returns to the last one. */
     readonly initialFocus?: View | undefined;
-    /** The type and the state that restore the view after a reload, or `undefined` for a view that a reload drops. */
-    readonly snapshot?: (() => ViewSnapshot | undefined) | undefined;
+    /**
+     * What a reload keeps of the main view: the factory of `tui.setMain` gets it back as `saved`. The core calls it only
+     * on the main view.
+     */
+    readonly snapshot?: (() => JsonValue) | undefined;
   }
 
   /** A selection from `anchor`, where it started, to `head`, where the caret is. */
@@ -657,7 +656,6 @@ declare module "yuke:tui" {
   /** A placed text widget. `signal` aborts when the widget leaves the tree. */
   export interface PlacedWidget {
     readonly widget: TextEditor | TextView;
-    readonly pane: Pane | undefined;
     readonly group: object;
     readonly signal: AbortSignal;
   }
@@ -864,13 +862,12 @@ declare module "yuke:tui" {
     onMouse(event: MouseEvent): boolean;
   }
 
-  /** A change of `tui.focusedView`. `pane` is the pane that holds `focusedView`, or `undefined` outside the panes. */
+  /** A change of `tui.focusedView`. */
   export interface FocusChange {
     /** The deepest view on the focus path before the change. */
     readonly previousView: View | undefined;
     /** The deepest view on the focus path after the change. */
     readonly focusedView: View | undefined;
-    readonly pane: Pane | undefined;
   }
 
   /** An image of the clipboard as PNG. */
@@ -892,37 +889,10 @@ declare module "yuke:tui" {
   export type RootFactory = (mount: Mount, inner: View) => View;
 
   /**
-   * Why the core opens a pane. `start` is the first pane of a start without saved panes. `new` is a split, the pane
-   * after a close of the last pane, or a saved empty pane of a restore.
+   * Make the main view. `saved` is the value of `View.snapshot` of the main view before a reload, when this plugin made
+   * that view, else `null`. A throw closes the mount, gives one fault, and leaves the main view empty.
    */
-  export type PaneReason = "start" | "new";
-
-  /** Make the view of a pane that the core opens. A throw closes the mount, gives one fault, and leaves the pane empty. */
-  export type DefaultPaneFactory = (mount: Mount, reason: PaneReason) => View;
-
-  /** A pane of the pane tree. `close` closes the pane, as the close of a mount does. */
-  export interface Pane extends Mount {
-    /** The view of the pane. */
-    readonly view: View;
-    /** Give the focus to the pane. */
-    readonly focus: () => void;
-  }
-
-  /** The pane tree of the core. */
-  export interface Panes {
-    /** The view of the tree. */
-    readonly view: View;
-    /** The active pane beneath any modal. */
-    readonly activePane: Pane | undefined;
-    /** Split the active pane. The new pane gets the focus. The close of the last pane gives a new default pane. */
-    readonly split: (create: ViewFactory, options?: { readonly direction?: Direction | undefined }) => Pane;
-    /**
-     * Make the view of each pane that the core opens. `PaneReason` names the cases. The last call wins, and the
-     * returned function brings back the view before it. Without one, such a pane is empty.
-     */
-    readonly setDefault: (create: DefaultPaneFactory) => () => void;
-    readonly moveFocus: (direction: FocusDirection) => boolean;
-  }
+  export type MainFactory = (mount: Mount, saved: JsonValue) => View;
 
   /** A key of a dialog, with its label in the footer. Two keys in a row with one label share one entry. */
   export interface DialogKey {
@@ -953,7 +923,7 @@ declare module "yuke:tui" {
     readonly keys?: readonly DialogKey[] | undefined;
     /** The height of the dialog at the bottom of the screen. The default is 13. */
     readonly rows?: number | undefined;
-    /** The dialog closes when this signal aborts, for example at the end of a pane. */
+    /** The dialog closes when this signal aborts, for example at the close of its view. */
     readonly signal?: AbortSignal | undefined;
   }
 
@@ -964,7 +934,7 @@ declare module "yuke:tui" {
   export interface SelectOptions<T> extends Pick<PickerOptions<T>, "items" | "label" | "detail" | "rank" | "render"> {
     /** The text of the head row, as in `DialogOptions`. */
     readonly title?: string | (() => string) | undefined;
-    /** The dialog closes when this signal aborts, for example at the end of a pane. */
+    /** The dialog closes when this signal aborts, for example at the close of its view. */
     readonly signal?: AbortSignal | undefined;
   }
 
@@ -983,7 +953,7 @@ declare module "yuke:tui" {
      * The dialog waits for a promise and takes no second Enter until then.
      */
     readonly onSubmit?: ((text: string) => void | Promise<void>) | undefined;
-    /** The dialog closes when this signal aborts, for example at the end of a pane. */
+    /** The dialog closes when this signal aborts, for example at the close of its view. */
     readonly signal?: AbortSignal | undefined;
   }
 
@@ -1029,17 +999,6 @@ declare module "yuke:tui" {
     | readonly JsonValue[]
     | { readonly [key: string]: JsonValue };
 
-  /** What a view saves for a reload: its view type, and the JSON state that the type restores it from. */
-  export interface ViewSnapshot {
-    /** A view type of `tui.views.add`. */
-    readonly type: string;
-    /** The state that `RestoreView` gets. */
-    readonly state: JsonValue;
-  }
-
-  /** Make a view from its saved state. The state can come from an older version of the plugin. */
-  export type RestoreView = (state: unknown, mount: Mount) => View;
-
   /**
    * How the terminal interface started.
    * A reload keeps the folder and the session.
@@ -1047,7 +1006,7 @@ declare module "yuke:tui" {
   export interface Startup {
     /** The folder that yuke started in. */
     readonly folder: string;
-    /** The session of `--continue` or `--resume`. The start pane shows it. A restored pane keeps its saved session. */
+    /** The session of `--continue` or `--resume`. The chat shows it at the start, and a reload keeps its own session. */
     readonly sessionId?: SessionId | undefined;
     /** The version of yuke, such as `0.1.0`. */
     readonly version: string;
@@ -1063,8 +1022,17 @@ declare module "yuke:tui" {
     readonly truecolor: boolean;
     /** How the terminal interface started. */
     readonly startup: Startup;
-    /** The pane tree of the core: its view, its active pane, and the way to split a pane. */
-    readonly panes: Panes;
+    /**
+     * Make the main view with `create`: the view below each root of `wrapRoot` and each overlay. It covers the screen,
+     * takes the focus, and takes a press without `focusable`. The last call wins, and the remover brings back the
+     * factory before it. A change shows a new main view at once, and the old one closes. Without a factory, and after
+     * the close of its mount, the main view is empty.
+     *
+     * ```ts
+     * tui.setMain((mount, saved) => notes(mount, typeof saved === "string" ? saved : ""));
+     * ```
+     */
+    readonly setMain: (create: MainFactory) => () => void;
     /** The deepest view on the focus path. */
     readonly focusedView: View | undefined;
     /**
@@ -1091,8 +1059,8 @@ declare module "yuke:tui" {
      */
     readonly wrapRoot: (create: RootFactory) => Mount;
     /**
-     * Show the view that `create` makes over the panes. A modal overlay (the default) takes the focus and all input
-     * until `close`. With `modal: false`, the overlay is a float that takes only the input that it handles.
+     * Show the view that `create` makes over the main view and the roots. A modal overlay (the default) takes the focus
+     * and all input until `close`. With `modal: false`, the overlay is a float that takes only the input that it handles.
      */
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
@@ -1147,7 +1115,7 @@ declare module "yuke:tui" {
       readonly add: (command: Command) => () => void;
       /**
        * Run a command. A bare name gets the prefix of this plugin, and a qualified name runs a command of any plugin,
-       * such as `core:split-right`. `false` when the command is missing or disabled, or when its run gives `false`,
+       * such as `core:quit`. `false` when the command is missing or disabled, or when its run gives `false`,
        * else `true`.
        */
       readonly run: (name: string, args?: unknown) => boolean;
@@ -1212,16 +1180,8 @@ declare module "yuke:tui" {
       /** Call `listener` after each later change of the items. A throw of `listener` goes to the call that changed them. */
       readonly addChangeListener: (listener: () => void) => () => void;
     };
-    /** The text widgets that are placed now, with a watch for each new one: the way to extend the editor of a pane. */
+    /** The text widgets that are placed now, with a watch for each new one: the way to extend the composer of the chat. */
     readonly widgets: WidgetRegistry;
-    readonly views: {
-      /**
-       * Add the view type `type`, so a reload gives each saved view of that type back to `restore`. A bare type gets
-       * the prefix `<plugin>:` of this plugin, and a qualified type must start with it. A type that exists throws a
-       * `TypeError`.
-       */
-      readonly add: (type: string, restore: RestoreView) => () => void;
-    };
     /** Ask for a frame in `delay` milliseconds. Many asks give one frame. Ask after a state change outside the input. */
     readonly requestFrame: (delay?: number) => void;
     readonly clipboard: {

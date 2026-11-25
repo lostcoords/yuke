@@ -1,4 +1,4 @@
-/** A mount: one close path for a pane, an overlay, or a root. */
+/** A mount: one close path for a main view, an overlay, or a root. */
 import { failureOf } from "yuke:internal/failure";
 import type { Mount, View } from "yuke:tui";
 

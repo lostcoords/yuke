@@ -1,4 +1,4 @@
-//! The interface host on a test display: notices in the core, the chat pane, and `/reload` with its snapshot.
+//! The interface host on a test display: notices in the core, the chat, and `/reload` with its snapshot.
 
 use std::io::Write;
 use std::rc::Rc;
@@ -143,12 +143,12 @@ async fn started_on(place: &Place, display: &Arc<Display>, session: Option<Sessi
     app
 }
 
-/// A test plugin whose root view draws the newest notice on the first row and the panes below it. The views of yuke
+/// A test plugin whose root view draws the newest notice on the first row and the root below it. The views of yuke
 /// draw no notice until the toasts come.
 const BOARD: &str = "export function apply(ctx) {
   const tui = ctx.get('tui');
-  tui.wrapRoot(() => ({
-    layout: (size) => [{ view: tui.panes.view, rect: { column: 0, row: 1, width: size.width, height: size.height - 1 } }],
+  tui.wrapRoot((mount, inner) => ({
+    layout: (size) => [{ view: inner, rect: { column: 0, row: 1, width: size.width, height: size.height - 1 } }],
     draw: (canvas) => {
       const notice = tui.notices.list().at(-1);
       if (notice !== undefined) canvas.text(0, 0, `${notice.level} ${notice.source}: ${notice.text}`);
@@ -177,29 +177,29 @@ async fn the_console_of_a_plugin_reaches_the_screen_as_a_notice() {
     app.shutdown().await;
 }
 
-/// A plugin with the view type `note`: a pane that shows its id.
+/// A plugin whose main view shows its saved id, or `new`.
 const NOTES: &str = "export function apply(ctx) {
   const tui = ctx.get('tui');
   if (tui === undefined) return;
   // One surface per plugin: a second call gives the same one.
   if (ctx.get('tui') !== tui) throw new Error('two surfaces');
-  tui.views.add('note', (state) => ({
-    draw: (canvas) => { canvas.text(0, 0, `note ${state.id}`); },
-    snapshot: () => ({ type: 'note', state }),
+  tui.setMain((mount, saved) => ({
+    draw: (canvas) => { canvas.text(0, 0, `note ${saved?.id ?? 'new'}`); },
+    snapshot: () => saved,
   }));
 }";
 
 #[tokio::test(flavor = "local")]
-async fn a_plugin_pane_comes_back_after_a_reload() {
+async fn a_plugin_main_view_gets_its_saved_value_after_a_reload() {
     let place = Place::new("tui", "reload_snapshot");
     place.plugin("notes", NOTES);
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["notes"] }"#).unwrap();
     let (display, output) = display();
     let mut app = started(&place, &display).await;
-    // The bundled chat gives the first pane after the start event.
-    output.shows("Message").await;
+    // The plugin loads after the bundled chat, so its main view wins.
+    output.shows("note new").await;
 
-    let snapshot = r#"{"tree":{"type":"notes:note","state":{"id":4}},"focus":0}"#;
+    let snapshot = r#"{"main":{"owner":"notes","state":{"id":4}}}"#;
     reload(Some(&mut app), &display, snapshot.to_owned()).await;
 
     output.shows("note 4").await;
@@ -249,11 +249,11 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
     );
 
     config("[]");
-    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
+    reload(Some(&mut app), &display, r"{}".to_owned()).await;
     output.contains("marked").await;
 
     config(r#""no""#);
-    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
+    reload(Some(&mut app), &display, r"{}".to_owned()).await;
     output.contains("Plugin bar did not load").await;
     assert!(
         output.rows().iter().all(|row| !row.contains("marked")),
@@ -287,7 +287,7 @@ async fn saved_session(place: &Place) -> SessionId {
 }
 
 #[tokio::test(flavor = "local")]
-async fn the_start_pane_opens_the_session_of_the_startup() {
+async fn the_chat_opens_the_session_of_the_startup() {
     let place = Place::new("tui", "start_session");
     let id = saved_session(&place).await;
     place.plugin(

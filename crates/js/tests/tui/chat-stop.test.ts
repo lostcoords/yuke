@@ -48,21 +48,6 @@ test("a quit with no work ends at once and writes the resume command", async () 
   assertEquals(frame.quits, [RESUME]);
 });
 
-test("a quit names each session once and leaves out a pane without a session", async () => {
-  const { frame, chat } = await opened();
-  using _frame = frame;
-  chat.tui.commands.run("core:split-right");
-  await waitForSettled();
-  chat.tui.commands.run("core:split-right");
-  await waitForSettled();
-  await chat.chat.show("s1");
-  await waitForSettled();
-
-  frame.key("ctrl+q");
-
-  assertEquals(frame.quits, [RESUME]);
-});
-
 test("a quit with jobs asks, and it names the keys and what runs", async () => {
   const { frame } = await opened([JOB, SUBAGENT]);
   using _frame = frame;
@@ -132,19 +117,6 @@ test("the quit command in the dialog quits and opens no second question", async 
   assertEquals(frame.quits, [RESUME]);
 });
 
-test("two panes on one session count its work once", async () => {
-  const { frame, chat } = await opened([JOB]);
-  using _frame = frame;
-  chat.tui.commands.run("core:split-right");
-  await waitForSettled();
-  await chat.chat.show("s1");
-  await waitForSettled();
-
-  frame.key("ctrl+q");
-
-  assertEquals(screen(frame).join("\n").includes("1 job is running."), true);
-});
-
 test("a read-only session warns about its own job, and a quit names its parent to resume", async () => {
   const { frame, chat } = await opened();
   using _frame = frame;
@@ -179,10 +151,6 @@ test("two read-only children of one parent count each job, and a quit resumes th
   const { frame, chat } = await opened();
   using _frame = frame;
   chat.chat.addReadOnly((session) => (session === "p1" ? undefined : { text: "A child", back: "p1" }));
-  chat.tui.commands.run("core:split-right");
-  await waitForSettled();
-  await chat.chat.show("s2");
-  await waitForSettled();
   open(chat, "s1", { parent: "p1", jobs: [JOB] });
   open(chat, "s2", { parent: "p1", jobs: [{ ...JOB, id: "j3" }] });
   frame.draw();
@@ -193,7 +161,7 @@ test("two read-only children of one parent count each job, and a quit resumes th
   assertEquals(frame.quits, ["To resume this session, run: yuke -r p1"]);
 });
 
-test("a turn and a job of a session that no pane shows ask, and the quit names that session to resume", async () => {
+test("a turn and a job of a session that the chat does not show ask, and the quit names that session to resume", async () => {
   const { frame, chat } = await opened();
   using _frame = frame;
   open(chat, "s9", { state: "running", jobs: [JOB] });

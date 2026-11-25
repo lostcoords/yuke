@@ -51,7 +51,7 @@ test("a saved choice skips the picker on the first send and sends the draft", as
     [["s-new"], [[{ kind: "userText", text: "hello" }]], ""],
   );
   frame.draw();
-  assertEquals(JSON.parse(frame.snapshot()).tree.state.session, "s-new");
+  assertEquals(JSON.parse(frame.snapshot()).main.state.session, "s-new");
   assertEquals(chat.transcript().document.id, "session:s-new");
 });
 
@@ -163,8 +163,8 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   await waitForSettled();
   frame.key("enter");
   await waitForSettled();
-  // A new pane without a session shows no pick, because yuke could not save the pick.
-  chat.tui.commands.run("core:split-right");
+  // A chat without a session shows no pick, because yuke could not save the pick.
+  chat.tui.commands.run("chat:new");
   frame.draw();
   assertEquals(
     [
@@ -244,7 +244,7 @@ test("a send with no ready provider names /login, opens no picker, and keeps the
   assertEquals(chat.notices, ["info No provider is ready: run /login"]);
 });
 
-test("a cancel of the model picker, a catalog that fails, and a pane close each keep the draft and create nothing", async () => {
+test("a cancel of the model picker, a catalog that fails, and a close of the chat each keep the draft and create nothing", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/launch" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
@@ -257,12 +257,12 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   frame.key("esc");
   await waitForSettled();
   assertEquals([sessions.created, composerOf(chat).state.text], [[], "hi"]);
-  // A close of the pane closes its open picker.
+  // A close of the chat closes its open picker.
   frame.key("enter");
   await waitForSettled();
   frame.draw();
   assertEquals(frame.rows().includes("p/m"), true);
-  chat.tui.commands.run("core:close");
+  frame.surface("other").tui.setMain(() => ({ draw() {} }));
   await waitForSettled();
   frame.draw();
   assertEquals([frame.rows().includes("p/m"), sessions.created], [false, []]);
@@ -632,7 +632,7 @@ test("esc hides the commands until the draft changes, and a draft with no comman
   );
 });
 
-test("the commands of the chat are disabled in a pane of another plugin", async () => {
+test("the commands of the chat are disabled while another plugin shows the main view", async () => {
   using frame = createFrame({ width: 30, height: 6 });
   const chat = await loadChat(frame);
   frame.start();
@@ -642,7 +642,7 @@ test("the commands of the chat are disabled in a pane of another plugin", async 
       .filter((command) => command.name === "chat:model")
       .map((command) => command.enabled);
   const before = enabled();
-  frame.surface("notes").tui.panes.split(() => ({ draw() {}, focusable: true }));
+  frame.surface("notes").tui.setMain(() => ({ draw() {} }));
   frame.draw();
   assertEquals([before, enabled()], [[true], [false]]);
 });
@@ -740,7 +740,7 @@ test("a message that a turn took stays sent and the next up recalls an older one
   assertEquals([composerOf(chat).state.text, sessions.removals], ["zero\nx", [5, 3]]);
 });
 
-test("a pane close during a recall leaves the composer and gives no notice", async () => {
+test("a close of the chat during a recall leaves the composer and gives no notice", async () => {
   using frame = createFrame({ width: 30, height: 10 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
@@ -751,7 +751,7 @@ test("a pane close during a recall leaves the composer and gives no notice", asy
   const { promise, resolve } = Promise.withResolvers<void>();
   sessions.state.removal = promise;
   frame.key("up");
-  chat.tui.commands.run("core:close");
+  frame.surface("other").tui.setMain(() => ({ draw() {} }));
   resolve();
   await waitForSettled();
   assertEquals([composer.state.text, chat.notices, sessions.removals], ["", [], [5]]);
@@ -881,7 +881,7 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
   );
 });
 
-test("a cancel of the model picker or a pane close during ctrl+v puts nothing in the composer", async () => {
+test("a cancel of the model picker or a close of the chat during ctrl+v puts nothing in the composer", async () => {
   using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
@@ -906,7 +906,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
   const held = composerOf(closing);
   other.key("ctrl+v");
   await waitForSettled();
-  closing.tui.commands.run("core:close");
+  other.surface("cover").tui.setMain(() => ({ draw() {} }));
   resolve();
   await waitForSettled();
   assertEquals([cancelled, held.state.text, closing.notices], [[0, ""], "", []]);

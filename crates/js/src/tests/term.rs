@@ -190,7 +190,7 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     );
     assert_eq!(output.text(), "");
 
-    runtime.show(Some(r#"{"panes":2}"#.to_owned()));
+    runtime.show(Some(r#"{"main":2}"#.to_owned()));
     crate::wait_for_settled().await;
     assert!(
         evaluate::<bool>(&runtime, "return seen.length === 2 && frames === 1;")
@@ -203,7 +203,7 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     )
     .await
     .unwrap();
-    assert_eq!(text, r#"{"type":"start","snapshot":"{\"panes\":2}"} key:a"#);
+    assert_eq!(text, r#"{"type":"start","snapshot":"{\"main\":2}"} key:a"#);
     assert!(output.text().contains("frame 1"), "{:?}", output.text());
 }
 
@@ -502,7 +502,7 @@ async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the
     let (runtime, _reports, display, output, mut requests) = started("quit_and_suspend_reach_the_host").await;
     evaluate::<()>(
         &runtime,
-        "term.quit(); term.quit('bye'); term.suspend(); term.reload('{\"panes\":2}');",
+        "term.quit(); term.quit('bye'); term.suspend(); term.reload('{\"main\":2}');",
     )
     .await
     .unwrap();
@@ -514,7 +514,7 @@ async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the
     assert_eq!(requests.recv().await, Some(DisplayRequest::Suspend));
     assert_eq!(
         requests.recv().await,
-        Some(DisplayRequest::Reload(r#"{"panes":2}"#.to_owned()))
+        Some(DisplayRequest::Reload(r#"{"main":2}"#.to_owned()))
     );
     output.clear();
     display.send(DisplayInput::Event(Event::SchemeChanged));

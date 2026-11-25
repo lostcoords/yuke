@@ -1,18 +1,15 @@
 /**
  * The bundled plugin `sessions`. Its command `sessions:open` lists the recent sessions in a picker. Enter shows the
- * chosen session in a chat pane through the service `chat`. The list starts with the folder of the focused pane. Tab
+ * chosen session in the chat through the service `chat`. The list starts with the folder of the shown session. Tab
  * switches to the sessions of every folder.
  */
 
 import type { PluginContext } from "yuke:plugins";
-import type { SessionRow, SessionState } from "yuke:protocol";
+import type { SessionRow } from "yuke:protocol";
 import { fuzzyMatch, Picker, type PickerMatch, type Tui } from "yuke:tui";
 
 /** The list shows at most this count of sessions. */
 const PAGE = 100;
-
-/** The mark of each state: a running turn, an open session, and a closed one. */
-const MARK: Readonly<Record<SessionState, string>> = { running: "●", idle: "○", closed: " " };
 
 export function apply(ctx: PluginContext): undefined {
   const tui = ctx.get("tui");
@@ -20,7 +17,7 @@ export function apply(ctx: PluginContext): undefined {
   tui.commands.add({
     name: "open",
     slash: "sessions",
-    description: "Show a recent session in the pane",
+    description: "Show a recent session",
     run: () => open(ctx, tui),
   });
   return undefined;
@@ -35,9 +32,9 @@ function age(at: number, now: number): string {
   return `${Math.floor(minutes / (24 * 60))}d`;
 }
 
-/** The label of `row`: its state mark and its title. */
+/** The label of `row`: its title. */
 function labelOf(row: SessionRow): string {
-  return `${MARK[row.state]} ${row.title ?? "(untitled)"}`;
+  return row.title ?? "(untitled)";
 }
 
 /**
@@ -62,15 +59,13 @@ function rank(query: string, rows: readonly SessionRow[]): readonly PickerMatch<
 }
 
 /**
- * Open the list over the focused pane. The scope starts with the folder of the session of that pane. The ages are the
- * ones at the time of the load.
+ * Open the list. The scope starts with the folder of the shown session. The ages are the ones at the time of the load.
  */
 async function open(ctx: PluginContext, tui: Tui): Promise<void> {
   const chat = ctx.get("chat");
   const sessions = ctx.get("sessions");
-  const pane = tui.panes.activePane?.view;
-  const shown = pane === undefined ? undefined : chat.sessionIdOf(pane);
-  // Another client can remove the session of the pane, and the list then starts with the start folder.
+  const shown = chat.sessionId();
+  // Another client can remove the shown session, and the list then starts with the start folder.
   const folder =
     shown === undefined
       ? tui.startup.folder

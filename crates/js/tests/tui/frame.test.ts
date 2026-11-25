@@ -159,30 +159,6 @@ test("the palette color bg of a theme fills each cell of the frame, and the defa
   assertEquals([before.every((bg) => bg === undefined), themed], [true, Array.from({ length: 12 }, () => 4)]);
 });
 
-test("the pane dividers have a default look that a plugin changes", () => {
-  using frame = createFrame({ width: 10, height: 4 });
-  const tui = frame.surface("theme").tui;
-  tui.panes.split(() => ({ draw() {} }));
-  tui.panes.split(() => ({ draw() {} }), { direction: "column" });
-  const looks = () =>
-    ["│", "─"].map(
-      (line) =>
-        frame
-          .draw()
-          .cells.flat()
-          .find((cell) => cell.text === line)?.style,
-    );
-  const before = looks();
-  tui.styles.add({ "panes.divider": { fg: 1, dim: null } });
-  assertEquals(
-    [before, looks()],
-    [
-      [{ dim: true }, { dim: true }],
-      [{ fg: 1 }, { fg: 1 }],
-    ],
-  );
-});
-
 test("the newest title is the window title, a remover brings back the one before, and a stop leaves the shell title", () => {
   using frame = createFrame({ width: 6, height: 2 });
   const first = frame.surface("first");

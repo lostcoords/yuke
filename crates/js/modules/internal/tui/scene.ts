@@ -14,7 +14,6 @@ import type {
   MouseButton,
   MouseEvent,
   OverlayOptions,
-  Pane,
   PasteEvent,
   Point,
   Rect,
@@ -32,28 +31,20 @@ interface SceneHost {
   readonly requestFrame: () => void;
   /** Report a fault of a view factory of `source` (a plugin name or `core`). */
   readonly report: (source: string, text: string) => void;
-  /** The handle of the view of a pane, or `undefined` for another view. A pane takes the focus. */
-  readonly paneOf: (view: View) => PaneLeaf | undefined;
-  /** The root focus when the focused view left the tree, such as the view of the active pane. */
-  readonly fallbackFocus: () => View | undefined;
   /**
-   * The focus path changed: the views of the root layer, from the root down, even under a modal. `change` is set when
-   * the deepest view of the input path changed.
+   * The main view, or `undefined` without one. It takes the focus and a press without `focusable`, and it is the root
+   * focus when the focused view left the tree.
    */
-  readonly focusMoved: (rootPath: readonly View[], change: FocusChange | undefined) => void;
+  readonly main: () => View | undefined;
+  /** The focus path of the input layer changed. `change` is set when its deepest view changed. */
+  readonly focusMoved: (change: FocusChange | undefined) => void;
   /** The hosted views of a layout, such as the text widgets, before its focus resolves. */
   readonly placed: (views: readonly PlacedView[]) => void;
 }
 
-/** The handle of a pane, or `undefined` for an empty pane. */
-interface PaneLeaf {
-  readonly pane: Pane | undefined;
-}
-
-/** A placed view: its rect and clip in screen cells, its pane, its parent, and its children. */
+/** A placed view: its rect and clip in screen cells, its parent, and its children. */
 interface Target {
   readonly view: View;
-  readonly pane: Pane | undefined;
   readonly parent: Target | undefined;
   readonly rect: Rect;
   readonly clip: Rect;
@@ -82,13 +73,11 @@ export class Scene {
   readonly #roots: Layer[];
   readonly #overlays: Overlay[] = [];
   #rootFocus: View | undefined;
-  /** The last focused view inside each view of the focus path, so a refocus of a pane finds its composer again. */
+  /** The last focused view inside each view of the focus path, so a refocus of a view finds its inner focus again. */
   readonly #lastInside = new WeakMap<View, View>();
   #capture: { readonly view: View; readonly button: MouseButton; point: Point } | undefined;
   /** The focus path of the input layer at the last layout. Its targets reach a view that left the tree since. */
   #path: readonly Target[] = [];
-  /** The views of the root focus path at the last layout, also under a modal. */
-  #rootPath: readonly View[] = [];
 
   /** `root` is the view of the core. It stays below each other root. */
   constructor(host: SceneHost, root: View) {
@@ -148,14 +137,14 @@ export class Scene {
   layout(): void {
     const size = this.#host.size();
     const screen = { column: 0, row: 0, width: size.width, height: size.height };
-    this.#root.tree = this.#place(this.#root.view, undefined, screen, screen, undefined);
+    this.#root.tree = this.#place(this.#root.view, screen, screen, undefined);
     for (const layer of this.#overlays) {
       const rect = intersect(screen, layer.place?.(size) ?? screen);
-      layer.tree = this.#place(layer.view, undefined, rect, rect, undefined);
+      layer.tree = this.#place(layer.view, rect, rect, undefined);
     }
     const hosted: PlacedView[] = [];
     const collect = (target: Target, layer: object): void => {
-      if (isHosted(target.view)) hosted.push({ view: target.view, pane: target.pane, layer });
+      if (isHosted(target.view)) hosted.push({ view: target.view, layer });
       for (const child of target.children) collect(child, layer);
     };
     if (this.#root.tree !== undefined) collect(this.#root.tree, ROOTS);
@@ -271,7 +260,7 @@ export class Scene {
     return false;
   }
 
-  /** Make `view` the root focus, also before its first layout, as for a new pane. Its remembered inner focus wins. */
+  /** Make `view` the root focus, also before its first layout, as for a new main view. Its `initialFocus` wins. */
   focusRoot(view: View): void {
     this.#rootFocus = view;
     this.#host.requestFrame();
@@ -292,8 +281,8 @@ export class Scene {
   }
 
   /** The target of `view` at `rect`, cut to `clip`, with its placed children. */
-  #place(view: View, pane: Pane | undefined, rect: Rect, clip: Rect, parent: Target | undefined): Target {
-    const target: Target = { view, pane, parent, rect, clip, children: [] };
+  #place(view: View, rect: Rect, clip: Rect, parent: Target | undefined): Target {
+    const target: Target = { view, parent, rect, clip, children: [] };
     if (view.layout === undefined) return target;
     for (const placement of view.layout({ width: rect.width, height: rect.height })) {
       const childRect = {
@@ -302,10 +291,8 @@ export class Scene {
         width: placement.rect.width,
         height: placement.rect.height,
       };
-      const leaf = this.#host.paneOf(placement.view);
-      const childPane = leaf === undefined ? pane : leaf.pane;
       const childClip = intersect(clip, childRect);
-      target.children.push(this.#place(placement.view, childPane, childRect, childClip, target));
+      target.children.push(this.#place(placement.view, childRect, childClip, target));
     }
     return target;
   }
@@ -338,8 +325,8 @@ export class Scene {
     if (event.action === "press" && !wheel) {
       for (let target: Target | undefined = hit; target !== undefined; target = target.parent) {
         const view = target.view;
-        // The view of a pane takes a press, as it takes the focus without `focusable`.
-        if (this.#host.paneOf(view) !== undefined || (view.focusable === true && view.focusOnPress !== false)) {
+        // The main view takes a press, as it takes the focus without `focusable`.
+        if (view === this.#host.main() || (view.focusable === true && view.focusOnPress !== false)) {
           this.#setFocus(layer, view);
           break;
         }
@@ -374,7 +361,7 @@ export class Scene {
     const wanted = isRoot ? this.#rootFocus : layer.focus;
     const found = wanted === undefined ? undefined : findIn(layer.tree, wanted);
     if (found !== undefined) return this.#remembered(found);
-    const fallback = isRoot ? this.#host.fallbackFocus() : undefined;
+    const fallback = isRoot ? this.#host.main() : undefined;
     const fallen = fallback === undefined ? undefined : findIn(layer.tree, fallback);
     return this.#remembered(fallen ?? layer.tree);
   }
@@ -393,16 +380,13 @@ export class Scene {
   }
 
   /**
-   * Compare the focus paths with the last ones: each view that leaves or enters the input path gets `onFocusChange`,
-   * and a change of either path reaches the host, as a focus change of the root beneath a modal.
+   * Compare the focus path with the last one: each view that leaves or enters the input path gets `onFocusChange`, and
+   * a change of the path reaches the host.
    */
   #syncFocus(): void {
     const path = targetsTo(this.#focusTarget(this.#inputLayer()));
-    const rootPath = targetsTo(this.#focusTarget(this.#root)).map((target) => target.view);
     const before = this.#path;
-    const rootBefore = this.#rootPath;
     this.#path = path;
-    this.#rootPath = rootPath;
     const deepest = path.at(-1)?.view;
     for (const { view } of path) this.#lastInside.set(view, deepest ?? view);
     const views = path.map((target) => target.view);
@@ -414,15 +398,12 @@ export class Scene {
       for (const target of path) if (!viewsBefore.includes(target.view)) target.view.onFocusChange?.(true);
     }
     const previous = before.at(-1)?.view;
-    const change =
-      deepest === previous
-        ? undefined
-        : Object.freeze({ previousView: previous, focusedView: deepest, pane: path.at(-1)?.pane });
-    if (inputChanged || !sameViews(rootPath, rootBefore)) this.#host.focusMoved(rootPath, change);
+    const change = deepest === previous ? undefined : Object.freeze({ previousView: previous, focusedView: deepest });
+    if (inputChanged) this.#host.focusMoved(change);
   }
 
   #focusable(view: View): boolean {
-    return view.focusable === true || this.#host.paneOf(view) !== undefined;
+    return view.focusable === true || view === this.#host.main();
   }
 
   /** The top modal, else the root. */
