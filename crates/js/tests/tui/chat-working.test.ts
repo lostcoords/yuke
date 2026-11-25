@@ -145,7 +145,7 @@ test("a thought without text to show draws no rows, and the working row still sh
   );
 });
 
-test("a short pane gives up the empty rows before the last row of the transcript", async () => {
+test("a short chat gives up the empty rows before the last row of the transcript", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 5 }, undefined, { folder: "/w", sessionId: "s1" });
   await loadChat(frame, sessions);

@@ -646,7 +646,7 @@ test("a click on the text of an open thought folds it", async () => {
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " Thought", ""]);
 });
 
-test("a call that opens at the tail stays on its rows, and the pane follows the tail again when it folds", async () => {
+test("a call that opens at the tail stays on its rows, and the chat follows the tail again when it folds", async () => {
   using frame = createFrame({ width: 40, height: 16 }, undefined, { folder: "/w", sessionId: "s1" });
   const saved = calls(
     { name: "one", args: {}, hints: PROBE, result: ok(lines("a", 3)) },
@@ -666,7 +666,7 @@ test("a call that opens at the tail stays on its rows, and the pane follows the 
   frame.click(3, more);
   assertEquals(transcriptRows(frame).slice(0, 12), folded);
   assertEquals(view.scroll.state.following, true);
-  // ctrl+o keeps the pane on the tail in both directions.
+  // ctrl+o keeps the chat on the tail in both directions.
   frame.key("ctrl+o");
   assertEquals(view.scroll.state.following, true);
   frame.key("ctrl+o");
@@ -730,7 +730,7 @@ test("ctrl+o in the composer opens each tool when one is folded, else folds each
   saved.push(commit(saved.length + 1, [{ kind: "reasoning", text: "why" } as never]));
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  // The composer has the focus, and the key reaches the command through the context of the pane.
+  // The composer has the focus, and the key reaches the command through the context of the chat.
   frame.key("ctrl+o");
   frame.click(2, 1);
   frame.key("ctrl+o");

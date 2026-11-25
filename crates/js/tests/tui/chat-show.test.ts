@@ -1,14 +1,15 @@
-// The service `chat` of the bundled chat: `show` puts another session in the chat, and the draft waits for the return.
+// The service `chat` of the bundled chat: `show` makes another session the root, or shows a child of the root.
 
 import type { ChatService } from "yuke:chat";
 import { apply } from "yuke:internal/bundled/chat";
 import { assertEquals, assertRejects, createFrame, test, waitForSettled } from "yuke:test";
-import { commit, composerOf, fakeSessions, loadChat, replies } from "./chat.ts";
+import { commit, composerOf, fakeSessions, loadChat, replies, row } from "./chat.ts";
 import { fakeContext } from "./context.ts";
 
-test("show puts another session in the chat, ends the old handle, and the draft waits for the return", async () => {
+test("a show of another root ends the old handle, closes the old root, clears the draft, and tells each listener", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
+  sessions.rows.push(row("s1"), row("s2"));
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -18,51 +19,51 @@ test("show puts another session in the chat, ends the old handle, and the draft 
   await chat.chat.show("s2");
   sessions.push(commit(3, [{ kind: "assistantText", text: "only in s2" }]), "s2");
   frame.draw();
-  const shown = frame.rows().some((text) => text.includes("only in s2"));
-  const away = composerOf(chat).state.text;
-  frame.paste("draft of s2");
-  await chat.chat.show("s1");
   assertEquals(
-    [chat.opened.map((open) => [open.id, open.signal.aborted]), moves, shown, away, composerOf(chat).state.text],
+    [
+      chat.opened.map((open) => [open.id, open.signal.aborted]),
+      sessions.closes,
+      moves,
+      frame.rows().some((text) => text.includes("only in s2")),
+      composerOf(chat).state.text,
+    ],
     [
       [
         ["s1", true],
-        ["s2", true],
-        ["s1", false],
+        ["s2", false],
       ],
-      ["s2", "s1"],
+      ["s1"],
+      ["s2"],
       true,
       "",
-      "draft of s1",
     ],
   );
-  assertEquals(chat.chat.sessionId(), "s1");
 });
 
-test("a failed show keeps the session, the handle, and the draft of the chat", async () => {
+test("a failed show keeps the root, its handle, and the draft", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
-  const chat = await loadChat(frame, fakeSessions(replies(2)));
+  const sessions = fakeSessions(replies(2));
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
   frame.paste("keep");
   const error = String(await assertRejects(() => chat.chat.show("missing")));
   assertEquals(
-    [error, chat.chat.sessionId(), chat.opened.map((open) => [open.id, open.signal.aborted])],
     [
-      "Error: no session missing",
-      "s1",
-      [
-        ["s1", false],
-        ["missing", true],
-      ],
+      error,
+      chat.chat.sessionId(),
+      chat.opened.map((open) => [open.id, open.signal.aborted]),
+      sessions.closes,
+      composerOf(chat).state.text,
     ],
+    ["Error: no session missing", "s1", [["s1", false]], [], "keep"],
   );
-  assertEquals(composerOf(chat).state.text, "keep");
 });
 
 test("show rejects during a send and succeeds after the send ends", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(2));
+  sessions.rows.push(row("s2"));
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -75,7 +76,7 @@ test("show rejects during a send and succeeds after the send ends", async () => 
   resolve();
   await waitForSettled();
   await chat.chat.show("s2");
-  assertEquals([refused, chat.opened.map((open) => open.id)], ["Error: the pane is busy", ["s1", "s2"]]);
+  assertEquals([refused, chat.opened.map((open) => open.id)], ["Error: the chat is busy", ["s1", "s2"]]);
 });
 
 test("show carries the draft of a chat without a session, and rejects while another plugin shows the main view", async () => {

@@ -272,7 +272,7 @@ test("a break tag in a code span or after a backslash stays literal", () => {
   assertEquals(lines(rowsOf("a `<br>` b \\<br> c", 80)), ["a <br> b <br> c"]);
 });
 
-// A pane can have no width for a moment, and a row then still takes one character.
+// A view can have no width for a moment, and a row then still takes one character.
 test("a code block at width 0 gives one character for each row", () => {
   assertEquals(lines(rowsOf("```\nab\n```", 0)), ["a", "b"]);
 });

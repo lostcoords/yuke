@@ -1,5 +1,5 @@
 // The composer of the bundled chat: the first send, the model picker, a refused input, long pastes, the messages of
-// the user, the strip and the recall of waiting messages, and the keys of a pane.
+// the user, the strip and the recall of waiting messages, and the keys of a chat.
 
 import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
 import type { Block, ListCatalogResult, SessionUpdate, StoredEvent } from "yuke:protocol";
@@ -165,6 +165,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   await waitForSettled();
   // A chat without a session shows no pick, because yuke could not save the pick.
   chat.tui.commands.run("chat:new");
+  await waitForSettled();
   frame.draw();
   assertEquals(
     [
@@ -216,7 +217,7 @@ test("an accepted input followed by a failed turn does not come back", async () 
   assertEquals([composerOf(chat).state.text, chat.notices], ["", []]);
 });
 
-test("a pane whose open failed opens its session again at the next send", async () => {
+test("a chat whose open failed opens its session again at the next send", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   sessions.state.openFails = 1;
@@ -244,7 +245,7 @@ test("a send with no ready provider names /login, opens no picker, and keeps the
   assertEquals(chat.notices, ["info No provider is ready: run /login"]);
 });
 
-test("a cancel of the model picker, a catalog that fails, and a close of the chat each keep the draft and create nothing", async () => {
+test("a cancel of the model picker and a catalog that fails each keep the draft and create nothing", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/launch" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
@@ -257,15 +258,6 @@ test("a cancel of the model picker, a catalog that fails, and a close of the cha
   frame.key("esc");
   await waitForSettled();
   assertEquals([sessions.created, composerOf(chat).state.text], [[], "hi"]);
-  // A close of the chat closes its open picker.
-  frame.key("enter");
-  await waitForSettled();
-  frame.draw();
-  assertEquals(frame.rows().includes("p/m"), true);
-  frame.surface("other").tui.setMain(() => ({ draw() {} }));
-  await waitForSettled();
-  frame.draw();
-  assertEquals([frame.rows().includes("p/m"), sessions.created], [false, []]);
   using other = createFrame({ width: 30, height: 6 }, undefined, { folder: "/launch" });
   const failing = await loadChat(other, fakeSessions(), { list: () => Promise.reject(new Error("offline")) });
   other.start();
@@ -373,7 +365,7 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
   assertEquals(sessions.state.cancels, 2);
 });
 
-test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
+test("page keys scroll the transcript, and a chat of one row keeps the composer", async () => {
   const saved: StoredEvent[] = [{ seq: 1, kind: "settings", ...SETTINGS }];
   for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]));
   using frame = createFrame({ width: 20, height: 9 }, undefined, { folder: "/w", sessionId: "s1" });
@@ -418,7 +410,7 @@ test("a refusal while the user browses the messages ends the browse, so down kee
   assertEquals(composerOf(chat).state.text, "first\nold");
 });
 
-test("ctrl+k m in a new pane saves a new choice for the first send", async () => {
+test("ctrl+k m in a new chat saves a new choice for the first send", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"off"}', { folder: folder() });
   const startup = { folder: "/launch" };
   using frame = createFrame({ width: 30, height: 14 }, undefined, startup);
@@ -460,7 +452,7 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
   );
 });
 
-test("ctrl+k m in a pane with a session changes its model and level and keeps its other settings", async () => {
+test("ctrl+k m in a chat with a session changes its model and level and keeps its other settings", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   const chat = await loadChat(frame, sessions);
@@ -740,23 +732,6 @@ test("a message that a turn took stays sent and the next up recalls an older one
   assertEquals([composerOf(chat).state.text, sessions.removals], ["zero\nx", [5, 3]]);
 });
 
-test("a close of the chat during a recall leaves the composer and gives no notice", async () => {
-  using frame = createFrame({ width: 30, height: 10 }, undefined, { folder: "/w", sessionId: "s1" });
-  const sessions = fakeSessions();
-  const chat = await loadChat(frame, sessions);
-  frame.start();
-  await waitForSettled();
-  const composer = composerOf(chat);
-  sessions.push(accepted(5, [{ kind: "userText", text: "one" }]));
-  const { promise, resolve } = Promise.withResolvers<void>();
-  sessions.state.removal = promise;
-  frame.key("up");
-  frame.surface("other").tui.setMain(() => ({ draw() {} }));
-  resolve();
-  await waitForSettled();
-  assertEquals([composer.state.text, chat.notices, sessions.removals], ["", [], [5]]);
-});
-
 test("up during a browse goes on with the history, and the end of the browse gives up to a recall", async () => {
   const saved: StoredEvent[] = [
     { seq: 1, kind: "settings", ...SETTINGS },
@@ -843,7 +818,7 @@ test("ctrl+v puts the image of the clipboard at the caret with the next number, 
   );
 });
 
-test("ctrl+v without an image gives a notice, a failed store gives a notice, and a new pane creates its session first", async () => {
+test("ctrl+v without an image gives a notice, a failed store gives a notice, and a new chat creates its session first", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
     folder: folder(),
   });
@@ -881,7 +856,7 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
   );
 });
 
-test("a cancel of the model picker or a close of the chat during ctrl+v puts nothing in the composer", async () => {
+test("a cancel of the model picker during ctrl+v puts nothing in the composer", async () => {
   using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
@@ -894,22 +869,7 @@ test("a cancel of the model picker or a close of the chat during ctrl+v puts not
   assertEquals(frame.rows().includes("p/m"), true);
   frame.key("esc");
   await waitForSettled();
-  const cancelled = [sessions.created.length, composer.state.text];
-  using other = createFrame({ width: 40, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
-  const later = fakeSessions();
-  const closing = await loadChat(other, later);
-  other.start();
-  await waitForSettled();
-  other.clipboard = PNG;
-  const { promise, resolve } = Promise.withResolvers<void>();
-  later.state.store = promise;
-  const held = composerOf(closing);
-  other.key("ctrl+v");
-  await waitForSettled();
-  other.surface("cover").tui.setMain(() => ({ draw() {} }));
-  resolve();
-  await waitForSettled();
-  assertEquals([cancelled, held.state.text, closing.notices], [[0, ""], "", []]);
+  assertEquals([sessions.created.length, composer.state.text], [0, ""]);
 });
 
 test("text typed while the first send sets up the session goes with the message", async () => {

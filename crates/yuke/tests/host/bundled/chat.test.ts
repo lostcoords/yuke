@@ -1,4 +1,5 @@
-// The bundled plugin `chat` on the sessions of a test host: the transcript of a pane, live and after a reopen.
+// The bundled plugin `chat` on the sessions of a test host: the transcript, live and after a reopen, the session tree,
+// and the stop of its work.
 
 import type { ChatService } from "yuke:chat";
 import { mkdir, writeTextFile } from "yuke:fs";
@@ -57,7 +58,7 @@ async function shown(frame: FrameTest): Promise<string> {
   return frame.rows().join("\n");
 }
 
-test("a pane draws the same transcript live and after a reopen", async () => {
+test("the chat draws the same transcript live and after a reopen", async () => {
   const probed: Partial<Probed> = {};
   using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w" });
   await using host = await createHost({
@@ -76,11 +77,11 @@ test("a pane draws the same transcript live and after a reopen", async () => {
   await chat.show(session.id);
   const reopened = await shown(frame);
 
-  for (const text of ["Greet Ada.", "hello Ada", "Done."]) assert(live.includes(text), `the live pane lacks ${text}`);
+  for (const text of ["Greet Ada.", "hello Ada", "Done."]) assert(live.includes(text), `the live chat lacks ${text}`);
   assertEquals(reopened, live);
 });
 
-test("the first send of a pane with a saved choice creates its session and gets the answer", async () => {
+test("the first send of a chat with a saved choice creates its session and gets the answer", async () => {
   const dataDir = `${folder()}/chat`;
   await mkdir(dataDir);
   await writeTextFile(
@@ -102,7 +103,7 @@ test("the first send of a pane with a saved choice creates its session and gets 
   assertEquals(host.requests.at(-1)?.messages.at(-1)?.text, "hello");
 });
 
-test("chat.show opens a session with a parent: the pane shows its transcript, and a message goes to it", async () => {
+test("chat.show of a session with a parent in an empty chat makes it the root: a message goes to it", async () => {
   const probed: Partial<Probed> = {};
   using frame = createFrame({ width: 30, height: 14 }, undefined, { folder: "/w" });
   await using host = await createHost({
@@ -150,7 +151,7 @@ test("a question of a tool takes the place of the composer, and enter gives the 
     frame,
     plugins: [{ bundled: "chat" }, probe(probed), { name: "asker", session: asker }],
     replies: [reply.toolCalls([{ name: "delete_branch", args: {} }]), reply.text("Deleted.")],
-    // The pane answers the question, so the host keeps it open.
+    // The chat answers the question, so the host keeps it open.
     onQuestion: () => new Promise(() => {}),
   });
   const session = await host.openSession();
@@ -166,12 +167,19 @@ test("a question of a tool takes the place of the composer, and enter gives the 
   assert((await shown(frame)).includes("Deleted."));
 });
 
-test("/new beside a running job of a plugin says that the work goes on", async () => {
+test("/new beside a running job of a plugin asks, and a stop closes the root and stops the job", async () => {
   const probed: Partial<Probed> = {};
+  const stopped: boolean[] = [];
   const reader: PluginSession = (s) => {
     void s.jobs.start(
       { id: "reader", label: "Read the store" },
-      (signal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve(undefined))),
+      (signal) =>
+        new Promise((resolve) =>
+          signal.addEventListener("abort", () => {
+            stopped.push(true);
+            resolve(undefined);
+          }),
+        ),
     );
   };
   using frame = createFrame({ width: 60, height: 14 }, undefined, { folder: "/w" });
@@ -184,24 +192,50 @@ test("/new beside a running job of a plugin says that the work goes on", async (
   await (probed.chat as ChatService).show(session.id);
   await waitForSettled();
   frame.key("/ n e w enter");
+  const asked = await shown(frame);
+  frame.key("enter");
   await waitForSettled();
 
-  assertEquals(
-    host.notices.filter((notice) => notice.source === "chat").map((notice) => notice.text),
-    ["The session is still running: use /sessions to check it"],
-  );
+  assert(asked.includes("1 job is running."), asked);
+  assertEquals([stopped, (await (probed.sessions as Sessions).get(session.id)).state], [[true], "closed"]);
 });
 
-test("a read-only session shows the row of its source in place of the composer", async () => {
+test("a child of the root shows read-only with its label, and a question of the root takes the input row", async () => {
   const probed: Partial<Probed> = {};
-  using frame = createFrame({ width: 40, height: 10 }, undefined, { folder: "/w" });
-  await using host = await createHost({ frame, plugins: [{ bundled: "chat" }, probe(probed)] });
+  const asker: PluginSession = (s) => {
+    s.tools.add({
+      name: "delete_branch",
+      description: "Delete a branch after the user agrees.",
+      concurrency: "serial",
+      inputSchema: { type: "object", properties: {} },
+      execute: async (_args, context) => {
+        const question = { id: "q", header: "Branch", question: "Delete feat/x?", options: [{ label: "Yes" }] };
+        const answers = await s.ask({ questions: [question] }, { signal: context.signal });
+        return answers?.[0]?.values.join(",") ?? "cancelled";
+      },
+    });
+  };
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { folder: "/w" });
+  await using host = await createHost({
+    frame,
+    plugins: [{ bundled: "chat" }, probe(probed), { name: "asker", session: asker }],
+    replies: [reply.toolCalls([{ name: "delete_branch", args: {} }]), reply.text("Deleted.")],
+    onQuestion: () => new Promise(() => {}),
+  });
   const parent = await host.openSession();
   const child = await (probed.sessions as Sessions).create(probed.settings as SessionSettings, { parent: parent.id });
   const chat = probed.chat as ChatService;
-  chat.addReadOnly((id) => (id === child ? { text: "A child session", back: parent.id } : undefined));
+  chat.addChildLabel((id) => (id === child ? "A subagent" : undefined));
   frame.start();
+  await chat.show(parent.id);
   await chat.show(child);
+  const watching = await shown(frame);
+  const sent = parent.sendMessage("Delete feat/x.");
+  const asked = await shown(frame);
+  frame.key("enter");
+  await sent;
 
-  assert((await shown(frame)).includes("A child session"));
+  assert(watching.includes("A subagent · esc back"), watching);
+  assert(asked.includes("Delete feat/x?"), asked);
+  assertEquals([host.requests.at(-1)?.messages.at(-1)?.text, chat.sessionId()], ["Yes", child]);
 });

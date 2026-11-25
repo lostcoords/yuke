@@ -6,7 +6,7 @@
  *
  * ```ts
  * const chat = ctx.get("chat");
- * chat?.addPaneWatcher((pane, signal) => pane.composer.extend(signal).addKeyHandler(onKey, "beforeKeymap"));
+ * chat?.addViewWatcher((view, signal) => view.composer.extend(signal).addKeyHandler(onKey, "beforeKeymap"));
  * ```
  */
 declare module "yuke:chat" {
@@ -179,7 +179,7 @@ declare module "yuke:chat" {
     readonly text: string;
     /** The caret in `text`, in UTF-16 units. */
     readonly caret: number;
-    /** The folder of the session of the pane, else of its next session. */
+    /** The folder of the shown session, else of the next session. */
     readonly folder: string;
     /** It aborts when the draft or the caret changes, or the list ends. */
     readonly signal: AbortSignal;
@@ -347,47 +347,50 @@ declare module "yuke:chat" {
     project(transcript: Transcript): TextDocument;
   }
 
-  /** The presentation of a transcript in one chat pane. `ChatDocument` is the default presentation. */
+  /** The presentation of a transcript in the chat. `ChatDocument` is the default presentation. */
   export interface ChatPresentation {
-    /** The fold choices that the pane saves. `true` is open. */
+    /** The fold choices that the chat saves. `true` is open. */
     readonly folds: readonly (readonly [string, boolean])[];
     /**
      * Open or fold the item `id`, which can be a group of this presentation. Give `false` when that item has no fold.
-     * After `true`, the pane shows the first `label` section of the item, if the item has one.
+     * After `true`, the chat shows the first `label` section of the item, if the item has one.
      */
     readonly toggle: (transcript: Transcript, id: string) => boolean;
     /** Open or fold all tools. */
     readonly toggleTools: (transcript: Transcript) => void;
     /**
      * The document of `transcript`. Keep each item id across updates. Keep the object of each unchanged item.
-     * The pane also calls this function once a second while a tool runs, so a duration can advance.
+     * The chat also calls this function once a second while a tool runs, so a duration can advance.
      */
     readonly project: (transcript: Transcript) => TextDocument;
   }
 
-  /** What a chat pane gives the factory of `setPresentation`. */
+  /** What the chat gives the factory of `setPresentation`. */
   export interface ChatPresentationOptions {
     /** The id of the document. Pass it on, and do not read a meaning from it. */
     readonly id: string;
     /** The saved fold choices. */
     readonly folds: readonly (readonly [string, boolean])[] | undefined;
-    /** This signal aborts when the pane shows another session, replaces the presentation, or closes. */
+    /** This signal aborts when the chat shows another session, replaces the presentation, or closes. */
     readonly signal: AbortSignal;
-    /** Ask the pane to project the transcript again, after the state of the presentation changes. */
+    /** Ask the chat to project the transcript again, after the state of the presentation changes. */
     readonly requestUpdate: () => void;
   }
 
   /** The side of the composer where a view shows. */
   export type ComposerPlace = "above" | "below";
 
-  /** A chat pane. Each field reads the current state. */
-  export interface ChatPane {
-    readonly view: View;
-    /** The editor of the drafts of the pane. A key handler or a decoration of a plugin goes here. */
+  /** The view of the chat. Each field reads the current state. */
+  export interface ChatView {
+    /** The editor of the draft. A key handler or a decoration of a plugin goes here. */
     readonly composer: TextEditor;
+    /** The shown session: the root, or a child of the root. */
     readonly sessionId: SessionId | undefined;
+    /** The root session: the session that the composer sends to. */
+    readonly rootId: SessionId | undefined;
+    /** The transcript of the shown session. */
     readonly transcript: Transcript;
-    /** A turn of the session runs. */
+    /** A turn of the shown session runs. */
     readonly running: boolean;
   }
 
@@ -408,7 +411,7 @@ declare module "yuke:chat" {
    */
   export function composerRows(source: (width: number) => readonly ComposerRow[]): ComposerView;
 
-  /** The whole cells around the input of a chat pane. A missing side has no cells. */
+  /** The whole cells around the input of the chat. A missing side has no cells. */
   export interface Insets {
     readonly top?: number | undefined;
     readonly right?: number | undefined;
@@ -416,15 +419,15 @@ declare module "yuke:chat" {
     readonly left?: number | undefined;
   }
 
-  /** The chat pane that a frame gets at each layout. */
-  export interface ComposerContext extends ChatPane {
-    /** The width of the pane. */
+  /** The chat that a frame gets at each layout. */
+  export interface ComposerContext extends ChatView {
+    /** The width of the chat. */
     readonly width: number;
-    /** The view in the input area: the composer, a question, or the row of a read-only session. */
-    readonly kind: "composer" | "question" | "readOnly";
+    /** The view in the input area: the composer, a question of the root, or the row of a shown child. */
+    readonly kind: "composer" | "question" | "child";
   }
 
-  /** The chat pane that a frame gets at each draw. */
+  /** The chat that a frame gets at each draw. */
   export interface ComposerFrameContext extends ComposerContext {
     /** The input view or a view inside it has the focus. */
     readonly focused: boolean;
@@ -433,66 +436,58 @@ declare module "yuke:chat" {
   }
 
   /**
-   * The look of the area around the input of a chat pane. The default frame is one rule above the input and one below.
+   * The look of the area around the input of the chat. The default frame is one rule above the input and one below.
    *
    * ```ts
    * chat.setComposerFrame({
    *   inset: () => ({ left: 1 }),
-   *   draw: (canvas, pane) => {
-   *     for (let row = 0; row < canvas.height; row += 1) canvas.text(0, row, "┃", { fg: pane.focused ? "accent" : "fg" });
+   *   draw: (canvas, chat) => {
+   *     for (let row = 0; row < canvas.height; row += 1) canvas.text(0, row, "┃", { fg: chat.focused ? "accent" : "fg" });
    *   },
    * });
    * ```
    */
   export interface ComposerFrame {
     /**
-     * The cells around the input. The pane calls this function at each layout, so keep it cheap. In a short pane, the
+     * The cells around the input. The chat calls this function at each layout, so keep it cheap. In a short chat, the
      * rows below the input go first, then the rows above it.
      */
-    readonly inset: (pane: ComposerContext) => Insets;
+    readonly inset: (chat: ComposerContext) => Insets;
     /** The `View.style` of the frame: it fills the input and the insets, and it is the base of the input styles. */
     readonly style?: CanvasStyle | undefined;
     /** Draw before the input. The canvas covers the input and its insets. */
-    readonly draw: (canvas: Canvas, pane: ComposerFrameContext) => void;
-  }
-
-  /** What a chat pane shows in place of the composer, for a session that the pane only shows. */
-  export interface ChatReadOnly {
-    /** The row in place of the composer. The chat adds the key that goes back. */
-    readonly text: string;
-    /** The session that the pane shows again at that key. */
-    readonly back: SessionId;
+    readonly draw: (canvas: Canvas, chat: ComposerFrameContext) => void;
   }
 
   /**
-   * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
-   * pane exists.
+   * The service `chat` of the chat plugin: the chat of the terminal interface. It shows one session tree: a root session,
+   * and its child sessions read-only. Without the terminal interface, no chat exists.
    */
   export interface ChatService {
     /**
-     * Show the session `id` in the chat. The chat keeps its draft for its old session. A chat without a session carries
-     * its draft to `id`. It rejects when the open fails or the chat is busy, as with a send, and when another plugin
-     * shows the main view.
+     * Show the session `id`. A child of the root shows read-only, and the composer keeps its draft for the root. Another
+     * session becomes the root: when the tree runs a turn or a job, the user confirms the stop first, and the old root
+     * closes. Its draft clears, and a chat without a session carries its draft to `id`. It resolves after the user
+     * stays. It rejects when the open fails or the chat is busy, as with a send, and when another plugin shows the main
+     * view.
      */
     readonly show: (id: SessionId) => Promise<void>;
     /** The id of the shown session, or `undefined` for a chat without a session or no chat. */
     readonly sessionId: () => SessionId | undefined;
-    /**
-     * Call `listener` after the chat moves to another session or to no session. It gets no call for a chat that starts
-     * on a session, or for a close.
-     */
+    /** Call `listener` after the chat shows another session or no session. It gets no call for a close. */
     readonly addChangeListener: (listener: () => void) => () => void;
     /**
-     * Call `watch` once for each chat pane, now and later. Its `signal` aborts when the pane closes or the returned
-     * function runs, so a plugin ends its work on that pane there. A throw of `watch` gives a notice.
+     * Call `watch` for the view of the chat now and for each later one: a view closes when another plugin shows the main
+     * view. Its `signal` aborts when the view closes or the returned function runs, so a plugin ends its work on that
+     * view there. A throw of `watch` gives a notice.
      *
      * ```ts
-     * chat.addPaneWatcher((pane, signal) => pane.composer.extend(signal).addKeyHandler(onKey, "beforeKeymap"));
+     * chat.addViewWatcher((view, signal) => view.composer.extend(signal).addKeyHandler(onKey, "beforeKeymap"));
      * ```
      */
-    readonly addPaneWatcher: (watch: (pane: ChatPane, signal: AbortSignal) => void) => () => void;
+    readonly addViewWatcher: (watch: (view: ChatView, signal: AbortSignal) => void) => () => void;
     /**
-     * Add a source of completions for the composer of each chat pane. The newest provider is asked first, so a plugin
+     * Add a source of completions for the composer. The newest provider is asked first, so a plugin
      * can take the place of an older one. The bundled chat adds the slash commands of `tui.commands`.
      *
      * ```ts
@@ -507,50 +502,48 @@ declare module "yuke:chat" {
      */
     readonly addCompletionProvider: (provider: CompletionProvider) => () => void;
     /**
-     * Add a view on one side of the composer of each chat pane. `create` runs once per pane, at a layout. A close of the
-     * pane or the returned function ends `mount`. A view that closes `mount` stays closed in that pane. After a change of
-     * its data, a plugin calls `tui.requestFrame()`.
+     * Add a view on one side of the composer. `create` runs once per view of the chat, at a layout. A close of the view
+     * or the returned function ends `mount`. A view that closes `mount` stays closed in that view of the chat. After a
+     * change of its data, a plugin calls `tui.requestFrame()`.
      *
      * - `above`: The view shows below the transcript and above the waiting messages, the working row, and the command list.
      *   The views share the free rows, at most half the rows above the frame of the input.
-     * - `below`: The view shows on the last rows of the pane, and the composer moves up. The views share at most half the
-     *   pane height.
+     * - `below`: The view shows on the last rows of the chat, and the composer moves up. The views share at most half the
+     *   height of the chat.
      *
      * The views show in add order. Each gets its height or the rows that remain, and a view reads its place in
      * `canvas.height`. A height of 0 places no view.
      *
      * ```ts
-     * chat.addComposerView("below", (mount, pane) => ({
+     * chat.addComposerView("below", (mount, view) => ({
      *   heightFor: () => 1,
-     *   draw: (canvas) => canvas.text(0, 0, `${count(pane.sessionId)} questions`, { fg: "accent" }),
+     *   draw: (canvas) => canvas.text(0, 0, `${count(view.sessionId)} questions`, { fg: "accent" }),
      * }));
      * ```
      */
     readonly addComposerView: (
       place: ComposerPlace,
-      create: (mount: Mount, pane: ChatPane) => ComposerView,
+      create: (mount: Mount, view: ChatView) => ComposerView,
     ) => () => void;
     /**
-     * Add a source of read-only sessions for each chat pane. `source` gets the session of a pane at each layout and each
-     * key, so a source must be cheap and synchronous. For a session with an answer, the pane shows a row in place of the
-     * composer. The pane sends no message, shows no question, and does not cancel the turn. Its transcript still scrolls,
-     * and the key of `chat:interrupt` shows the session `back`. The first source in add order that answers for a session
-     * wins, and the returned function removes only this source. A client of `yuke --rpc` can still send input to the
-     * session.
+     * Add a source of the label of a child session. While a child of the root shows, the row in place of the composer
+     * shows the first answer in add order, such as `Subagent: Read the store`, and the key back to the root. Without an
+     * answer, the row says `Child session`. `source` runs at each layout, so it must be cheap and synchronous. The
+     * returned function removes only this source.
      *
      * ```ts
-     * chat.addReadOnly((session) => (isChild(session) ? { text: "A child session", back: parentOf(session) } : undefined));
+     * chat.addChildLabel((session) => (runs.has(session) ? `Subagent: ${runs.get(session)}` : undefined));
      * ```
      */
-    readonly addReadOnly: (source: (session: SessionId) => ChatReadOnly | undefined) => () => void;
+    readonly addChildLabel: (source: (session: SessionId) => string | undefined) => () => void;
     /**
-     * Replace the frame around the input of each chat pane. The last call wins, and the returned function brings
+     * Replace the frame around the input. The last call wins, and the returned function brings
      * back the frame before it.
      */
     readonly setComposerFrame: (frame: ComposerFrame) => () => void;
     /**
-     * Replace the presentation of the transcript in each chat pane. A pane calls `factory` each time that it creates a
-     * presentation, also for one session. The last call wins, and the returned function brings back the factory
+     * Replace the presentation of the transcript. The chat calls `factory` each time that it creates a presentation, also
+     * for one session. The last call wins, and the returned function brings back the factory
      * before it.
      *
      * ```ts
@@ -559,9 +552,9 @@ declare module "yuke:chat" {
      */
     readonly setPresentation: (factory: (options: ChatPresentationOptions) => ChatPresentation) => () => void;
     /**
-     * Replace the view that each chat pane shows while its transcript is empty: a pane without a session, or a session
+     * Replace the view that the chat shows while its transcript is empty: a chat without a session, or a session
      * without history, while no message waits and no turn runs. The view draws over the transcript area, and it reads
-     * its size from the canvas. `create` runs once per pane, when the pane first shows the view. The last call wins,
+     * its size from the canvas. `create` runs once per view of the chat, when it first shows the view. The last call wins,
      * and the returned function brings back the view before it. The default shows the icon, the version, the model,
      * the folder, and the way to start. Terminal.app shows the lines without the icon. The option `emptyView: false` of
      * the chat turns the header off.
@@ -570,6 +563,6 @@ declare module "yuke:chat" {
      * chat.setEmptyView(() => ({ draw: (canvas) => canvas.text(1, 1, "Ask me anything.") }));
      * ```
      */
-    readonly setEmptyView: (create: (mount: Mount, pane: ChatPane) => View) => () => void;
+    readonly setEmptyView: (create: (mount: Mount, view: ChatView) => View) => () => void;
   }
 }

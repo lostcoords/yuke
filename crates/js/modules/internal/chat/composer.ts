@@ -205,7 +205,7 @@ export class ChatComposer {
       if (target === undefined || this.#options.signal.aborted) return;
       // The session stores and sends only the scaled image.
       const fitted = await fitImage(image.bytes, image.mimeType);
-      // A pane that closed during the scale stores nothing.
+      // A chat that closed during the scale stores nothing.
       if (this.#options.signal.aborted) return;
       const blob = await target.putBlob(fitted.bytes);
       if (this.#options.signal.aborted) return;

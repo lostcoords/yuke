@@ -1,30 +1,32 @@
-// A quit of the bundled chat: it asks while work runs, and it says what stops.
+// A stop of the session tree in the bundled chat: a quit, `/new`, and a switch of the root ask while the tree runs a
+// turn or a job, and they say what stops. `/new` and a switch close the old root.
 
 import type { Job, SessionUpdate } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import { fakeSessions, loadChat, replies } from "./chat.ts";
+import { composerOf, fakeSessions, loadChat, replies, row } from "./chat.ts";
 
 const JOB: Job = { id: "j1", label: "npm run dev", state: "running", kind: "process", command: "npm", log: "/tmp/j" };
 const SUBAGENT: Job = { id: "j2", label: "Read", state: "running", kind: "plugin", plugin: "agents" };
 const RUNNING: SessionUpdate = { kind: "state", state: "running" };
 const RESUME = "To resume this session, run: yuke -r s1";
 
-/** A chat pane on the session `s1` with the running jobs `jobs`. */
+/** A chat on the root `s1` with the running jobs `jobs`. The session `c1` is a child of `s1`, and `s2` is a root. */
 async function opened(jobs: readonly Job[] = []) {
   const frame = createFrame({ width: 50, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(3));
+  sessions.rows.push(row("s1"), row("c1", { parent: "s1" }), row("s2"));
   const chat = await loadChat(frame, sessions);
   // A frame test has no default keys.
   chat.tui.keys.add("ctrl+q", "core:quit");
   frame.start();
   await waitForSettled();
-  // As the host does, the open of the pane gives the open of its session to each listener.
+  // As the host does, the open of the root gives the open of its session to each listener.
   open(chat, "s1", { jobs });
   frame.draw();
   return { frame, sessions, chat };
 }
 
-/** Give the chat the open of the session `id`, which no pane needs to show. */
+/** Give the chat the open of the session `id`, which the chat does not need to show. */
 function open(
   chat: Awaited<ReturnType<typeof loadChat>>,
   id: string,
@@ -90,6 +92,7 @@ test("Enter in the dialog quits", async () => {
 
   frame.key("ctrl+q");
   frame.key("enter");
+  await waitForSettled();
 
   assertEquals(frame.quits, [RESUME]);
 });
@@ -103,6 +106,7 @@ test("a second quit key in the dialog quits, also after a stay and a new questio
   frame.key("ctrl+q");
   const asked = frame.quits.length;
   frame.key("ctrl+q");
+  await waitForSettled();
 
   assertEquals([asked, frame.quits], [0, [RESUME]]);
 });
@@ -117,63 +121,40 @@ test("the quit command in the dialog quits and opens no second question", async 
   assertEquals(frame.quits, [RESUME]);
 });
 
-test("a read-only session warns about its own job, and a quit names its parent to resume", async () => {
+test("a quit while a child shows counts the own job of the child, and names the root to resume", async () => {
   const { frame, chat } = await opened();
   using _frame = frame;
-  chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
-  open(chat, "s1", { parent: "p1", jobs: [JOB] });
+  await chat.chat.show("c1");
+  open(chat, "c1", { parent: "s1", jobs: [JOB] });
   frame.draw();
 
   frame.key("ctrl+q");
 
   assertEquals(screen(frame).join("\n").includes("1 job is running."), true);
   frame.key("ctrl+q");
-  assertEquals(frame.quits, ["To resume this session, run: yuke -r p1"]);
+  await waitForSettled();
+  assertEquals(frame.quits, [RESUME]);
 });
 
-test("an idle read-only session warns while its parent runs a turn, and not after that turn", async () => {
+test("two children of the root count each job", async () => {
   const { frame, chat } = await opened();
   using _frame = frame;
-  chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
-  open(chat, "p1", { state: "running" });
-  frame.draw();
+  open(chat, "c1", { parent: "s1", jobs: [JOB] });
+  open(chat, "c2", { parent: "s1", jobs: [{ ...JOB, id: "j3" }] });
 
   frame.key("ctrl+q");
-  assertEquals(screen(frame).join("\n").includes("1 turn is running."), true);
-  frame.key("esc");
 
-  chat.fact("session.update", { sessionId: "p1", update: { kind: "state", state: "idle" } });
-  frame.key("ctrl+q");
-  assertEquals(frame.quits, ["To resume this session, run: yuke -r p1"]);
-});
-
-test("two read-only children of one parent count each job, and a quit resumes the parent once", async () => {
-  const { frame, chat } = await opened();
-  using _frame = frame;
-  chat.chat.addReadOnly((session) => (session === "p1" ? undefined : { text: "A child", back: "p1" }));
-  open(chat, "s1", { parent: "p1", jobs: [JOB] });
-  open(chat, "s2", { parent: "p1", jobs: [{ ...JOB, id: "j3" }] });
-  frame.draw();
-
-  frame.key("ctrl+q");
   assertEquals(screen(frame).join("\n").includes("2 jobs are running."), true);
-  frame.key("ctrl+q");
-  assertEquals(frame.quits, ["To resume this session, run: yuke -r p1"]);
 });
 
-test("a turn and a job of a session that the chat does not show ask, and the quit names that session to resume", async () => {
+test("the work of a session outside the tree does not count", async () => {
   const { frame, chat } = await opened();
   using _frame = frame;
   open(chat, "s9", { state: "running", jobs: [JOB] });
 
   frame.key("ctrl+q");
-  const asked = screen(frame).at(-2);
-  frame.key("enter");
 
-  assertEquals(
-    [asked, frame.quits],
-    [" 1 turn and 1 job are running.", [`${RESUME}\nTo resume this session, run: yuke -r s9`]],
-  );
+  assertEquals(frame.quits, [RESUME]);
 });
 
 test("a subagent counts as one job of its parent, and its own turn does not count again", async () => {
@@ -184,6 +165,7 @@ test("a subagent counts as one job of its parent, and its own turn does not coun
   frame.key("ctrl+q");
   const asked = screen(frame).at(-2);
   frame.key("enter");
+  await waitForSettled();
 
   assertEquals([asked, frame.quits], [" 1 job is running.", [RESUME]]);
 });
@@ -198,4 +180,73 @@ test("a job that ends and a turn that ends no longer count", async () => {
   frame.key("ctrl+q");
 
   assertEquals(frame.quits, [RESUME]);
+});
+
+test("/new with no work closes the root at once and empties the chat", async () => {
+  const { frame, sessions, chat } = await opened();
+  using _frame = frame;
+
+  frame.key("/ n e w enter");
+  await waitForSettled();
+
+  assertEquals([sessions.closes, chat.chat.sessionId()], [["s1"], undefined]);
+});
+
+test("/new asks while the tree runs, a stay keeps the root and its draft, and a stop closes the root", async () => {
+  const { frame, sessions, chat } = await opened([JOB]);
+  using _frame = frame;
+
+  chat.tui.commands.run("chat:new");
+  await waitForSettled();
+  const asked = screen(frame).slice(-3);
+  frame.key("esc");
+  await waitForSettled();
+  const stayed = [sessions.closes.length, chat.chat.sessionId()];
+  chat.tui.commands.run("chat:new");
+  await waitForSettled();
+  frame.key("enter");
+  await waitForSettled();
+
+  assertEquals(asked, [" Stop them and switch?", " 1 job is running.", " enter: stop and switch · esc: stay"]);
+  assertEquals(stayed, [0, "s1"]);
+  assertEquals([sessions.closes, chat.chat.sessionId()], [["s1"], undefined]);
+});
+
+test("a show of another root asks while the tree runs, and a stop opens it, closes the old root, and clears the draft", async () => {
+  const { frame, sessions, chat } = await opened([JOB]);
+  using _frame = frame;
+  frame.paste("draft of s1");
+
+  const showing = chat.chat.show("s2");
+  await waitForSettled();
+  const asked = screen(frame).at(-2);
+  frame.key("enter");
+  await showing;
+
+  assertEquals(asked, " 1 job is running.");
+  assertEquals([sessions.closes, chat.chat.sessionId(), composerOf(chat).state.text], [["s1"], "s2", ""]);
+});
+
+test("a stay at a show of another root keeps the root, and the show resolves", async () => {
+  const { frame, sessions, chat } = await opened([JOB]);
+  using _frame = frame;
+
+  const showing = chat.chat.show("s2");
+  await waitForSettled();
+  frame.key("esc");
+  await showing;
+
+  assertEquals([sessions.closes, chat.chat.sessionId(), chat.opened.map((open) => open.id)], [[], "s1", ["s1"]]);
+});
+
+test("a show of a child asks nothing and closes nothing, also while the tree runs", async () => {
+  const { frame, sessions, chat } = await opened([JOB]);
+  using _frame = frame;
+
+  await chat.chat.show("c1");
+
+  assertEquals(
+    [sessions.closes, chat.chat.sessionId(), screen(frame).includes(" Stop them and switch?")],
+    [[], "c1", false],
+  );
 });

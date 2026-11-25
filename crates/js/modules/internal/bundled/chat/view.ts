@@ -1,15 +1,14 @@
 /**
- * One chat pane: its transcript, its composer, its folds, and the `ChatSession` of its session.
- * An unbound pane creates its session at the first send or image paste. `/new` unbinds a pane, and its next session
- * starts in the folder of the session that it left.
- * The model and the reasoning come from `choice.json`, else from a picker.
+ * The view of the chat: its transcript, its composer, its folds, and two `ChatSession`s. The root is the session that
+ * the composer sends to, and the chat holds it also while a child of the root shows read-only. A chat without a root
+ * creates one at the first send or image paste. `/new` lets go of the root, and the next root starts in the folder of
+ * the root before. The model and the reasoning come from `choice.json`, else from a picker.
  */
 
 import type {
-  ChatPane,
   ChatPresentation,
   ChatPresentationOptions,
-  ChatReadOnly,
+  ChatView,
   CompletionProvider,
   ComposerContext,
   ComposerFrame,
@@ -28,7 +27,7 @@ import { ChatWorking } from "yuke:internal/chat/working";
 import { failureOf } from "yuke:internal/failure";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
-import type { Input, InputId, Job, SessionId, SessionSettings, Usage } from "yuke:protocol";
+import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
 import {
   type Canvas,
   type EditorState,
@@ -48,10 +47,10 @@ import {
 /** The frame when no plugin sets a frame: one rule above the input, and one rule below it. */
 const RULES: ComposerFrame = {
   inset: () => ({ top: 1, bottom: 1 }),
-  draw: (canvas, pane) => {
+  draw: (canvas, chat) => {
     const rule = "─".repeat(canvas.width);
-    const below = pane.inputRect.row + pane.inputRect.height;
-    if (pane.inputRect.row > 0) canvas.text(0, 0, rule, STYLE.rule);
+    const below = chat.inputRect.row + chat.inputRect.height;
+    if (chat.inputRect.row > 0) canvas.text(0, 0, rule, STYLE.rule);
     if (below < canvas.height) canvas.text(0, below, rule, STYLE.rule);
   },
 };
@@ -63,10 +62,10 @@ type Viewport = {
 };
 
 /**
- * The saved state of a pane: the session that it shows, the draft of its composer, its fold choices, the place of a
- * transcript that does not follow the tail, and the folder of the next session of a pane without a session.
+ * The saved state of the chat: its root, the draft of its composer, its fold choices, the place of a transcript that
+ * does not follow the tail, and the folder of the next root of a chat without one.
  */
-export interface PaneState {
+export interface SavedChat {
   readonly session?: SessionId | undefined;
   readonly nextFolder?: string | undefined;
   readonly draft?: EditorState | undefined;
@@ -74,15 +73,15 @@ export interface PaneState {
   readonly viewport?: Viewport | undefined;
 }
 
-/** What the commands of the plugin do in a pane. */
-export interface PaneActions {
-  /** The pane as the `chat` service gives it to a plugin. */
-  readonly pane: ChatPane;
-  /** It aborts when the pane closes. */
+/** What the commands of the plugin do in the chat. */
+export interface ChatActions {
+  /** The chat as the `chat` service gives it to a plugin. */
+  readonly view: ChatView;
+  /** It aborts when the view of the chat closes. */
   readonly signal: AbortSignal;
   readonly toggleTools: () => void;
   readonly send: () => Promise<void>;
-  /** Let the user choose the model and the reasoning of the pane. */
+  /** Let the user choose the model and the reasoning of the root. */
   readonly chooseModel: () => Promise<void>;
   /** Put the image of the clipboard at the caret of the composer. */
   readonly pasteImage: () => Promise<void>;
@@ -95,40 +94,38 @@ export interface PaneActions {
   /** Show a newer message of the user, or the empty composer after the newest one. */
   readonly newerMessage: () => void;
   readonly browsing: () => boolean;
-  /** Clear the draft. An empty draft cancels the running turn. */
+  /** Clear the draft. An empty draft cancels the running turn of the root. */
   readonly clear: () => void;
-  /** Drop the selection of the transcript, else cancel the running turn. */
+  /** Drop the selection of the transcript, else show the root again, else cancel the running turn of the root. */
   readonly interrupt: () => void;
-  /** Move the waiting tool calls of the session to the background. */
+  /** Move the waiting tool calls of the root to the background. */
   readonly moveJobsToBackground: () => void;
   readonly scroll: (to: "pageUp" | "pageDown" | "top" | "bottom") => void;
-  /** A question of a plugin shows, so the composer takes no message. */
+  /** A question of the root shows. */
   readonly asking: () => boolean;
-  /** The session of the pane is read-only. */
-  readonly locked: () => boolean;
-  /** Whether the session can open the rename dialog. */
+  /** A child of the root shows. */
+  readonly showsChild: () => boolean;
+  /** The composer shows: no question and no child. */
+  readonly composing: () => boolean;
+  /** Whether the root can open the rename dialog. */
   readonly canRename: () => boolean;
-  /** Rename the session in a dialog. */
+  /** Rename the root in a dialog. */
   readonly rename: () => Promise<void>;
-  /** The session that a quit names to resume: the session of the pane, or the parent of a read-only one. */
-  readonly resumeSession: () => SessionId | undefined;
   /** Answer the shown question with a cancel. */
   readonly cancelQuestion: () => void;
-  /** The session of the pane. */
-  readonly session: () => SessionId | undefined;
   /**
-   * Show the session `id`. The draft stays with the old session, and the draft of `id` comes back. It rejects when the
-   * open fails or a send, a model choice, an image paste, or a recall runs.
+   * Show the session `id`: a child of the root read-only, else as the new root. A new root asks before it stops the
+   * work of the tree, then closes the old root and clears the draft. It rejects when the open fails or the chat is busy.
    */
   readonly show: (id: SessionId) => Promise<void>;
   /**
-   * Show no session, with an empty composer. The next message creates a session in the folder of the session before.
-   * The session before keeps its work. A busy pane does nothing.
+   * Show no session, with an empty composer. It asks before it stops the work of the tree, then closes the root. The
+   * next message creates a root in the folder of the root before. A busy chat does nothing.
    */
-  readonly newSession: () => void;
+  readonly newSession: () => Promise<void>;
   /**
-   * What the status bar shows of the session of the pane. `bound` is true when the pane has a session. `nextFolder`
-   * is the folder of a session that the pane creates.
+   * What the status bar shows of the shown session. `bound` is true when the chat has a root. `nextFolder` is the
+   * folder of a root that the chat creates.
    */
   readonly status: () => {
     readonly bound: boolean;
@@ -139,52 +136,59 @@ export interface PaneActions {
   };
 }
 
-/** One call of `addComposerView`. The abort of `stop` ends its view in each pane. */
+/** One call of `addComposerView`. The abort of `stop` ends its view in each view of the chat. */
 export interface ComposerViewEntry {
   readonly place: ComposerPlace;
-  readonly create: (mount: Mount, pane: ChatPane) => ComposerView;
+  readonly create: (mount: Mount, view: ChatView) => ComposerView;
   readonly stop: AbortController;
 }
 
-/** What each pane of the chat shares. */
+/** What each view of the chat shares. */
 export interface Chat {
-  /** The context of the chat plugin. A pane reads no option. */
+  /** The context of the chat plugin. A view reads no option. */
   readonly ctx: PluginContext<object>;
   readonly tui: Tui;
-  /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
+  /** Show the status items again. The view calls it after each change of its sessions or transcript. */
   readonly refresh: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
-  /** The first answer of the read-only sources of the `chat` service for `session`. */
-  readonly readOnly: (session: SessionId) => ChatReadOnly | undefined;
-  /** The factory of the `chat` service for the look of the transcript. Without one, a pane uses `ChatDocument`. */
+  /** The first answer of the child labels of the `chat` service for `session`. */
+  readonly childLabel: (session: SessionId) => string | undefined;
+  /**
+   * Ask whether to stop the turn and the jobs of the tree of `root` before a quit or a switch. `true` at once when
+   * nothing runs, and `false` after a stay or while another confirmation shows.
+   */
+  readonly confirmStop: (root: SessionId | undefined, kind: "quit" | "switch") => Promise<boolean>;
+  /** The factory of the `chat` service for the look of the transcript. Without one, the chat uses `ChatDocument`. */
   readonly presenter: () => ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   /** The views of the `chat` service at `place`, in add order. */
   readonly composerViews: (place: ComposerPlace) => readonly ComposerViewEntry[];
-  /** The frame of the `chat` service around the input. Without one, a pane draws two rules. */
+  /** The frame of the `chat` service around the input. Without one, the chat draws two rules. */
   readonly frame: () => ComposerFrame | undefined;
-  /** The factory of the view of an empty pane, or `undefined` when an empty pane shows nothing. */
-  readonly emptyView: () => ((mount: Mount, pane: ChatPane) => View) | undefined;
+  /** The factory of the view of an empty chat, or `undefined` when an empty chat shows nothing. */
+  readonly emptyView: () => ((mount: Mount, view: ChatView) => View) | undefined;
   /** Tell the listeners of the `chat` service that the chat shows another session. */
   readonly moved: () => void;
-  /** Make `actions` the chat until the close of its mount, and start each pane watcher of the `chat` service on it. */
-  readonly opened: (actions: PaneActions) => void;
+  /** Make `actions` the chat until the close of its mount, and start each view watcher of the `chat` service on it. */
+  readonly opened: (actions: ChatActions) => void;
   /** The completion providers of the `chat` service, the newest first. */
   readonly completionProviders: () => readonly CompletionProvider[];
 }
 
 /**
- * A chat pane: the transcript above the composer, in a frame that is two rules by default. The composer takes at most
- * half the pane height. A pane with a session holds its own handle until the mount closes.
+ * The view of the chat: the transcript above the composer, in a frame that is two rules by default. The composer takes
+ * at most half the height. The view holds the handles of its sessions until the mount closes.
  */
-export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
+export function chatView(chat: Chat, mount: Mount, state: SavedChat): View {
   const ctx = chat.ctx;
   const tui = chat.tui;
-  const chatSession = new ChatSession(ctx.get("sessions"), { signal: mount.signal, id: state.session });
-  // The draft of each session that this pane left by `show`, for the return to it.
-  const drafts = new Map<SessionId, EditorState>();
-  let bound = chatSession.id;
-  // The folder that `/new` left keeps the next session there, also after a reload.
+  const sessions = ctx.get("sessions");
+  const root = new ChatSession(sessions, { signal: mount.signal, id: state.session });
+  const child = new ChatSession(sessions, { signal: mount.signal });
+  /** The session that the transcript shows: the child, else the root. */
+  const shown = (): ChatSession => (child.id === undefined ? root : child);
+  let bound = root.id;
+  // The folder that `/new` left keeps the next root there, also after a reload.
   let nextFolder = state.nextFolder;
   // The events of the session change the transcript, and the next layout projects it once.
   let dirty = true;
@@ -203,14 +207,17 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     return presenter?.({ id: key, folds, signal, requestUpdate: changed }) ?? new ChatDocument(key, folds);
   };
   /** The key of the document of the shown session. */
-  const keyOf = (): string => `session:${chatSession.id ?? "new"}`;
+  const keyOf = (): string => `session:${shown().id ?? "new"}`;
   let document = create(keyOf(), state.folds);
   // The saved place waits until its item loads.
   let restore = state.viewport;
-  // One send, model choice, image paste, show, or rename at a time. Another send, model choice, image paste, or `/new`
-  // does nothing until it ends, also while a picker is open, and a show rejects.
+  // One send, model choice, image paste, show, `/new`, or rename at a time. Another send, model choice, image paste, or
+  // `/new` does nothing until it ends, also while a picker or a confirmation is open, and a show rejects.
   let busy = false;
-  const working = new ChatWorking(chatSession, { signal: mount.signal, now: () => tui.now() });
+  const rootWorking = new ChatWorking(root, { signal: mount.signal, now: () => tui.now() });
+  const childWorking = new ChatWorking(child, { signal: mount.signal, now: () => tui.now() });
+  /** The working state of the shown session. */
+  const working = (): ChatWorking => (child.id === undefined ? rootWorking : childWorking);
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
   let stopTick: (() => void) | undefined;
   // The wall-clock second of the last check for a running tool.
@@ -221,40 +228,46 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     const second = Math.floor(Date.now() / 1000);
     if (second !== checkedSecond) {
       checkedSecond = second;
-      if (chatSession.transcript.entries.some((entry) => entry.kind === "tool" && entry.startedAt !== undefined)) {
+      if (shown().transcript.entries.some((entry) => entry.kind === "tool" && entry.startedAt !== undefined)) {
         dirty = true;
       }
     }
-    stopTick = working.active && !mount.signal.aborted ? tui.addTimer(SPINNER_INTERVAL, tick) : undefined;
+    stopTick = working().active && !mount.signal.aborted ? tui.addTimer(SPINNER_INTERVAL, tick) : undefined;
   };
-  working.addChangeListener(() => {
+  const restartTick = (): void => {
     stopTick?.();
     tick();
-  });
+  };
+  rootWorking.addChangeListener(restartTick);
+  childWorking.addChangeListener(restartTick);
 
-  // The pane follows each change of its session: the folds, the place, and the next layout.
-  chatSession.addChangeListener(() => {
-    if (chatSession.id !== bound) {
-      // The first session of a pane keeps its folds. Another session starts without folds, at the tail.
+  /** Follow each change of the sessions: the shown session, its folds, its place, and the next layout. */
+  const follow = (): void => {
+    const id = shown().id;
+    if (id !== bound) {
+      // The first root keeps the folds of the chat. Another session starts without folds, at the tail.
       document = create(keyOf(), bound === undefined ? document.folds : undefined);
       if (bound !== undefined) {
         restore = undefined;
         view.scroll.followTail();
       }
-      bound = chatSession.id;
+      bound = id;
       chat.moved();
+      restartTick();
     }
     changed();
-  });
+  };
+  root.addChangeListener(follow);
+  child.addChangeListener(follow);
 
   const group = {};
   const view = new TextView({
-    document: document.project(chatSession.transcript),
+    document: document.project(root.transcript),
     role: "transcript",
     group,
     followTail: true,
     onActivate: (position, link) => {
-      const transcript = chatSession.transcript;
+      const transcript = shown().transcript;
       if (link === undefined) {
         if (position.section === "gap" || !document.toggle(transcript, position.item)) return;
         // The view stays where it is, also at the tail, and it scrolls the least to show the head line of the item.
@@ -277,7 +290,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       tui.clipboard.writeText(target);
       ctx.notify("info", `Copied ${target}`);
     },
-    onTopReached: () => chatSession.loadOlderHistory(),
+    onTopReached: () => shown().loadOlderHistory(),
   });
   const composer = new TextEditor({
     role: "composer",
@@ -285,12 +298,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     placeholder: "Message…",
     state: state.draft,
   });
-  // A question takes the place of the list, and a pane without a row above the frame shows no list.
+  // Only the composer shows the list, and a chat without a row above the frame shows no list.
   const completions = new ChatCompletions(composer, {
     providers: () => chat.completionProviders(),
-    folder: () => chatSession.transcript.settings?.folder ?? nextFolder ?? tui.startup.folder,
+    folder: () => root.transcript.settings?.folder ?? nextFolder ?? tui.startup.folder,
     signal: mount.signal,
-    enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
+    enabled: () => composing() && frameRow > 0,
     onError: (error) => ctx.notify("error", `A completion failed: ${failureOf(error)}`),
   });
   completions.addChangeListener(() => tui.requestFrame());
@@ -306,23 +319,23 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (change.kind !== "selection") markCommand();
   });
   markCommand();
-  const chatComposer = new ChatComposer(chatSession, composer, { handle: () => sessionHandle(), signal: mount.signal });
+  const chatComposer = new ChatComposer(root, composer, { handle: () => sessionHandle(), signal: mount.signal });
 
-  /** Give the error notice `text` with `error`, unless the pane closed: its close ends the work with no notice. */
+  /** Give the error notice `text` with `error`, unless the view closed: its close ends the work with no notice. */
   const fail = (text: string, error: unknown): void => {
     if (!mount.signal.aborted) ctx.notify("error", `${text}: ${String(error)}`);
   };
 
-  /** Start the view of the plugin factory `create` in `child`. A failed factory gives a notice and no view. */
-  const startPluginView = <V extends View>(create: (mount: Mount, pane: ChatPane) => V, child: Mount): V | undefined =>
+  /** Start the view of the plugin factory `create` in the mount `own`. A failed factory gives a notice and no view. */
+  const startPluginView = <V extends View>(create: (mount: Mount, view: ChatView) => V, own: Mount): V | undefined =>
     startView(
       ctx.name,
-      (own) => create(own, chatPaneFields),
-      child,
+      (given) => create(given, viewFields),
+      own,
       (_source, text) => ctx.notify("error", text),
     );
 
-  /** Run `task` as the one action of the pane, unless another one runs. A failure gives the notice `text`. */
+  /** Run `task` as the one action of the chat, unless another one runs. A failure gives the notice `text`. */
   const exclusive = async (text: string, task: () => Promise<void>): Promise<void> => {
     if (busy) return;
     busy = true;
@@ -382,30 +395,29 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /**
-   * Let the user choose the model and the level, and save the choice for new panes.
-   * A pane with a session also saves them in the session.
-   * The session keeps its folder and the rest of its settings.
+   * Let the user choose the model and the level, and save the choice for new sessions. A chat with a root also saves
+   * them in the root. The root keeps its folder and the rest of its settings.
    */
   const chooseModel = (): Promise<void> =>
     exclusive("yuke could not change the model", async () => {
       const settings = await settingsOf(true);
-      if (settings === undefined || mount.signal.aborted || chatSession.id === undefined) return;
+      if (settings === undefined || root.id === undefined) return;
       const target = await sessionHandle();
-      if (target === undefined || mount.signal.aborted) return;
+      if (target === undefined) return;
       // A handle comes after the snapshot, and the snapshot gives the settings.
-      const current = chatSession.transcript.settings as Frozen<SessionSettings>;
+      const current = root.transcript.settings as Frozen<SessionSettings>;
       const reasoning = settings.settings.reasoning;
       await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
     });
 
   /**
-   * The handle of the session of this pane. A pane without a session uses the saved choice, else a picker. Return
-   * `undefined` after a cancel, or after a failure of the models or of the open that gave its notice.
+   * The handle of the root. A chat without a root uses the saved choice, else a picker. Return `undefined` after a
+   * cancel, or after a failure of the models or of the open that gave its notice.
    */
   const sessionHandle = async (): Promise<SessionHandle | undefined> => {
-    const id = chatSession.id;
+    const id = root.id;
     try {
-      return await chatSession.ensure(async () => {
+      return await root.ensure(async () => {
         try {
           return await settingsOf(false);
         } catch (error) {
@@ -427,7 +439,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const olderMessage = async (): Promise<void> => {
     try {
       const result = await chatComposer.olderMessage();
-      if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "The turn already has the message");
+      if (result === "taken") ctx.notify("info", "The turn already has the message");
     } catch (error) {
       fail("yuke could not get the message back", error);
     }
@@ -437,7 +449,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const pasteImage = (): Promise<void> =>
     exclusive("yuke could not attach the image", async () => {
       const image = await tui.clipboard.readImage();
-      if (mount.signal.aborted) return;
       if (image === undefined) {
         ctx.notify("info", "There is no image on the clipboard");
         return;
@@ -445,74 +456,61 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       await chatComposer.attachImage(image);
     });
 
-  /**
-   * The running jobs of the session of the pane, of the kind `kind` or of each kind, while the pane holds the session.
-   * They come in order with the other updates, so a read needs no call of the host.
-   */
-  const jobsOf = (kind?: Job["kind"]): Frozen<Job>[] =>
-    chatSession.handle === undefined
-      ? []
-      : [...chatSession.transcript.jobs.values()].filter((job) => kind === undefined || job.kind === kind);
-
-  /** The read-only answer for the session of the pane. */
-  const locked = (): ChatReadOnly | undefined =>
-    chatSession.id === undefined ? undefined : chat.readOnly(chatSession.id);
-
-  /** The row in place of the composer of a read-only session. It takes the focus, and no key edits a draft. */
-  const lockedRow: View = {
+  /** The row in place of the composer while a child shows. It takes the focus, and no key edits a draft. */
+  const childRow: View = {
     focusable: true,
     draw(canvas: Canvas): void {
       const key = tui.keys.list("chat:interrupt")[0];
-      const text = locked()?.text ?? "";
+      const text = child.id === undefined ? "" : (chat.childLabel(child.id) ?? "Child session");
       canvas.text(0, 0, clipped(key === undefined ? text : `${text} · ${key} back`, canvas.width), STYLE.meta);
     },
   };
 
-  /** The view that takes the typed keys: the row of a read-only session, a question, or the composer. */
-  const input = (): View => (locked() === undefined ? (questions.current?.view ?? composer) : lockedRow);
-
-  const questions = new ChatQuestions(chatSession, {
+  // The questions of the root, also while a child shows: a subagent asks through its parent.
+  const questions = new ChatQuestions(root, {
     signal: mount.signal,
     onError: (error) => ctx.notify("error", `The answer did not reach the plugin: ${String(error)}`),
   });
 
-  /** The pane is busy: a send, a model choice, an image paste, a recall, a show, or a rename runs. */
+  /** The composer shows: no question of the root and no child. */
+  const composing = (): boolean => questions.current === undefined && child.id === undefined;
+
+  /** The view that takes the typed keys: a question of the root, the row of a child, or the composer. */
+  const input = (): View => questions.current?.view ?? (child.id === undefined ? composer : childRow);
+
+  /** The chat is busy: a send, a model choice, an image paste, a recall, a show, `/new`, or a rename runs. */
   const occupied = (): boolean => busy || chatComposer.busy;
 
-  /** Whether the pane can open its rename dialog without taking a competing pane action. */
-  const canRename = (): boolean =>
-    chatSession.id !== undefined && questions.current === undefined && locked() === undefined && !occupied();
+  /** Whether the chat can open its rename dialog without taking a competing action. */
+  const canRename = (): boolean => root.id !== undefined && composing() && !occupied();
 
-  /** Rename the session in a single-line dialog. The pane stays busy until the dialog closes. */
+  /** Rename the root in a single-line dialog. The chat stays busy until the dialog closes. */
   const rename = async (): Promise<void> => {
-    if (!canRename()) return;
-    const id = chatSession.id;
-    if (id === undefined) return;
+    const id = root.id;
+    if (id === undefined || !canRename()) return;
     busy = true;
     try {
-      const row = await ctx.get("sessions").get(id);
-      // The busy pane shows no other session, so only a close of the pane ends the rename.
-      if (mount.signal.aborted) return;
+      const row = await sessions.get(id);
       // A refused title stays in the field with its error.
       await tui.prompt({
         title: "Rename session",
         text: row.title ?? "",
         signal: mount.signal,
-        onSubmit: (text) => ctx.get("sessions").rename(id, text),
+        onSubmit: (text) => sessions.rename(id, text),
       });
     } catch (error) {
       fail(`The session ${id} did not load`, error);
     } finally {
       busy = false;
-      if (!ctx.signal.aborted) tui.requestFrame();
+      tui.requestFrame();
     }
   };
 
   // The open comes after the views, because its snapshot can show a question. A failure gives one notice, and the next
   // send opens the session again.
-  const saved = chatSession.id;
+  const saved = root.id;
   if (saved !== undefined) {
-    chatSession.open(saved).catch((error: unknown) => {
+    root.open(saved).catch((error: unknown) => {
       fail(`The session ${saved} did not open`, error);
     });
   }
@@ -525,24 +523,24 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let noticeRow = -1;
   let listRows = 0;
   let workingRows = 0;
-  let shown: [InputId, Frozen<Input>][] = [];
-  // The view of each call of `addComposerView` in this pane, or `undefined` after its factory failed or it closed.
+  let strip: [InputId, Frozen<Input>][] = [];
+  // The view of each call of `addComposerView` in this view, or `undefined` after its factory failed or it closed.
   const composerViews = new Map<ComposerViewEntry, ComposerView | undefined>();
-  const chatPaneFields: ChatPane = {
-    get view() {
-      return pane;
-    },
+  const viewFields: ChatView = {
     get composer() {
       return composer;
     },
     get sessionId() {
-      return chatSession.id;
+      return shown().id;
+    },
+    get rootId() {
+      return root.id;
     },
     get transcript() {
-      return chatSession.transcript;
+      return shown().transcript;
     },
     get running() {
-      return working.active;
+      return working().active;
     },
   };
   /** The views at `place` with their heights, which share `room` rows in add order. */
@@ -550,15 +548,15 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     let left = room;
     return chat.composerViews(place).flatMap((entry) => {
       if (!composerViews.has(entry)) {
-        // A view that closed itself stays closed, so its factory runs once in this pane.
-        const child = createMount(() => composerViews.set(entry, undefined));
+        // A view that closed itself stays closed, so its factory runs once in this view of the chat.
+        const own = createMount(() => composerViews.set(entry, undefined));
         const stop = (): void => {
-          child.close();
+          own.close();
           composerViews.delete(entry);
         };
         entry.stop.signal.addEventListener("abort", stop, { once: true, signal: mount.signal });
-        mount.signal.addEventListener("abort", () => child.close(), { once: true });
-        composerViews.set(entry, startPluginView(entry.create, child));
+        mount.signal.addEventListener("abort", () => own.close(), { once: true });
+        composerViews.set(entry, startPluginView(entry.create, own));
       }
       const view = composerViews.get(entry);
       const height = view === undefined ? 0 : Math.min(view.heightFor(width), left);
@@ -567,35 +565,36 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       return [{ view, height }];
     });
   };
-  // The view of the empty pane with the factory that made it, so a new factory makes a new view.
+  // The view of the empty chat with the factory that made it, so a new factory makes a new view.
   let empty:
     | {
-        readonly create: (mount: Mount, pane: ChatPane) => View;
+        readonly create: (mount: Mount, view: ChatView) => View;
         readonly view: View | undefined;
         readonly mount: Mount;
       }
     | undefined;
   mount.signal.addEventListener("abort", () => empty?.mount.close(), { once: true });
-  /** The view of the empty pane: from the current factory, made once per factory. */
+  /** The view of the empty chat: from the current factory, made once per factory. */
   const emptyView = (): View | undefined => {
     const create = chat.emptyView();
     if (empty?.create !== create) {
       empty?.mount.close();
       empty = undefined;
       if (create === undefined) return undefined;
-      const child = createMount(() => {});
-      empty = { create, view: startPluginView(create, child), mount: child };
+      const own = createMount(() => {});
+      empty = { create, view: startPluginView(create, own), mount: own };
     }
     return empty?.view;
   };
   /**
-   * The pane is empty: it has no session, or its session has no history, while no message waits, no send runs, and no
-   * turn runs. A session that loads its history is not empty, so the empty view does not flash.
+   * The chat is empty: it shows no child, and it has no root, or its root has no history, while no message waits, no
+   * send runs, and no turn runs. A root that loads its history is not empty, so the empty view does not flash.
    */
   const isEmpty = (): boolean => {
-    const transcript = chatSession.transcript;
-    if (transcript.pending.size > 0 || chatComposer.busy || working.active) return false;
-    return chatSession.id === undefined || (transcript.entries.length === 0 && chatSession.historyComplete);
+    if (child.id !== undefined) return false;
+    const transcript = root.transcript;
+    if (transcript.pending.size > 0 || chatComposer.busy || rootWorking.active) return false;
+    return root.id === undefined || (transcript.entries.length === 0 && root.historyComplete);
   };
   /** The placements of `views` in a column from `row`. */
   const stacked = (
@@ -620,10 +619,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       frame.draw(canvas, { ...frameContext, focused, inputRect: inputRect });
     },
   };
-  const pane: View = {
+  const outer: View = {
     contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
-      // A plugin can load after the start pane mounts.
+      // A plugin can load after the chat mounts.
       if (presenter !== chat.presenter()) {
         presenter = chat.presenter();
         document = create(keyOf(), document.folds);
@@ -632,26 +631,26 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       if (dirty) {
         // A view at the tail shows none of the older history, so memory keeps only the newest events. A saved place
         // waits for its item, so the history stays until that item shows.
-        if (restore === undefined && view.scroll.state.following) chatSession.trimHistory();
+        if (restore === undefined && view.scroll.state.following) shown().trimHistory();
         dirty = false;
-        view.setDocument(document.project(chatSession.transcript));
+        view.setDocument(document.project(shown().transcript));
       }
-      // A question and a read-only row hide the composer, and the composer keeps its draft.
+      // A question and the row of a child hide the composer, and the composer keeps its draft.
       const question = questions.current;
       const below = placedViews("below", size.width, Math.floor(size.height / 2));
       const left = size.height - below.reduce((rows, entry) => rows + entry.height, 0);
       frame = chat.frame() ?? RULES;
-      const kind = locked() !== undefined ? "readOnly" : question !== undefined ? "question" : "composer";
-      frameContext = { ...chatPaneFields, width: size.width, kind };
+      const kind = question !== undefined ? "question" : child.id !== undefined ? "child" : "composer";
+      frameContext = { ...viewFields, width: size.width, kind };
       const inset = frame.inset(frameContext);
       const top = inset.top ?? 0;
       const insetLeft = inset.left ?? 0;
       const inputWidth = Math.max(0, size.width - insetLeft - (inset.right ?? 0));
-      // A short pane gives up the rows below the input first, then the rows above it.
+      // A short chat gives up the rows below the input first, then the rows above it.
       const bottom = left >= top + 1 + (inset.bottom ?? 0) ? (inset.bottom ?? 0) : 0;
       const usable = left - bottom;
-      // The composer keeps one row in a pane of any size, and at most half of a taller pane.
-      const wanted = kind === "readOnly" ? 1 : (question?.rows ?? composer.heightFor(inputWidth));
+      // The composer keeps one row in a chat of any size, and at most half of a taller chat.
+      const wanted = kind === "child" ? 1 : (question?.rows ?? composer.heightFor(inputWidth));
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(usable / 2)));
       const composerRow = Math.max(0, usable - composerRows);
       const topRows = Math.min(top, composerRow);
@@ -661,18 +660,18 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       // The command list sits on the frame. While a turn runs, the working row sits above the list.
       listRows = Math.min(completions.rows, frameRow);
       const free = frameRow - listRows;
-      const workingRow = working.active && free > 0 ? 1 : 0;
-      // The strip takes the rows above the working row that its messages need. When rows run out, the strip keeps the
-      // newest messages.
-      const list = chatComposer.waitingMessages;
+      const workingRow = working().active && free > 0 ? 1 : 0;
+      // The strip takes the rows above the working row that the messages of the root need. When rows run out, the strip
+      // keeps the newest messages. A child shows no strip.
+      const list = child.id === undefined ? chatComposer.waitingMessages : [];
       const above = Math.max(0, free - workingRow);
-      shown = list.slice(Math.max(0, list.length - above));
+      strip = list.slice(Math.max(0, list.length - above));
       // Plugin views get the rows that the strip leaves, at most half the rows above the frame.
-      const aboveViews = placedViews("above", size.width, Math.min(above - shown.length, Math.floor(frameRow / 2)));
+      const aboveViews = placedViews("above", size.width, Math.min(above - strip.length, Math.floor(frameRow / 2)));
       const aboveRows = aboveViews.reduce((rows, entry) => rows + entry.height, 0);
       // One empty row goes below the transcript, and a running turn adds one below the working row. The transcript gets
-      // the other rows. A pane adds an empty row only when the transcript keeps a row, so a short pane drops it first.
-      let transcriptRows = above - shown.length - aboveRows;
+      // the other rows. The chat adds an empty row only when the transcript keeps a row, so a short chat drops it first.
+      let transcriptRows = above - strip.length - aboveRows;
       const gap = transcriptRows > 1 ? 1 : 0;
       transcriptRows -= gap;
       const workingGap = workingRow === 1 && transcriptRows > 1 ? 1 : 0;
@@ -687,40 +686,40 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         ...(emptyShown === undefined ? [] : [{ view: emptyShown, rect: transcriptRect }]),
         { view: frameView, rect: { column: 0, row: frameRow, width: size.width, height: frameRows } },
         { view: completions.view, rect: { column: 0, row: frameRow - listRows, width: size.width, height: listRows } },
-        ...stacked(aboveViews, frameRow - listRows - workingRows - shown.length - aboveRows, size.width),
+        ...stacked(aboveViews, frameRow - listRows - workingRows - strip.length - aboveRows, size.width),
         ...stacked(below, left, size.width),
       ];
       // The view has rows only after its own first layout. The saved place waits for a height, then for its item or
       // the end of the history.
-      if (restore !== undefined && chatSession.handle !== undefined && view.scroll.state.height > 0) {
+      if (restore !== undefined && shown().handle !== undefined && view.scroll.state.height > 0) {
         const key = restore.id;
         if (view.document.items.some((item) => item.id === key)) {
           // A row past the end of a changed item gives its first row.
           if (!view.scroll.scrollToItem(key, restore.row)) view.scroll.scrollToItem(key);
           restore = undefined;
-        } else if (chatSession.historyComplete || chatSession.historyError !== undefined) restore = undefined;
-        else void chatSession.loadOlderHistory();
+        } else if (shown().historyComplete || shown().historyError !== undefined) restore = undefined;
+        else void shown().loadOlderHistory();
       }
       return placements;
     },
     draw(canvas: Canvas): void {
       const listRow = frameRow - listRows;
-      const stripRow = listRow - workingRows - shown.length;
-      for (const [at, entry] of shown.entries()) {
+      const stripRow = listRow - workingRows - strip.length;
+      for (const [at, entry] of strip.entries()) {
         const row = stripRow + at;
-        const hint = at === shown.length - 1 ? " ↑ edit" : "";
+        const hint = at === strip.length - 1 ? " ↑ edit" : "";
         const text = inputText(entry[1].content).replaceAll("\n", " ");
         const room = Math.max(0, canvas.width - 1 - measure(hint));
         canvas.text(1, row, clipped(text, room), STYLE.meta);
         if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
       }
-      // While the list shows, Esc hides the list, so the row shows no cancel key.
-      const key = listRows > 0 || locked() !== undefined ? undefined : tui.keys.list("chat:interrupt")[0];
+      // While the list shows, Esc hides the list, and a child shows no cancel key: Esc goes back to the root.
+      const key = listRows > 0 || child.id !== undefined ? undefined : tui.keys.list("chat:interrupt")[0];
       const row =
         workingRows > 0
-          ? working.text({
+          ? working().text({
               cancelKey: key,
-              backgroundKey: locked() === undefined ? tui.keys.list("chat:background")[0] : undefined,
+              backgroundKey: child.id === undefined ? tui.keys.list("chat:background")[0] : undefined,
               width: Math.max(0, canvas.width - 2),
             })
           : undefined;
@@ -730,7 +729,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       // The empty row below the transcript shows a failed history load, so the text stays in sight at any scroll place.
       if (noticeRow < 0) return;
-      const historyError = chatSession.historyError;
+      const historyError = shown().historyError;
       if (historyError !== undefined) {
         canvas.text(1, noticeRow, `the history did not load: ${String(historyError)}`, STYLE.error);
       } else if (view.scroll.state.changedBelow) canvas.text(1, noticeRow, "new output ↓", STYLE.hint);
@@ -739,71 +738,83 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       return input();
     },
     snapshot: (): JsonValue => {
+      // The folds and the place of a shown child do not fit the saved root, so a reload shows the root at the tail.
+      const rootShows = child.id === undefined;
       const scroll = view.scroll.state;
-      const viewport = restore ?? (scroll.following ? undefined : scroll.anchor);
+      const viewport = rootShows ? (restore ?? (scroll.following ? undefined : scroll.anchor)) : undefined;
       return {
-        ...(chatSession.id !== undefined
-          ? { session: chatSession.id }
-          : nextFolder !== undefined
-            ? { nextFolder }
-            : {}),
+        ...(root.id !== undefined ? { session: root.id } : nextFolder !== undefined ? { nextFolder } : {}),
         draft: composer.state as unknown as JsonValue,
-        folds: document.folds,
+        ...(rootShows ? { folds: document.folds } : {}),
         ...(viewport === undefined ? {} : { viewport }),
       };
     },
   };
-  /** Keep the draft of the session `before` for the return to it, and restore the draft of the session `after`. */
-  const swapDraft = (before: SessionId | undefined, after: SessionId): void => {
-    // A pane without a session has no images in its draft, so the draft goes with the pane, and an older draft of
-    // `after` would come back later.
-    if (before === undefined) {
-      drafts.delete(after);
-      return;
-    }
-    const draft = composer.state;
-    if (draft.text !== "") drafts.set(before, draft);
-    chatComposer.setDraft(drafts.get(after) ?? EMPTY);
-    drafts.delete(after);
+  /** Close the session `id` for each holder, so its jobs and subagents stop. A failure gives a notice. */
+  const close = (id: SessionId): void => {
+    sessions.closeForAll(id).catch((error: unknown) => fail(`The session ${id} did not close`, error));
   };
   const show = async (id: SessionId): Promise<void> => {
-    if (occupied()) throw new Error("the pane is busy");
-    const before = chatSession.id;
+    if (occupied()) throw new Error("the chat is busy");
     busy = true;
     try {
-      await chatSession.open(id);
+      // An open of the shown root holds it again after the end of its handle.
+      if (id === root.id) {
+        child.leave();
+        await root.open(id);
+        return;
+      }
+      // The saved parent decides, so a child of an earlier process shows as a child too.
+      const before = root.id;
+      if (before !== undefined && (await sessions.get(id)).parent === before) {
+        await child.open(id);
+        return;
+      }
+      if (!(await chat.confirmStop(before, "switch"))) return;
+      await root.open(id);
+      child.leave();
+      if (before === undefined) return;
+      // A pasted image of the draft belongs to the old root.
+      chatComposer.setDraft(EMPTY);
+      close(before);
     } finally {
       busy = false;
     }
-    // A show of the shown session only opens it again after the end of its handle.
-    if (mount.signal.aborted || id === before) return;
-    swapDraft(before, id);
   };
-  const newSession = (): void => {
-    if (occupied()) return;
-    // The server keeps a session with a turn or a job open after the pane lets go of it.
-    const running = working.active || jobsOf().length > 0;
-    nextFolder = chatSession.transcript.settings?.folder ?? nextFolder;
+  const newSession = async (): Promise<void> => {
+    const before = root.id;
+    if (occupied() || before === undefined) return;
+    busy = true;
+    try {
+      if (!(await chat.confirmStop(before, "switch"))) return;
+    } finally {
+      busy = false;
+    }
+    nextFolder = root.transcript.settings?.folder ?? nextFolder;
     chatComposer.setDraft(EMPTY);
-    chatSession.leave();
-    if (running) ctx.notify("info", "The session is still running: use /sessions to check it");
+    child.leave();
+    root.leave();
+    close(before);
   };
-  const actions: PaneActions = {
-    pane: chatPaneFields,
+  const actions: ChatActions = {
+    view: viewFields,
     signal: mount.signal,
-    session: () => chatSession.id,
     show,
     newSession,
     status: () => ({
-      bound: chatSession.id !== undefined,
+      bound: root.id !== undefined,
       nextFolder: nextFolder ?? tui.startup.folder,
-      settings: chatSession.transcript.settings,
-      usage: chatSession.transcript.usage,
-      // A plugin shows its own jobs, as a subagent list does, so the bar counts only the commands.
-      jobs: jobsOf("process").length,
+      settings: shown().transcript.settings,
+      usage: shown().transcript.usage,
+      // A plugin shows its own jobs, as a subagent list does, so the bar counts only the commands. The transcript has the
+      // running jobs in order with the other updates, while the chat holds the session.
+      jobs:
+        shown().handle === undefined
+          ? 0
+          : [...shown().transcript.jobs.values()].filter((job) => job.kind === "process").length,
     }),
     toggleTools: () => {
-      document.toggleTools(chatSession.transcript);
+      document.toggleTools(shown().transcript);
       changed();
     },
     send,
@@ -815,19 +826,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     olderMessage,
     newerMessage: () => chatComposer.newerMessage(),
     clear: () => {
-      if (composer.state.text === "") chatSession.handle?.cancelTurn();
+      if (composer.state.text === "") root.handle?.cancelTurn();
       else chatComposer.setDraft(EMPTY);
     },
-    moveJobsToBackground: () => chatSession.handle?.moveJobsToBackground(),
+    moveJobsToBackground: () => root.handle?.moveJobsToBackground(),
     interrupt: () => {
-      const back = locked()?.back;
       if (view.selection !== undefined) view.selection = undefined;
-      else if (back === undefined) chatSession.handle?.cancelTurn();
-      else {
-        show(back).catch((error: unknown) => {
-          fail(`The session ${back} did not open`, error);
-        });
-      }
+      else if (child.id !== undefined) child.leave();
+      else root.handle?.cancelTurn();
     },
     scroll: (to) => {
       const step = Math.max(1, view.scroll.state.height - 1);
@@ -836,13 +842,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else if (to === "top") view.scroll.scrollTo(0);
       else view.scroll.followTail();
     },
-    asking: () => questions.current !== undefined || locked() !== undefined,
-    locked: () => locked() !== undefined,
+    asking: () => questions.current !== undefined,
+    showsChild: () => child.id !== undefined,
+    composing,
     canRename,
     rename,
-    resumeSession: () => (chatSession.id === undefined ? undefined : (locked()?.back ?? chatSession.id)),
     cancelQuestion: () => questions.cancel(),
   };
   chat.opened(actions);
-  return pane;
+  return outer;
 }

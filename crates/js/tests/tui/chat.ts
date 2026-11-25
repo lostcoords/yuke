@@ -81,6 +81,8 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   const rows: SessionRow[] = [];
   const lists: ListSessionsParams[] = [];
   const renames: [string, string][] = [];
+  // The sessions of each `closeForAll`, in order.
+  const closes: string[] = [];
   // The end of each handle, by its open. A close by another client ends the handles of its session.
   const ends = new Map<Opened, AbortController>();
   /**
@@ -139,6 +141,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     rows,
     lists,
     renames,
+    closes,
     /** The rows of the folder `params.folder`, or of each folder. A list gives at most `params.limit` rows, else 50. */
     async list(params: ListSessionsParams = {}): Promise<{ sessions: SessionRow[] }> {
       lists.push(params);
@@ -235,6 +238,10 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     close(id: string): void {
       for (const [entry, end] of ends) if (entry.id === id) end.abort();
     },
+    async closeForAll(id: string): Promise<void> {
+      closes.push(id);
+      this.close(id);
+    },
   };
 }
 
@@ -257,6 +264,19 @@ export async function loadChat(
     surface.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
   const chat = provided.get("chat") as ChatService;
   return { tui: surface.tui, surface, opened: sessions.opened, notices, transcript, chat, fact };
+}
+
+/** The saved row of the session `id` in `/w`, with `fields`. */
+export function row(id: string, fields: Partial<SessionRow> = {}): SessionRow {
+  return {
+    sessionId: id,
+    state: "idle",
+    model: SETTINGS.model,
+    folder: "/w",
+    createdAt: 0,
+    updatedAt: 0,
+    ...fields,
+  };
 }
 
 /** One ready provider `p` with the model `m` (levels default, off, high) and the model `n` (levels default, low). */

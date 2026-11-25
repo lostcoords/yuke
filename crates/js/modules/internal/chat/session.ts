@@ -85,7 +85,7 @@ export class ChatSession {
       // The end of the owner ends the hold at once, also during the open.
       const release = new AbortController();
       const held = AbortSignal.any([release.signal, this.#signal]);
-      // The target fills its own transcript. The snapshot comes only after a successful open, so the pane shows the
+      // The target fills its own transcript. The snapshot comes only after a successful open, so the chat shows the
       // target from its snapshot on, and a failure before it leaves the shown session as it is.
       const transcript = new Transcript();
       let current = false;

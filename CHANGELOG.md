@@ -2,15 +2,22 @@
 
 Each release has one section. The release job publishes the section of each tag as its release notes.
 
-## Unreleased
+## 0.3.0
 
 ### Breaking changes
 
-- The TUI shows one session. The panes, their split, close, and focus commands, and their `ctrl+k` keys are gone. To
-  work on more sessions at once, start yuke in more terminals, for example in the panes of tmux.
-- `tui.setMain((mount, saved) => view)` makes the main view, in place of `tui.panes` and `tui.views.add`. A reload
-  gives the value of `View.snapshot()` back as `saved`. `FocusChange.pane` and `PlacedWidget.pane` are gone.
-- `chat.sessionId()` replaces `chat.sessionIdOf(view)`.
+- The TUI shows one session and its subagents. The panes and their `ctrl+k` keys are gone: run yuke in more terminals.
+- `/new` and `/sessions` close the old session, so its commands and subagents stop. While work runs, yuke asks first.
+
+### Plugin API
+
+- `tui.setMain` replaces `tui.panes` and `tui.views.add`.
+- `chat.sessionId()` replaces `chat.sessionIdOf(view)`, and `chat.addChildLabel` replaces `chat.addReadOnly`.
+- `ChatPane` is `ChatView`, and `addPaneWatcher` is `addViewWatcher`.
+
+### Fixes and speed
+
+- A question of the main session shows while you watch a subagent.
 
 ## 0.2.0
 

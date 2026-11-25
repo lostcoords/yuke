@@ -246,7 +246,7 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   assertEquals(transcriptRows(frame).slice(-2), [" reply 32", ""]);
 });
 
-test("a reload keeps the folds and the scrolled place of a pane", async () => {
+test("a reload keeps the folds and the scrolled place of a chat", async () => {
   const saved = replies(40);
   saved[1] = commit(2, [{ kind: "reasoning", text: "deep" } as never, { kind: "assistantText", text: "ok" }]);
   using before = createFrame({ width: 20, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });

@@ -53,9 +53,9 @@ Some commands take text after the word, such as `/login anthropic`. A draft that
 | `/logout [PROVIDER]` | Remove the API key or the login that yuke stored for a provider. A key in an environment variable stays: unset the variable. |
 | `/mcp [SERVER \| logout SERVER]` | List the MCP servers of the session with their states. Choose a server that needs a login to open its dialog. `/mcp SERVER` picks a server by name, and `/mcp logout SERVER` removes its stored login. See [MCP servers](mcp.md#oauth-login). |
 | `/model` | Choose the model and the reasoning level of the session. It fails while a turn runs or a message waits. |
-| `/new` | Start a new session. The old session keeps its work, and `/sessions` finds it. |
+| `/new` | Start a new session. The old session closes, and `/sessions` finds it. See [Switch sessions](#switch-sessions). |
 | `/rename` | Rename the session in a dialog. |
-| `/sessions` | Show the recent sessions of this folder, and show one of them. `tab` switches between this folder and every folder. Type to filter. |
+| `/sessions` | Show the recent sessions of this folder, and switch to one of them. `tab` switches between this folder and every folder. Type to filter. |
 | `/plugins` | Manage your plugins. See [Plugins](plugins.md#install-plugins). |
 | `/themes` | Choose a theme. The arrow keys show a theme, `enter` keeps it, and `esc` goes back. See [Themes](themes.md). |
 | `/messages` | Show the last notices, newest first. |
@@ -94,9 +94,13 @@ yuke saves each session. Start yuke with `-c` to continue the newest session of 
 
 When you quit, yuke prints `To resume this session, run: yuke -r ID`.
 
-## Work on more sessions at once
+## Switch sessions
 
-The TUI shows one session. To work on more sessions at the same time, start yuke in more terminals, for example in the panes of tmux.
+The TUI shows one session and the sessions that work for it, such as subagents. A session of a subagent shows read-only: `esc` goes back, and a question of the main session still shows in place of the composer.
+
+`/new` and a choice in `/sessions` close the old session, so its commands and subagents stop. If a turn or a job runs, yuke asks first: `enter` stops the work and switches, and `esc` stays. The draft clears.
+
+To work on more sessions at the same time, run yuke in more terminals, for example in tmux.
 
 ## Quit
 
@@ -117,7 +121,7 @@ This list holds the default keys of yuke. A plugin can add more. See [TUI plugin
 | `up`, `down` | Show an older or a newer message of yours, or take back a waiting message. |
 | `ctrl+v` | Put the image of the clipboard in the message. |
 | `ctrl+c` | Clear the draft, or stop the turn. |
-| `esc` | Drop the selection, or stop the turn. |
+| `esc` | Drop the selection, go back to the main session, or stop the turn. |
 | `ctrl+b` | Move the waiting tool calls to the background. |
 | `ctrl+o` | Open or fold the tool calls. |
 | `pageup`, `pagedown` | Scroll one page. |

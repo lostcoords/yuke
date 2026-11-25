@@ -1,4 +1,4 @@
-// The tests use the chat blocks without a pane. They cover the sessions, the pages, the composer, the
+// The tests use the chat blocks without a chat. They cover the sessions, the pages, the composer, the
 // questions, and the working row.
 
 import { ChatComposer, ChatQuestions, ChatSession, ChatWorking } from "yuke:chat";

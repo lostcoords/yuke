@@ -42,7 +42,7 @@ const GAP: TextSection = Object.freeze({
 });
 
 /** A range of a source text with its style and its link. */
-export interface StyledRange extends OffsetRange {
+interface StyledRange extends OffsetRange {
   readonly style?: string | undefined;
   readonly link?: string | undefined;
 }
@@ -101,7 +101,7 @@ export function rangedRows(text: string, width: number, ranges: readonly StyledR
   return rows;
 }
 
-/** `rows` on a band of `style` as wide as the pane. The band wins per field over the style of each segment. */
+/** `rows` on a band of `style` as wide as the chat. The band wins per field over the style of each segment. */
 export function bandedRows(rows: readonly TextRow[], width: number, style: string): TextRow[] {
   return rows.map((row) => {
     const used = row.segments.reduce((cells, segment) => cells + measure(segment.text), 0);

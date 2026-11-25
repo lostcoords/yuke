@@ -1,27 +1,21 @@
 /**
- * The bundled plugin `chat`: the main view of the terminal interface, with its transcript, composer, folds, and handle
- * of its session. It starts on the session of `tui.startup`, and `/new` empties it. A reload keeps the session, the
- * draft, the folds, the scroll place, and the folder of the next session. The service `chat` shows a session for other
+ * The bundled plugin `chat`: the main view of the terminal interface. It shows one session tree: a root session, and
+ * its child sessions read-only. It starts on the session of `tui.startup`, and `/new` empties it. A switch to another
+ * root, `/new`, and a quit ask before they stop the work of the tree, and the old root closes. A reload keeps the root,
+ * the draft, the folds, the scroll place, and the folder of the next root. The service `chat` shows a session for other
  * plugins.
  */
 
-import type {
-  ChatPane,
-  ChatPresentation,
-  ChatPresentationOptions,
-  ChatReadOnly,
-  CompletionProvider,
-  ComposerFrame,
-} from "yuke:chat";
+import type { ChatPresentation, ChatPresentationOptions, ChatView, CompletionProvider, ComposerFrame } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { emptyHeader } from "yuke:internal/bundled/chat/empty";
 import {
   type Chat,
+  type ChatActions,
   type ComposerViewEntry,
-  chatPane,
-  type PaneActions,
-  type PaneState,
-} from "yuke:internal/bundled/chat/pane";
+  chatView,
+  type SavedChat,
+} from "yuke:internal/bundled/chat/view";
 import { slashCompletions } from "yuke:internal/chat/commands";
 import { clipped } from "yuke:internal/chat/rows";
 import { failureOf } from "yuke:internal/failure";
@@ -43,55 +37,55 @@ const COMMANDS: readonly {
   readonly description: string;
   readonly keys: readonly string[];
   readonly in: "chat" | "composer" | "question";
-  readonly run: (pane: PaneActions) => void | Promise<void>;
-  readonly enabled?: (pane: PaneActions) => boolean;
+  readonly run: (chat: ChatActions) => void | Promise<void>;
+  readonly enabled?: (chat: ChatActions) => boolean;
 }[] = [
   {
     name: "send",
     description: "Send the message",
     keys: ["enter"],
     in: "composer",
-    run: (pane) => pane.send(),
-    enabled: (pane) => !pane.asking(),
+    run: (chat) => chat.send(),
+    enabled: (chat) => chat.composing(),
   },
   {
     name: "older-message",
     description: "Edit a waiting message of yours, or show an older message of yours",
     keys: ["up"],
     in: "composer",
-    run: (pane) => pane.olderMessage(),
-    enabled: (pane) => !pane.asking() && pane.canOlderMessage(),
+    run: (chat) => chat.olderMessage(),
+    enabled: (chat) => chat.composing() && chat.canOlderMessage(),
   },
   {
     name: "newer-message",
     description: "Show a newer message of yours",
     keys: ["down"],
     in: "composer",
-    run: (pane) => pane.newerMessage(),
-    enabled: (pane) => !pane.asking() && pane.browsing(),
+    run: (chat) => chat.newerMessage(),
+    enabled: (chat) => chat.composing() && chat.browsing(),
   },
   {
     name: "clear",
     description: "Clear the draft, or stop the turn",
     keys: ["ctrl+c"],
     in: "chat",
-    run: (pane) => pane.clear(),
-    enabled: (pane) => !pane.locked(),
+    run: (chat) => chat.clear(),
+    enabled: (chat) => !chat.showsChild(),
   },
   {
     name: "background",
     description: "Move the waiting tool calls to the background",
     keys: ["ctrl+b"],
     in: "chat",
-    run: (pane) => pane.moveJobsToBackground(),
-    enabled: (pane) => !pane.locked(),
+    run: (chat) => chat.moveJobsToBackground(),
+    enabled: (chat) => !chat.showsChild(),
   },
   {
     name: "interrupt",
-    description: "Drop the selection, or stop the turn",
+    description: "Drop the selection, go back to the root, or stop the turn",
     keys: ["esc"],
     in: "chat",
-    run: (pane) => pane.interrupt(),
+    run: (chat) => chat.interrupt(),
   },
   {
     name: "model",
@@ -99,8 +93,8 @@ const COMMANDS: readonly {
     description: "Choose the model and the reasoning",
     keys: ["ctrl+k m"],
     in: "chat",
-    run: (pane) => pane.chooseModel(),
-    enabled: (pane) => !pane.asking(),
+    run: (chat) => chat.chooseModel(),
+    enabled: (chat) => chat.composing(),
   },
   {
     name: "new",
@@ -108,8 +102,8 @@ const COMMANDS: readonly {
     description: "Start a new session",
     keys: ["ctrl+k n"],
     in: "chat",
-    run: (pane) => pane.newSession(),
-    enabled: (pane) => !pane.asking() && pane.session() !== undefined,
+    run: (chat) => chat.newSession(),
+    enabled: (chat) => chat.composing() && chat.view.rootId !== undefined,
   },
   {
     name: "rename",
@@ -117,53 +111,53 @@ const COMMANDS: readonly {
     description: "Rename the session",
     keys: [],
     in: "chat",
-    run: (pane) => pane.rename(),
-    enabled: (pane) => pane.canRename(),
+    run: (chat) => chat.rename(),
+    enabled: (chat) => chat.canRename(),
   },
   {
     name: "paste-image",
     description: "Put the image of the clipboard in the message",
     keys: ["ctrl+v"],
     in: "composer",
-    run: (pane) => pane.pasteImage(),
-    enabled: (pane) => !pane.asking(),
+    run: (chat) => chat.pasteImage(),
+    enabled: (chat) => chat.composing(),
   },
   {
     name: "toggle-tools",
     description: "Open or fold the tools",
     keys: ["ctrl+o"],
     in: "chat",
-    run: (pane) => pane.toggleTools(),
+    run: (chat) => chat.toggleTools(),
   },
   {
     name: "page-up",
     description: "Scroll up one page",
     keys: ["pageup"],
     in: "chat",
-    run: (pane) => pane.scroll("pageUp"),
+    run: (chat) => chat.scroll("pageUp"),
   },
   {
     name: "page-down",
     description: "Scroll down one page",
     keys: ["pagedown"],
     in: "chat",
-    run: (pane) => pane.scroll("pageDown"),
+    run: (chat) => chat.scroll("pageDown"),
   },
-  { name: "top", description: "Scroll to the top", keys: ["ctrl+home"], in: "chat", run: (pane) => pane.scroll("top") },
+  { name: "top", description: "Scroll to the top", keys: ["ctrl+home"], in: "chat", run: (chat) => chat.scroll("top") },
   {
     name: "bottom",
     description: "Scroll to the bottom",
     keys: ["ctrl+end"],
     in: "chat",
-    run: (pane) => pane.scroll("bottom"),
+    run: (chat) => chat.scroll("bottom"),
   },
   {
     name: "cancel-question",
     description: "Cancel the question of a plugin",
     keys: ["esc", "ctrl+c"],
     in: "question",
-    run: (pane) => pane.cancelQuestion(),
-    enabled: (pane) => pane.asking() && !pane.locked(),
+    run: (chat) => chat.cancelQuestion(),
+    enabled: (chat) => chat.asking(),
   },
 ];
 
@@ -179,9 +173,9 @@ export const optionsSchema = {
 
 type Options = Infer<typeof optionsSchema>;
 
-/** One call of `addPaneWatcher`. The abort of `stop` ends its watch of each pane. */
-interface PaneWatcher {
-  readonly watch: (pane: ChatPane, signal: AbortSignal) => void;
+/** One call of `addViewWatcher`. The abort of `stop` ends its watch of each view. */
+interface ViewWatcher {
+  readonly watch: (view: ChatView, signal: AbortSignal) => void;
   readonly stop: AbortController;
 }
 
@@ -203,32 +197,32 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   // One entry per call of `addComposerView`, so each disposer removes its own.
   const composerViews = new Set<ComposerViewEntry>();
   // The actions of the chat view, while it shows.
-  let current: PaneActions | undefined;
-  const paneWatchers = new Set<PaneWatcher>();
-  const startWatcher = (entry: PaneWatcher, actions: PaneActions): void => {
-    // A failed watcher of another plugin must not stop the open of the pane.
+  let current: ChatActions | undefined;
+  const viewWatchers = new Set<ViewWatcher>();
+  const startWatcher = (entry: ViewWatcher, actions: ChatActions): void => {
+    // A failed watcher of another plugin must not stop the open of the view.
     try {
-      entry.watch(actions.pane, AbortSignal.any([actions.signal, entry.stop.signal]));
+      entry.watch(actions.view, AbortSignal.any([actions.signal, entry.stop.signal]));
     } catch (error) {
-      ctx.notify("error", `A pane watcher failed: ${failureOf(error)}`);
+      ctx.notify("error", `A view watcher failed: ${failureOf(error)}`);
     }
   };
   const presenters = new Stack<(options: ChatPresentationOptions) => ChatPresentation>();
   // One entry per call of `addCompletionProvider`, oldest first, so each disposer removes its own.
   const completionProviders = new Set<{ readonly provider: CompletionProvider }>();
-  // One entry per call of `addReadOnly`, so each disposer removes its own.
-  const readOnlySources = new Set<{ readonly source: (session: SessionId) => ChatReadOnly | undefined }>();
+  // One entry per call of `addChildLabel`, so each disposer removes its own.
+  const childLabels = new Set<{ readonly source: (session: SessionId) => string | undefined }>();
   const frames = new Stack<ComposerFrame>();
-  const emptyViews = new Stack<(mount: Mount, pane: ChatPane) => View>();
-  // The default view of an empty pane comes after the state that it reads, and the option can turn it off.
-  let defaultEmptyView: ((mount: Mount, pane: ChatPane) => View) | undefined;
+  const emptyViews = new Stack<(mount: Mount, view: ChatView) => View>();
+  // The default view of an empty chat comes after the state that it reads, and the option can turn it off.
+  let defaultEmptyView: ((mount: Mount, view: ChatView) => View) | undefined;
   ctx.provide("chat", {
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat: yuke runs without the terminal interface");
       if (current === undefined) throw new Error("no chat: another plugin shows the main view");
       return current.show(id);
     },
-    sessionId: () => current?.session(),
+    sessionId: () => current?.view.sessionId,
     addChangeListener: (listener) => listeners.add(listener),
     addComposerView: (place, create) => {
       const entry = { place, create, stop: new AbortController() };
@@ -240,12 +234,12 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         repaint();
       };
     },
-    addPaneWatcher: (watch) => {
+    addViewWatcher: (watch) => {
       const entry = { watch, stop: new AbortController() };
-      paneWatchers.add(entry);
+      viewWatchers.add(entry);
       if (current !== undefined) startWatcher(entry, current);
       return () => {
-        if (paneWatchers.delete(entry)) entry.stop.abort();
+        if (viewWatchers.delete(entry)) entry.stop.abort();
       };
     },
     addCompletionProvider: (provider) => {
@@ -255,12 +249,12 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         completionProviders.delete(entry);
       };
     },
-    addReadOnly: (source) => {
+    addChildLabel: (source) => {
       const entry = { source };
-      readOnlySources.add(entry);
+      childLabels.add(entry);
       repaint();
       return () => {
-        if (readOnlySources.delete(entry)) repaint();
+        if (childLabels.delete(entry)) repaint();
       };
     },
     setComposerFrame: (frame) => repainted(frames.add(frame)),
@@ -268,7 +262,8 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     setEmptyView: (create) => repainted(emptyViews.add(create)),
   });
   if (tui === undefined) return undefined;
-  // The work of each open session that a quit stops, also of a session that no pane shows.
+  // The work of each open session, from the events of the host. The chat holds only the root and a shown child, but a
+  // quit and a switch stop the work of each child of the root.
   const work = new Map<
     SessionId,
     { readonly parent: SessionId | undefined; turn: boolean; readonly jobs: Set<string> }
@@ -295,30 +290,29 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     presenter: () => presenters.top(),
     frame: () => frames.top(),
     emptyView: () => emptyViews.top() ?? defaultEmptyView,
-    readOnly: (session) => {
-      for (const entry of readOnlySources) {
+    childLabel: (session) => {
+      for (const entry of childLabels) {
         const answer = entry.source(session);
         if (answer !== undefined) return answer;
       }
       return undefined;
     },
+    confirmStop: (root, kind) => confirmStop(root, kind),
     composerViews: (place) => [...composerViews].filter((entry) => entry.place === place),
-    moved: () => {
-      listeners.call();
-    },
+    moved: () => listeners.call(),
     opened: (actions) => {
       current = actions;
       actions.signal.addEventListener(
         "abort",
         () => {
-          if (current !== actions) return;
+          // The core closes the main view before it shows the next one, so the closed view is the current one.
           current = undefined;
           // The bar shows no session of a closed chat.
           publish();
         },
         { once: true },
       );
-      for (const entry of paneWatchers) startWatcher(entry, actions);
+      for (const entry of viewWatchers) startWatcher(entry, actions);
       publish();
     },
     completionProviders: () => [...completionProviders].map((entry) => entry.provider).toReversed(),
@@ -344,21 +338,69 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
           models = undefined;
         },
       );
-  // Activation finishes the read before any pane can use the state.
+  // Activation finishes the read before the view can use the state.
   await readModels();
-  /** The open question before a quit. */
+  /** The open confirmation of a stop. */
   let asked: Mount | undefined;
+  /** The text of the turn and the jobs that run in the tree of `root`, or `undefined` when nothing runs. */
+  const runningIn = (root: SessionId | undefined): string | undefined => {
+    if (root === undefined) return undefined;
+    let turns = 0;
+    let jobs = 0;
+    for (const [session, entry] of work) {
+      if (session !== root && entry.parent !== root) continue;
+      // A subagent runs as a job of its parent, so the turn of a child does not count again.
+      if (session === root && entry.turn) turns += 1;
+      jobs += entry.jobs.size;
+    }
+    if (turns + jobs === 0) return undefined;
+    const counts = [
+      ...(turns === 0 ? [] : [`${turns} ${turns === 1 ? "turn" : "turns"}`]),
+      ...(jobs === 0 ? [] : [`${jobs} ${jobs === 1 ? "job" : "jobs"}`]),
+    ];
+    return `${counts.join(" and ")} ${turns + jobs === 1 ? "is" : "are"} running.`;
+  };
+  /**
+   * Ask whether to stop the work of the tree of `root` before `kind`. Gives `true` at once when nothing runs, and
+   * `false` after a stay or while another confirmation shows.
+   */
+  const confirmStop = (root: SessionId | undefined, kind: "quit" | "switch"): Promise<boolean> => {
+    const text = runningIn(root);
+    if (text === undefined) return Promise.resolve(true);
+    if (asked !== undefined) return Promise.resolve(false);
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    const answer = (stop: boolean) => (): void => {
+      resolve(stop);
+      asked?.close();
+    };
+    asked = tui.dialog({
+      title: kind === "quit" ? "Stop everything and quit?" : "Stop them and switch?",
+      body: { draw: (canvas) => canvas.text(1, 0, clipped(text, Math.max(0, canvas.width - 1))) },
+      // The quit key quits through the keymap, and its entry names it in the footer.
+      keys: [
+        { key: "enter", label: `stop and ${kind}`, run: answer(true) },
+        ...(kind === "quit" ? [{ key: "ctrl+q", label: "stop and quit", run: answer(true) }] : []),
+        { key: "esc", label: "stay", run: answer(false) },
+      ],
+      rows: 3,
+    });
+    asked.signal.addEventListener("abort", () => {
+      asked = undefined;
+      resolve(false);
+    });
+    return promise;
+  };
   const home = env.get("HOME");
   /** `folder` with the home folder as `~`. */
   const shownFolder = (folder: string): string =>
     home !== undefined && (folder === home || folder.startsWith(`${home}/`)) ? `~${folder.slice(home.length)}` : folder;
   /**
-   * The model with its level, and the folder, of the next message of the pane with `status`. A pane without a session
-   * uses the saved pick, while its provider is ready, and the folder of its next session. A session without its
-   * settings yet gives nothing.
+   * The model with its level, and the folder, of the next message of the chat with `status`. A chat without a root uses
+   * the saved pick, while its provider is ready, and the folder of its next root. A session without its settings yet
+   * gives nothing.
    */
   const targetOf = (
-    status: ReturnType<PaneActions["status"]>,
+    status: ReturnType<ChatActions["status"]>,
   ): { readonly model?: string | undefined; readonly folder?: string | undefined } => {
     const settings = status.settings;
     if (status.bound) {
@@ -398,10 +440,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const setModel = (text: string | undefined): void => {
     showStatus("model", text === undefined ? undefined : { text, side: "right", order: 10 });
   };
-  /**
-   * Show the folder, the model, the token share of the last answer, and the process jobs of the focused chat pane, or
-   * nothing.
-   */
+  /** Show the folder, the model, the token share of the last answer, and the process jobs of the shown session. */
   const publish = (): void => {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
@@ -449,64 +488,36 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
             icon: env.get("TERM_PROGRAM") !== "Apple_Terminal",
           });
   ctx.addListener("catalog.changed", () => {
-    // The bar and the header of an empty pane name the models of the ready providers.
+    // The bar and the header of an empty chat name the models of the ready providers.
     void readModels().then(() => {
       publish();
       repaint();
     });
   });
   tui.addQuitGuard((quit) => {
-    // The resume text names each shown session, and each session whose work the quit stops.
-    const shown = current?.resumeSession();
-    const resumed = new Set(shown === undefined ? [] : [shown]);
-    let turns = 0;
-    let jobs = 0;
-    for (const [session, entry] of work) {
-      // A subagent runs as a job of its parent, so the turn of a child session does not count again.
-      const turn = entry.turn && entry.parent === undefined;
-      turns += turn ? 1 : 0;
-      jobs += entry.jobs.size;
-      // A child session resumes at its parent.
-      if (turn || entry.jobs.size > 0) resumed.add(entry.parent ?? session);
-    }
-    // The host writes this text after it restores the terminal, so the user can open each session again.
-    const resume = [...resumed].map((session) => `To resume this session, run: yuke -r ${session}`).join("\n");
-    const leave = (): void => quit(resume === "" ? undefined : resume);
-    if (asked !== undefined || turns + jobs === 0) {
-      leave();
+    const root = current?.view.rootId;
+    // The host writes this text after it restores the terminal, so the user can open the root again.
+    const resume = root === undefined ? undefined : `To resume this session, run: yuke -r ${root}`;
+    // A quit with no work goes at once, and a second quit key during a confirmation quits.
+    if (asked !== undefined || runningIn(root) === undefined) {
+      quit(resume);
       return;
     }
-    const counts = [
-      ...(turns === 0 ? [] : [`${turns} ${turns === 1 ? "turn" : "turns"}`]),
-      ...(jobs === 0 ? [] : [`${jobs} ${jobs === 1 ? "job" : "jobs"}`]),
-    ];
-    const text = `${counts.join(" and ")} ${turns + jobs === 1 ? "is" : "are"} running.`;
-    const stay = (): void => asked?.close();
-    asked = tui.dialog({
-      title: "Stop everything and quit?",
-      body: { draw: (canvas) => canvas.text(1, 0, clipped(text, Math.max(0, canvas.width - 1))) },
-      keys: [
-        { key: "enter", label: "stop and quit", run: leave },
-        { key: "ctrl+q", label: "stop and quit", run: leave },
-        { key: "esc", label: "stay", run: stay },
-      ],
-      rows: 3,
-    });
-    asked.signal.addEventListener("abort", () => {
-      asked = undefined;
+    void confirmStop(root, "quit").then((stop) => {
+      if (stop) quit(resume);
     });
   });
-  // A saved chat of a reload keeps its session, and a new chat shows the session of the start.
+  // A saved chat of a reload keeps its root, and a new chat shows the session of the start.
   tui.setMain((mount, saved) =>
-    chatPane(chat, mount, saved === null ? { session: tui.startup.sessionId } : (saved as PaneState)),
+    chatView(chat, mount, saved === null ? { session: tui.startup.sessionId } : (saved as SavedChat)),
   );
   for (const command of COMMANDS) {
     tui.commands.add({
       name: command.name,
       slash: command.slash,
       description: command.description,
-      run: () => (current === undefined ? undefined : command.run(current)),
-      // A command of the chat runs only while the chat shows, so a list of commands leaves it out otherwise.
+      // A command of the chat is enabled only while the chat shows, and a disabled command does not run.
+      run: () => command.run(current as ChatActions),
       enabled: () => current !== undefined && (command.enabled?.(current) ?? true),
     });
     for (const key of command.keys) tui.keys.add(key, command.name, { in: command.in });

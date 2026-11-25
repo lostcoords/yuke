@@ -1,4 +1,4 @@
-/** The saved pick of the bundled chat in `choice.json`: the model and the level of the first session of a pane. */
+/** The saved pick of the bundled chat in `choice.json`: the model and the level of the first session of a chat. */
 
 import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
 import type { ModelReference, ReasoningSelection } from "yuke:protocol";

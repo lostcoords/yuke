@@ -1,4 +1,4 @@
-// The rename command: its dialog, save failure, draft preservation, and disabled unbound pane.
+// The rename command: its dialog, save failure, draft preservation, and disabled chat without a session.
 
 import { apply as applySessions } from "yuke:internal/bundled/sessions";
 import type { SessionRow } from "yuke:protocol";
@@ -93,7 +93,7 @@ test("a rename failure shows an error and retains the editor", async () => {
   );
 });
 
-test("Esc cancels rename, and an unbound pane does not expose the command", async () => {
+test("Esc cancels rename, and an chat without a session does not expose the command", async () => {
   using frame = createFrame({ width: 50, height: 10 }, undefined, { folder: "/w" });
   const chat = await loadChat(frame);
   frame.start();

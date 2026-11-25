@@ -1,6 +1,6 @@
 /**
- * The header of an empty chat pane: the icon of yuke, its version, the model and the folder of the first message, and
- * the way to start. It draws at the top left of the pane, and the lines move below the icon in a narrow pane. A pane
+ * The header of an empty chat: the icon of yuke, its version, the model and the folder of the first message, and
+ * the way to start. It draws at the top left of the chat, and the lines move below the icon in a narrow chat. A chat
  * too small for all of it shows nothing.
  */
 
@@ -97,10 +97,10 @@ const CELLS = Array.from({ length: ICON_ROWS }, (_, row) =>
 /** One part of a line, with its style. */
 type Part = readonly [string, CanvasStyle];
 
-/** What the header shows of one pane. Each read gives the state now. */
+/** What the header shows of one chat. Each read gives the state now. */
 interface EmptyHeaderSource {
   readonly version: string;
-  /** The model with its level, and the folder, of the first message of the pane. */
+  /** The model with its level, and the folder, of the first message of the chat. */
   readonly target: () => { readonly model?: string | undefined; readonly folder?: string | undefined };
   /** A provider is ready, so a message can go out. */
   readonly ready: () => boolean;
@@ -144,7 +144,7 @@ function drawLine(canvas: Canvas, column: number, row: number, room: number, par
   for (const [words, style] of parts) at = canvas.text(at, row, words, style);
 }
 
-/** The default header of an empty chat pane. */
+/** The default header of an empty chat. */
 export function emptyHeader(source: EmptyHeaderSource): View {
   return {
     draw(canvas: Canvas): void {

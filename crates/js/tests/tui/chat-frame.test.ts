@@ -1,10 +1,10 @@
-// The frame around the input of a chat pane: its insets, its paint, its context, and its owner.
+// The frame around the input of the chat: its insets, its paint, its context, and its owner.
 
 import { ChatDocument, type ComposerFrameContext, composerRows } from "yuke:chat";
 import type { InteractionRequest } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { type Canvas, TextEditor } from "yuke:tui";
-import { fakeSessions, loadChat, replies } from "./chat.ts";
+import { fakeSessions, loadChat, replies, row } from "./chat.ts";
 
 const QUESTION: InteractionRequest = {
   kind: "questions",
@@ -13,10 +13,10 @@ const QUESTION: InteractionRequest = {
 
 /** A frame that draws its rows as text: `t` on the top row, `b` on the bottom row, and `|` beside the input. */
 const marks = {
-  draw: (canvas: Canvas, pane: ComposerFrameContext) => {
-    const end = pane.inputRect.row + pane.inputRect.height;
-    for (let row = 0; row < pane.inputRect.row; row += 1) canvas.text(0, row, "t");
-    for (let row = pane.inputRect.row; row < end; row += 1) canvas.text(0, row, "|");
+  draw: (canvas: Canvas, context: ComposerFrameContext) => {
+    const end = context.inputRect.row + context.inputRect.height;
+    for (let row = 0; row < context.inputRect.row; row += 1) canvas.text(0, row, "t");
+    for (let row = context.inputRect.row; row < end; row += 1) canvas.text(0, row, "|");
     for (let row = end; row < canvas.height; row += 1) canvas.text(0, row, "b");
   },
 };
@@ -55,15 +55,15 @@ test("a frame without insets leaves each row to the transcript and the input", a
   assertEquals(chat.transcript().scroll.state.height, 4);
 });
 
-test("a short pane gives up the rows below the input first, then the rows above it", async () => {
+test("a short chat gives up the rows below the input first, then the rows above it", async () => {
   using frame = createFrame({ width: 10, height: 3 });
   const chat = await loadChat(frame);
   let inputRow = -1;
   chat.chat.setComposerFrame({
     inset: () => ({ top: 1, bottom: 1 }),
-    draw: (canvas, pane) => {
-      inputRow = pane.inputRect.row;
-      marks.draw(canvas, pane);
+    draw: (canvas, context) => {
+      inputRow = context.inputRect.row;
+      marks.draw(canvas, context);
     },
   });
   frame.start();
@@ -102,31 +102,34 @@ test("the style of a frame stays under the text of the input and the empty cells
 test("a frame gets the view in the input area, the focus, and the state of the turn", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions(replies(3));
+  sessions.rows.push(row("c1", { parent: "s1" }));
   const chat = await loadChat(frame, sessions);
   const seen: string[] = [];
   chat.chat.setComposerFrame({
-    inset: (pane) => (pane.kind === "composer" ? { left: 1 } : {}),
-    draw: (_canvas, pane) => {
-      seen.push(`${pane.kind} ${pane.focused} ${pane.running} ${pane.inputRect.column} ${pane.sessionId}`);
+    inset: (context) => (context.kind === "composer" ? { left: 1 } : {}),
+    draw: (_canvas, context) => {
+      seen.push(
+        `${context.kind} ${context.focused} ${context.running} ${context.inputRect.column} ${context.sessionId} ${context.rootId}`,
+      );
     },
   });
   frame.start();
   await waitForSettled();
   frame.draw();
-  assertEquals(seen.at(-1), "composer true false 1 s1");
+  assertEquals(seen.at(-1), "composer true false 1 s1 s1");
   sessions.push({ kind: "state", state: "running" });
   frame.draw();
-  assertEquals(seen.at(-1), "composer true true 1 s1");
+  assertEquals(seen.at(-1), "composer true true 1 s1 s1");
   sessions.push({ kind: "state", state: "idle" });
   frame.draw();
-  sessions.push({ kind: "interactionRequested", interactionId: 1, source: "guard", request: QUESTION });
+  await chat.chat.show("c1");
   await waitForSettled();
   frame.draw();
-  assertEquals(seen.at(-1), "question true false 0 s1");
-  const end = chat.chat.addReadOnly(() => ({ text: "A child session", back: "p1" }));
+  assertEquals(seen.at(-1), "child true false 0 c1 s1");
+  sessions.push({ kind: "interactionRequested", interactionId: 1, source: "guard", request: QUESTION }, "s1");
+  await waitForSettled();
   frame.draw();
-  assertEquals(seen.at(-1), "readOnly true false 0 s1");
-  end();
+  assertEquals(seen.at(-1), "question true false 0 c1 s1");
   // A modal takes the focus from the input.
   chat.tui.overlay(() => ({ draw() {} }));
   frame.draw();
@@ -167,7 +170,7 @@ test("a disposer of the chat service runs after the chat plugin stops", async ()
   const disposers = [
     chat.chat.setComposerFrame({ inset: () => ({}), draw() {} }),
     chat.chat.setPresentation((options) => new ChatDocument(options.id, options.folds)),
-    chat.chat.addReadOnly(() => undefined),
+    chat.chat.addChildLabel(() => undefined),
     chat.chat.addComposerView("below", () => composerRows(() => [])),
   ];
   frame.start();

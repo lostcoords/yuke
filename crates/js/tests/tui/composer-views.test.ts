@@ -1,6 +1,6 @@
 // Views of plugins on each side of the composer of the bundled chat: their place, their limit, order, and lifetime.
 
-import { type ChatPane, composerRows } from "yuke:chat";
+import { type ChatView, composerRows } from "yuke:chat";
 import type { SessionUpdate } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
@@ -96,7 +96,7 @@ test("views below show under the composer in add order, and the composer moves u
   );
 });
 
-test("views below share at most half the pane, and views above share half of what the frame leaves", async () => {
+test("views below share at most half the chat, and views above share half of what the frame leaves", async () => {
   using frame = createFrame({ width: 24, height: 13 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   chat.chat.addComposerView("below", plain("a1", "a2", "a3", "a4"));
@@ -139,16 +139,16 @@ test("a height of 0 places no view, and the next view gets the rows that remain"
 test("the chat makes one view per call and gives its live fields, and its close or the remover ends the mount", async () => {
   using frame = createFrame({ width: 60, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(1)));
-  const made: { readonly pane: ChatPane; readonly signal: AbortSignal }[] = [];
-  const remove = chat.chat.addComposerView("below", (mount, pane) => {
-    made.push({ pane, signal: mount.signal });
+  const made: { readonly view: ChatView; readonly signal: AbortSignal }[] = [];
+  const remove = chat.chat.addComposerView("below", (mount, view) => {
+    made.push({ view, signal: mount.signal });
     return composerRows(() => []);
   });
   frame.start();
   await waitForSettled();
   frame.draw();
   frame.draw();
-  const first = made[0]?.pane;
+  const first = made[0]?.view;
   assertEquals(
     [made.length, first?.sessionId, first?.running, first?.transcript.settings !== undefined],
     [1, "s1", false, true],
@@ -170,7 +170,7 @@ test("the chat makes one view per call and gives its live fields, and its close 
   );
 });
 
-test("a view that closes its mount stays closed in the pane, and its factory runs once", async () => {
+test("a view that closes its mount stays closed in the chat, and its factory runs once", async () => {
   using frame = createFrame({ width: 24, height: 8 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   let calls = 0;
@@ -204,7 +204,7 @@ test("a view above sits directly above the working row", async () => {
   assertEquals([at >= 0, shown[at + 1]?.includes("Working"), shown.includes("Message…")], [true, true, true]);
 });
 
-test("a factory that throws gives one notice and runs once, and the pane still draws", async () => {
+test("a factory that throws gives one notice and runs once, and the chat still draws", async () => {
   using frame = createFrame({ width: 24, height: 6 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   let calls = 0;

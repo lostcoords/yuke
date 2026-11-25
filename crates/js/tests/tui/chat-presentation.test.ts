@@ -5,7 +5,7 @@ import type { Block, StoredEvent, ToolCall } from "yuke:protocol";
 import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import type { Transcript } from "yuke:transcript";
 import type { TextDocument } from "yuke:tui";
-import { commit, fakeSessions, fixedClock, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
+import { commit, fakeSessions, fixedClock, loadChat, row, SETTINGS, transcriptRows } from "./chat.ts";
 
 const GROUP = "group";
 
@@ -91,7 +91,7 @@ test("a plugin shows three tools as one row, and a click opens and folds that ro
   );
 });
 
-test("a plugin that loads after the pane mounts changes the open pane and keeps its folds, and its disposer gives the default look back", async () => {
+test("a plugin that loads after the chat mounts changes the open chat and keeps its folds, and its disposer gives the default look back", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a", "b")));
   frame.start();
@@ -208,7 +208,9 @@ test("requestUpdate shows new state of a presentation with no session event, and
 
 test("a session change, a new factory, and the close of the chat abort the signal, and each presentation gets the key of its session", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { folder: "/w", sessionId: "s1" });
-  const chat = await loadChat(frame, fakeSessions(reads("a")));
+  const sessions = fakeSessions(reads("a"));
+  sessions.rows.push(row("s2"));
+  const chat = await loadChat(frame, sessions);
   const options: ChatPresentationOptions[] = [];
   const factory = (given: ChatPresentationOptions): ChatPresentation => {
     options.push(given);

@@ -205,7 +205,7 @@ test("a tall question keeps its options in view and counts the lines that do not
   assertEquals(frame.rows().slice(-8, -2), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
 });
 
-test("a short pane keeps the first line of a tall question above its options", async () => {
+test("a short chat keeps the first line of a tall question above its options", async () => {
   using frame = createFrame({ width: 40, height: 9 }, undefined, { folder: "/w", sessionId: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);

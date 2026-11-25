@@ -43,6 +43,7 @@ Use these names. An older name fails the type check.
 
 - A session folder is `folder`, not `cwd`: `s.folder`, `context.folder`, `tui.startup.folder`, the `folder` option of `yuke:fs`, and the `folder` field of the protocol. The exceptions keep the name `cwd`: `Command` of `yuke:process` (as in Deno) and a server entry of `mcp.json`.
 - A session id is `sessionId`: `s.sessionId`, `tui.startup.sessionId`, and the events of `ctx.addListener`.
+- The TUI has one main view: `tui.setMain((mount, saved) => view)` makes it, and `View.snapshot()` gives `saved` after a reload. The chat shows one session tree: `chat.sessionId()` gives the shown session, and `chat.addChildLabel` labels a child session.
 - `SessionHandle.cancelTurn()` cancels a turn. `tui.prompt(options)` asks for a line of text. `tui.confirm(options)` asks a yes or no question.
 - A registration returns a remover: `tui.status.set(id, entry)`, `tui.styles.setTheme(name)`, and the `set*` methods of a text extension. There is no `status.delete`: call the remover. `TextExtension.close()` removes a whole extension.
 - `DisplayBlock` is in `yuke:protocol`. `yuke:chat` holds `ChatService` and the chat building blocks: `ChatSession`, `ChatComposer`, `ChatQuestions`, `ChatCompletions`, `ChatWorking`, `ChatDocument`, `slashCompletions`, and `composerRows`.

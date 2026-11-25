@@ -40,7 +40,7 @@ interface Cached {
  * ```
  */
 export class ChatDocument implements ChatPresentation {
-  /** The fold choices of the pane: `true` is open. An entry without a choice has its default. */
+  /** The fold choices of the chat: `true` is open. An entry without a choice has its default. */
   readonly #folds: Map<string, boolean>;
   #cache = new Map<string, Cached>();
   #failure: { readonly failure: TurnFailure; readonly item: TextItem } | undefined;

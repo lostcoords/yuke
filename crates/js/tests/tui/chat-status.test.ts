@@ -1,5 +1,5 @@
 // The status items of the bundled chat: the folder, the model, the token share of the last answer, and the jobs of the
-// focused pane.
+// shown session.
 
 import { writeTextFile } from "yuke:fs";
 import { env } from "yuke:process";
@@ -44,7 +44,7 @@ const JOB: Job = {
   log: "/tmp/j1.log",
 };
 
-test("the focused chat pane shows its model, its context use, and its process jobs, and a focus elsewhere hides them", async () => {
+test("the chat shows its model, its context use, and its process jobs, and another main view hides them", async () => {
   const sessions = fakeSessions(SAVED);
   // A plugin shows its own jobs, so the count holds only the command.
   sessions.state.jobs = [
@@ -123,7 +123,7 @@ test("an answer without an input count shows no context item", async () => {
   );
 });
 
-test("the first send of a new pane shows the jobs of its session once the handle opens", async () => {
+test("the first send of a new chat shows the jobs of its session once the handle opens", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
     folder: folder(),
   });
@@ -143,7 +143,7 @@ test("the first send of a new pane shows the jobs of its session once the handle
   );
 });
 
-test("a pane without a session shows the saved pick, and a new pick replaces it", async () => {
+test("a chat without a session shows the saved pick, and a new pick replaces it", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
     folder: folder(),
   });
@@ -233,7 +233,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   assertEquals([before, model()], [undefined, "m high"]);
 });
 
-test("the folder item shows the folder of the session, and a pane without one shows the start folder with ~ for home", async () => {
+test("the folder item shows the folder of the session, and a chat without one shows the start folder with ~ for home", async () => {
   const home = env.get("HOME") ?? "/home";
   using frame = createFrame({ width: 60, height: 10 }, undefined, { folder: `${home}/launch` });
   const chat = await loadChat(frame, fakeSessions(SAVED));

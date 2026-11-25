@@ -1,4 +1,4 @@
-// The header of an empty chat pane: the icon, the version, the model and the folder of the first message, and the way
+// The header of an empty chat: the icon, the version, the model and the folder of the first message, and the way
 // to start.
 
 import { writeTextFile } from "yuke:fs";
@@ -31,7 +31,7 @@ function accepted(id: number, content: Block[]): SessionUpdate {
   };
 }
 
-test("a pane without a session shows the icon and, beside it, the version, the model, the folder, and the way to start", async () => {
+test("a chat without a session shows the icon and, beside it, the version, the model, the folder, and the way to start", async () => {
   await savedPick();
   using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w", version: "1.2.3" });
   await loadChat(frame);
@@ -74,7 +74,7 @@ test("a session with history shows no header", async () => {
   assertEquals(frame.rows().join("\n").includes("yuke 0.0.0"), false);
 });
 
-test("a narrow pane puts the lines below the icon and cuts a long line", async () => {
+test("a narrow chat puts the lines below the icon and cuts a long line", async () => {
   await savedPick();
   using frame = createFrame({ width: 30, height: 20 }, undefined, {
     folder: "/a/very/long/folder/name",
@@ -92,7 +92,7 @@ test("a narrow pane puts the lines below the icon and cuts a long line", async (
   );
 });
 
-test("a pane too short for the whole header shows none of it", async () => {
+test("a chat too short for the whole header shows none of it", async () => {
   await savedPick();
   using frame = createFrame({ width: 80, height: 8 }, undefined, { folder: "/w" });
   await loadChat(frame);
@@ -152,7 +152,7 @@ test("the header names the model and the folder of the bar, with the home folder
   assertEquals([cells(frame.rows()[2], 16), bar], ["m high · ~/launch", ["m high", "~/launch"]]);
 });
 
-test("setEmptyView replaces the header in each pane, and its disposer brings the default back", async () => {
+test("setEmptyView replaces the header in the chat, and its disposer brings the default back", async () => {
   using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w" });
   const chat = await loadChat(frame);
   frame.start();
@@ -167,7 +167,7 @@ test("setEmptyView replaces the header in each pane, and its disposer brings the
   assertEquals([replaced, cells(frame.rows()[1], 2, 13)], [" Ask me anything.", ICON_TOP]);
 });
 
-test("the option emptyView false shows nothing in an empty pane", async () => {
+test("the option emptyView false shows nothing in an empty chat", async () => {
   using frame = createFrame({ width: 80, height: 20 }, undefined, { folder: "/w" });
   await loadChat(frame, fakeSessions(), undefined, { emptyView: false });
   frame.start();
