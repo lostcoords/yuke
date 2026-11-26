@@ -400,3 +400,26 @@ Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, {
   enumerable: false,
   configurable: true,
 });
+
+/** Read `stream` to its end, and join its chunks. A chunk that is no `Uint8Array` rejects with a `TypeError`. */
+export async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for (;;) {
+    const result = await reader.read();
+    if (result.done) break;
+    const chunk: unknown = result.value;
+    if (!(chunk instanceof Uint8Array)) throw new TypeError("a chunk of the stream is not a Uint8Array");
+    // A source can reuse the buffer of a chunk for the next chunk, so the result keeps a copy.
+    chunks.push(new Uint8Array(chunk));
+    length += chunk.length;
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}

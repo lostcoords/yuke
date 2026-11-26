@@ -266,7 +266,7 @@ declare module "yuke:internal/native" {
       }
     | { readonly image: { readonly path: string; readonly mimeType: string } };
 
-  /** What `processOutput` runs: a program with its arguments, without a shell. */
+  /** What `processSpawn` starts: a program with its arguments, without a shell. */
   export interface ProcessRequest {
     readonly command: string;
     readonly args: readonly string[];
@@ -274,26 +274,39 @@ declare module "yuke:internal/native" {
     readonly cwd: string;
     readonly env: Readonly<Record<string, string>>;
     readonly clearEnv: boolean;
-    /** Whether the answer keeps stdout, and stderr. A stream that it does not keep goes to the null device. */
+    /** Whether yuke pipes stdout, and stderr. A stream without a pipe goes to the null device. The program gets no input. */
     readonly stdout: boolean;
     readonly stderr: boolean;
   }
 
-  /** How a program ended, and its output. */
-  export interface ProcessEnd {
+  /** How a program ended. */
+  export interface ProcessStatus {
     /** The exit code, or 128 and the number of the signal that ended the program. */
     readonly code: number;
     /** The name of the signal that ended the program, such as `SIGTERM`. */
-    readonly signal: string | null;
-    readonly stdout: Uint8Array;
-    readonly stderr: Uint8Array;
+    readonly signal: import("yuke:process").Signal | null;
   }
 
+  /** A spawned program. A free of the child stops a program that still runs. */
+  export interface ProcessChild {
+    readonly __processChild: never;
+  }
+
+  /** Start `request` in its own process group. A program that does not start throws an `Error`. */
+  export function processSpawn(request: ProcessRequest): { readonly child: ProcessChild; readonly pid: number };
+  /** The status of the leader of the group at its exit. A failed wait rejects with an `Error`. */
+  export function processStatus(child: ProcessChild): Promise<ProcessStatus>;
+  /** The next chunk of the stream, or `undefined` at its end, after a close, or without a pipe. */
+  export function processRead(child: ProcessChild, stream: "stdout" | "stderr"): Promise<Uint8Array | undefined>;
+  /** Close the pipe of the stream. A pending read of it gives `undefined`. */
+  export function processClose(child: ProcessChild, stream: "stdout" | "stderr"): void;
+  /** Send the signal `name` to the group. An unknown name, or a call after the exit of the leader, throws a `TypeError`. */
+  export function processKill(child: ProcessChild, name: string): void;
   /**
-   * Run `request` in its own process group. A program that does not start rejects with an `Error`. The cancel stops
-   * the group: SIGTERM, then SIGKILL after 2 seconds; the promise then fulfills with the end of the signal.
+   * Stop the group: SIGTERM, then SIGKILL after 2 seconds. After the exit of the leader, kill each process that it left
+   * in the group.
    */
-  export function processOutput(request: ProcessRequest): Operation<ProcessEnd>;
+  export function processStop(child: ProcessChild): void;
 
   /** The value of the variable `name` of yuke. `undefined` when it is missing or its value is not valid Unicode. */
   export function processEnv(name: string): string | undefined;

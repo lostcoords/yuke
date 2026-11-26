@@ -126,7 +126,7 @@ pub(crate) fn install(
     clipboard::add(ctx, &object)?;
     images::add(ctx, &object)?;
     http::add(ctx, &object, &options.http)?;
-    process::add(ctx, &object, &options.processes)?;
+    process::add(ctx, &object)?;
     net::add(ctx, &object)?;
     lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;

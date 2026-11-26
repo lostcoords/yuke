@@ -4,6 +4,14 @@ Each release has one section. The release job publishes the section of each tag 
 
 ## Unreleased
 
+### Breaking changes
+
+- `yuke:process`: the `stdout` and `stderr` of an output throw for a `"null"` stream, as in Deno.
+
+### Plugin API
+
+- `yuke:process`: `Command.spawn()` streams the output of a running program, as in Deno.
+
 ### Features
 
 - An `@` path that starts with `./`, `../`, `~/`, or `/` lists the entries of that folder, also outside the session folder.

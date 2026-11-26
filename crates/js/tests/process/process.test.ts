@@ -1,8 +1,9 @@
-// The public module `yuke:process`: arguments without a shell, the streams, the environment, the misuse, and the stops.
+// The public module `yuke:process`: arguments without a shell, the streams, the environment, the misuse, the stops, and
+// the spawned programs.
 
 import * as fs from "yuke:fs";
 import { folder } from "yuke:internal/test";
-import { Command, env } from "yuke:process";
+import { Command, env, type Signal } from "yuke:process";
 import { assert, assertEquals, assertRejects, assertThrows, test } from "yuke:test";
 
 /** `bytes` as UTF-8 text. */
@@ -45,7 +46,7 @@ test("each argument reaches the program as it is and the streams stay apart", as
   );
 });
 
-test("env adds variables clear env leaves only env and a null stream is empty", async () => {
+test("env adds variables clear env leaves only env and a null stream throws from its getter", async () => {
   const base = folder();
   const added = await new Command("/usr/bin/env", { cwd: base, env: { YUKE_A: "1" } }).output();
   const only = await new Command("/usr/bin/env", { cwd: base, env: { YUKE_A: "1" }, clearEnv: true }).output();
@@ -56,10 +57,10 @@ test("env adds variables clear env leaves only env and a null stream is empty", 
       lines.includes("YUKE_A=1"),
       lines.some((line) => line.startsWith("PATH=")),
       text(only.stdout),
-      dropped.stdout.length,
+      assertThrows(() => dropped.stdout),
       dropped.success,
     ],
-    [true, true, "YUKE_A=1\n", 0, true],
+    [true, true, "YUKE_A=1\n", new TypeError("Cannot get 'stdout': 'stdout' is not piped"), true],
   );
 });
 
@@ -125,4 +126,117 @@ test("env.get gives a variable of the environment of yuke, and undefined for a m
     .find((line) => line.startsWith("PATH="))
     ?.slice("PATH=".length);
   assertEquals([env.get("PATH"), env.get("YUKE_TEST_NO_SUCH_VARIABLE"), env.get("")], [path, undefined, undefined]);
+});
+
+test("spawn gives a chunk of stdout while the program runs and kill ends it", async () => {
+  const base = folder();
+  const child = new Command("sh", { args: ["-c", "echo first; exec sleep 30"], cwd: base }).spawn();
+  const reader = child.stdout.getReader();
+  const first = await reader.read();
+  child.kill();
+  const rest = await reader.read();
+  const status = await child.status;
+  assertEquals(
+    [text(first.value ?? new Uint8Array()), rest.done, status.success, status.code, status.signal],
+    ["first\n", true, false, 143, "SIGTERM"],
+  );
+});
+
+test("kill throws a type error for an unknown signal and after the exit", async () => {
+  const base = folder();
+  const child = new Command("sh", { args: ["-c", "exit 0"], cwd: base }).spawn();
+  // A plugin in JavaScript has no type check, so the name reaches yuke.
+  const unknown = assertThrows(() => child.kill("SIGNOPE" as Signal));
+  await child.status;
+  assertEquals(
+    [unknown, assertThrows(() => child.kill())],
+    [new TypeError("Invalid signal: SIGNOPE"), new TypeError("Child process has already terminated")],
+  );
+});
+
+test("a cancel of stdout closes the pipe so the program ends with SIGPIPE", async () => {
+  const base = folder();
+  const child = new Command("yes", { cwd: base }).spawn();
+  const reader = child.stdout.getReader();
+  await reader.read();
+  await reader.cancel();
+  const status = await child.status;
+  assertEquals([status.code, status.signal], [141, "SIGPIPE"]);
+});
+
+test("an abort stops a spawned group", async () => {
+  const base = folder();
+  const controller = new AbortController();
+  const child = new Command("sh", {
+    args: ["-c", "sleep 30 & echo $! > child; wait"],
+    cwd: base,
+    signal: controller.signal,
+  }).spawn();
+  await pidOf(base, "child");
+  controller.abort();
+  const out = await child.output();
+  assertEquals([out.code, out.signal], [143, "SIGTERM"]);
+  assert(await gone(base, "child"), "the child of the program still runs");
+});
+
+test("a stream that is not piped throws from the getters of the child and of its output", async () => {
+  const base = folder();
+  const child = new Command("sh", { args: ["-c", "echo out; echo err >&2"], cwd: base, stdout: "null" }).spawn();
+  const output = await child.output();
+  const notPiped = new TypeError("Cannot get 'stdout': 'stdout' is not piped");
+  assertEquals(
+    [assertThrows(() => child.stdout), assertThrows(() => output.stdout), text(output.stderr)],
+    [notPiped, notPiped, "err\n"],
+  );
+});
+
+test("output of a spawn with a locked stream rejects", async () => {
+  const base = folder();
+  const child = new Command("sh", { args: ["-c", "echo out"], cwd: base }).spawn();
+  child.stdout.getReader();
+  assertEquals(await assertRejects(() => child.output()), new TypeError("Cannot collect output: 'stdout' is locked"));
+  await child.status;
+});
+
+test("a spawn of a missing program throws with its name", () => {
+  const base = folder();
+  assertEquals(
+    assertThrows(() => new Command("/no/such/program", { cwd: base }).spawn()),
+    new Error("/no/such/program did not start: No such file or directory (os error 2)"),
+  );
+});
+
+test("await using stops a running program", async () => {
+  const base = folder();
+  let status: Promise<{ readonly code: number }>;
+  {
+    await using child = new Command("sh", { args: ["-c", "echo $$ > shell; exec sleep 30"], cwd: base }).spawn();
+    status = child.status;
+    await pidOf(base, "shell");
+  }
+  assertEquals((await status).code, 143);
+});
+
+test("a spawn under an aborted signal throws its reason and starts nothing", async () => {
+  const base = folder();
+  const controller = new AbortController();
+  controller.abort(new Error("too early"));
+  const thrown = assertThrows(() =>
+    new Command("sh", { args: ["-c", "echo ran > ran"], cwd: base, signal: controller.signal }).spawn(),
+  );
+  // A started shell writes the file in a few milliseconds.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const ran = await fs.stat("ran", { folder: base }).then(
+    () => true,
+    () => false,
+  );
+  assertEquals([thrown, ran], [new Error("too early"), false]);
+});
+
+test("stderr of a spawned program is a stream apart from stdout", async () => {
+  const base = folder();
+  const child = new Command("sh", { args: ["-c", "echo out; echo err >&2"], cwd: base, stdout: "null" }).spawn();
+  const chunks: string[] = [];
+  for await (const chunk of child.stderr) chunks.push(text(chunk));
+  assertEquals([chunks.join(""), (await child.status).success], ["err\n", true]);
 });

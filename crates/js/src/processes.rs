@@ -19,8 +19,8 @@ use rquickjs::{FromJs, IntoJs};
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::io::AsyncReadExt;
 use tokio::net::unix::pipe::Receiver;
-use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use yuke_engine::CancellationToken;
 use yuke_protocol::{JobKind, JobState};
@@ -208,16 +208,6 @@ impl Processes {
                 cause: EndCause::Moved { id, log },
             }),
         }
-    }
-
-    /// Run `program` until it ends, and answer its end and its output. A cancel of `stop` stops its process group:
-    /// SIGTERM, then SIGKILL after a grace. A dropped wait stops it too.
-    pub(crate) async fn output(&self, program: Program, stop: CancellationToken) -> Result<ProgramEnd, String> {
-        // The runtime of the processes drives the pipes of the child. A dropped wait cancels `stop`.
-        let _guard = stop.clone().drop_guard();
-        tokio::task::spawn_local(run_program(program, stop))
-            .await
-            .map_err(|error| error.to_string())?
     }
 
     /// Start `command` in the folder of `owner` as a job, which ends after `timeout` when it has one. A job that ends by
@@ -493,20 +483,32 @@ pub(crate) struct Program {
     /// The environment variables beside the environment of yuke, or in place of it with `clear_env`.
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) clear_env: bool,
-    /// Whether the answer keeps stdout, and stderr. A stream that it does not keep goes to the null device.
+    /// Whether yuke pipes stdout, and stderr. A stream without a pipe goes to the null device.
     pub(crate) stdout: bool,
     pub(crate) stderr: bool,
 }
 
-/// How a program ended, and its output.
-#[derive(Debug)]
-pub(crate) struct ProgramEnd {
+/// How a program ended.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProgramStatus {
     /// The exit code, or 128 and the number of the signal that ended the program.
     pub(crate) code: i32,
     /// The name of the signal that ended the program, such as `SIGTERM`.
     pub(crate) signal: Option<&'static str>,
-    pub(crate) stdout: Vec<u8>,
-    pub(crate) stderr: Vec<u8>,
+}
+
+/// The status of a spawned program, or the failure of its wait. `None` until the leader exits.
+pub(crate) type SpawnedStatus = Option<Result<ProgramStatus, String>>;
+
+/// A spawned program: its process group, which has the id of the program, its output pipes, its status, and its stop.
+#[derive(Debug)]
+pub(crate) struct Spawned {
+    pub(crate) group: Pid,
+    pub(crate) stdout: Option<ChildStdout>,
+    pub(crate) stderr: Option<ChildStderr>,
+    pub(crate) status: watch::Receiver<SpawnedStatus>,
+    /// A cancel before the exit stops the process group: SIGTERM, then SIGKILL after a grace.
+    pub(crate) stop: CancellationToken,
 }
 
 /// The process group that a child leads.
@@ -546,7 +548,7 @@ async fn stop_group(group: Pid, child: &mut Child) -> io::Result<ExitStatus> {
 
 /// Kill each process that remains in `group` after the wait reaped its leader. macOS can refuse this kill with `EPERM`
 /// although no process of the group remains, so a refusal is no failure: a process that the kill misses ends by itself.
-fn kill_rest_of_group(group: Pid) {
+pub(crate) fn kill_rest_of_group(group: Pid) {
     // A refused kill leaves nothing that the caller can do.
     _ = signal_group(group, Signal::KILL);
 }
@@ -557,9 +559,9 @@ fn group_has_processes(group: Pid) -> bool {
     rustix::process::test_kill_process_group(group) != Err(rustix::io::Errno::SRCH)
 }
 
-/// The run of one program: start it, read stdout and stderr at once, and stop its group at a stop. After the exit, the
-/// read waits for the end of each stream, as a process that the program left can still write.
-async fn run_program(program: Program, stop: CancellationToken) -> Result<ProgramEnd, String> {
+/// Start `program` in a new session, and give its pipes. The start blocks this thread until the child calls exec, as
+/// the spawn of Deno does. A task waits for the exit of the leader.
+pub(crate) fn spawn_program(program: &Program) -> Result<Spawned, String> {
     let piped = |keep: bool| if keep { Stdio::piped() } else { Stdio::null() };
     let mut command = Command::new(&program.command);
     command
@@ -573,90 +575,91 @@ async fn run_program(program: Program, stop: CancellationToken) -> Result<Progra
     } else if let Some(home) = recovered_home(std::env::var_os("HOME").as_deref()) {
         command.env("HOME", home);
     }
-    command.envs(program.env);
+    command.envs(&program.env);
     new_session(&mut command);
-    let mut child = spawn(command)
-        .await
+    let mut child = command
+        .spawn()
         .map_err(|error| format!("{} did not start: {error}", program.command))?;
+    // The command keeps copies of the pipe write ends, so a read sees the end only after this drop.
+    drop(command);
     let group = group_of(&child).map_err(|error| error.to_string())?;
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
-    let mut reading = tokio::spawn(async move { tokio::try_join!(read_all(stdout), read_all(stderr)) });
-    let status = tokio::select! {
-        status = child.wait() => status,
-        () = stop.cancelled() => stop_group(group, &mut child).await,
-    }
-    .map_err(|error| error.to_string())?;
-    // A process that the program left in its group can hold a stream open. A stop ends it, so the read ends too.
-    let read = tokio::select! {
-        read = &mut reading => read,
-        () = stop.cancelled() => {
-            kill_rest_of_group(group);
-            reading.await
-        }
-    };
-    let (stdout, stderr) = read
-        .map_err(|error| error.to_string())?
-        .map_err(|error| format!("yuke could not read the output of {}: {error}", program.command))?;
-    let signal = std::os::unix::process::ExitStatusExt::signal(&status);
-    let code = match (status.code(), signal) {
-        (Some(code), _) => code,
-        (None, Some(signal)) => 128 + signal,
-        (None, None) => return Err(format!("{} ended without an exit code or a signal", program.command)),
-    };
-    Ok(ProgramEnd {
-        code,
-        signal: signal.and_then(signal_name),
+    let (sender, status) = watch::channel(None);
+    let stop = CancellationToken::new();
+    let stopped = stop.clone();
+    tokio::task::spawn_local(async move {
+        let status = tokio::select! {
+            status = child.wait() => status,
+            () = stopped.cancelled() => stop_group(group, &mut child).await,
+        };
+        // No receiver is left when the runtime ended first.
+        _ = sender.send(Some(status.map(status_of).map_err(|error| error.to_string())));
+    });
+    Ok(Spawned {
+        group,
         stdout,
         stderr,
+        status,
+        stop,
     })
 }
 
-/// Each byte of `pipe` until its end, or nothing without a pipe.
-async fn read_all(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    if let Some(mut pipe) = pipe {
-        pipe.read_to_end(&mut bytes).await?;
+/// The status of a reaped leader: its exit code, or 128 and the number of its signal. A reaped process has one of them.
+fn status_of(status: ExitStatus) -> ProgramStatus {
+    let signal = std::os::unix::process::ExitStatusExt::signal(&status);
+    ProgramStatus {
+        code: status.code().unwrap_or_else(|| 128 + signal.unwrap_or_default()),
+        signal: signal.and_then(signal_name),
     }
-    Ok(bytes)
 }
+
+/// The signals that a program can get, with the names of Deno.
+const SIGNALS: [(Signal, &str); 29] = [
+    (Signal::HUP, "SIGHUP"),
+    (Signal::INT, "SIGINT"),
+    (Signal::QUIT, "SIGQUIT"),
+    (Signal::ILL, "SIGILL"),
+    (Signal::TRAP, "SIGTRAP"),
+    (Signal::ABORT, "SIGABRT"),
+    (Signal::BUS, "SIGBUS"),
+    (Signal::FPE, "SIGFPE"),
+    (Signal::KILL, "SIGKILL"),
+    (Signal::USR1, "SIGUSR1"),
+    (Signal::SEGV, "SIGSEGV"),
+    (Signal::USR2, "SIGUSR2"),
+    (Signal::PIPE, "SIGPIPE"),
+    (Signal::ALARM, "SIGALRM"),
+    (Signal::TERM, "SIGTERM"),
+    (Signal::CHILD, "SIGCHLD"),
+    (Signal::CONT, "SIGCONT"),
+    (Signal::STOP, "SIGSTOP"),
+    (Signal::TSTP, "SIGTSTP"),
+    (Signal::TTIN, "SIGTTIN"),
+    (Signal::TTOU, "SIGTTOU"),
+    (Signal::URG, "SIGURG"),
+    (Signal::XCPU, "SIGXCPU"),
+    (Signal::XFSZ, "SIGXFSZ"),
+    (Signal::VTALARM, "SIGVTALRM"),
+    (Signal::PROF, "SIGPROF"),
+    (Signal::WINCH, "SIGWINCH"),
+    (Signal::IO, "SIGIO"),
+    (Signal::SYS, "SIGSYS"),
+];
 
 /// The name of the signal with the number `number` on this system, as Deno names it.
 fn signal_name(number: i32) -> Option<&'static str> {
-    const NAMES: [(Signal, &str); 29] = [
-        (Signal::HUP, "SIGHUP"),
-        (Signal::INT, "SIGINT"),
-        (Signal::QUIT, "SIGQUIT"),
-        (Signal::ILL, "SIGILL"),
-        (Signal::TRAP, "SIGTRAP"),
-        (Signal::ABORT, "SIGABRT"),
-        (Signal::BUS, "SIGBUS"),
-        (Signal::FPE, "SIGFPE"),
-        (Signal::KILL, "SIGKILL"),
-        (Signal::USR1, "SIGUSR1"),
-        (Signal::SEGV, "SIGSEGV"),
-        (Signal::USR2, "SIGUSR2"),
-        (Signal::PIPE, "SIGPIPE"),
-        (Signal::ALARM, "SIGALRM"),
-        (Signal::TERM, "SIGTERM"),
-        (Signal::CHILD, "SIGCHLD"),
-        (Signal::CONT, "SIGCONT"),
-        (Signal::STOP, "SIGSTOP"),
-        (Signal::TSTP, "SIGTSTP"),
-        (Signal::TTIN, "SIGTTIN"),
-        (Signal::TTOU, "SIGTTOU"),
-        (Signal::URG, "SIGURG"),
-        (Signal::XCPU, "SIGXCPU"),
-        (Signal::XFSZ, "SIGXFSZ"),
-        (Signal::VTALARM, "SIGVTALRM"),
-        (Signal::PROF, "SIGPROF"),
-        (Signal::WINCH, "SIGWINCH"),
-        (Signal::IO, "SIGIO"),
-        (Signal::SYS, "SIGSYS"),
-    ];
-    NAMES
+    SIGNALS
         .iter()
         .find(|(signal, _)| signal.as_raw() == number)
         .map(|(_, name)| *name)
+}
+
+/// The signal with the Deno name `name`, such as `SIGTERM`.
+pub(crate) fn signal_of(name: &str) -> Option<Signal> {
+    SIGNALS
+        .iter()
+        .find(|(_, known)| *known == name)
+        .map(|(signal, _)| *signal)
 }
 
 /// A started command: its process, and the read of its output, which goes on when the command moves to a job.

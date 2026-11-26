@@ -57,7 +57,16 @@ Return `{ text, isError: true }` when the failed output is useful evidence, such
 
 Pass `context.signal` to cancellable I/O. After a cancel, the host still waits for `execute` to settle, so stop the work when the signal aborts.
 
-For processes, use `Command` from `yuke:process`. It needs an absolute `cwd`, such as `context.folder`, and takes an optional `signal`.
+For processes, use `Command` from `yuke:process`. It needs an absolute `cwd`, such as `context.folder`, and takes an optional `signal`. `output()` gives the output at the end. `spawn()` gives `stdout` and `stderr` as streams while the program runs. Read each piped stream, or set it to `"null"`: a full pipe stops the program.
+
+```ts
+const child = new Command("make", { cwd: context.folder, stderr: "null", signal: context.signal }).spawn();
+const decoder = new TextDecoder();
+for await (const chunk of child.stdout) context.output(decoder.decode(chunk, { stream: true }));
+context.output(decoder.decode());
+const status = await child.status;
+if (!status.success) throw new Error(`make failed with code ${status.code}`);
+```
 
 ## Background jobs
 

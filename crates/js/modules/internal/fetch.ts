@@ -7,7 +7,7 @@ import { TextDecoder, TextEncoder } from "yuke:internal/encoding";
 import { AbortController, AbortSignal, addAbortStep, underSignal } from "yuke:internal/events";
 import { Headers, headerList, headersOf, isHeaders, isToken } from "yuke:internal/headers";
 import { type HttpBody, type HttpHead, httpClose, httpRead, httpSend } from "yuke:internal/native";
-import { isDisturbed, isReadableStream, ReadableStream } from "yuke:internal/streams";
+import { isDisturbed, isReadableStream, ReadableStream, readAll } from "yuke:internal/streams";
 import { queryOf, URL } from "yuke:internal/url";
 import { byteString, bytesOf, dictionary, usvString, webClass } from "yuke:internal/webidl";
 
@@ -72,25 +72,7 @@ async function consume(body: BodyState): Promise<Uint8Array> {
   const stream = body.stream;
   if (stream === null) return new Uint8Array(0);
   if (bodyUsed(body) || stream.locked) throw new TypeError("the body is used or locked");
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for (;;) {
-    const result = await reader.read();
-    if (result.done) break;
-    const chunk: unknown = result.value;
-    if (!(chunk instanceof Uint8Array)) throw new TypeError("a chunk of the body is not a Uint8Array");
-    // A source can reuse the buffer of a chunk for the next chunk, so the body keeps a copy.
-    chunks.push(new Uint8Array(chunk));
-    length += chunk.length;
-  }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
+  return readAll(stream);
 }
 
 /** Give `type` the members of the Web IDL mixin `Body`. `bodyOf` throws a `TypeError` for a value of another class. */

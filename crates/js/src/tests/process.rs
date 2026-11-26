@@ -17,13 +17,13 @@ pub(super) async fn gone(pid: i32) -> bool {
     true
 }
 
-#[tokio::test(flavor = "local")]
-async fn the_end_of_the_runtime_stops_a_running_program() {
-    let folder = folder("the_end_of_the_runtime_stops_a_running_program");
+/// Start a program with `call` of a `Command` in a runtime, end the runtime, and assert that the program is gone.
+async fn assert_ends_with_the_runtime(name: &str, call: &str) {
+    let folder = folder(name);
     let (runtime, _reports) = start(&folder).await;
     let body = format!(
         "const {{ Command }} = await import('yuke:process');\n\
-         globalThis.running = new Command('sh', {{ args: ['-c', 'echo $$ > pid; exec sleep 30'], cwd: {} }}).output();\n\
+         globalThis.running = new Command('sh', {{ args: ['-c', 'echo $$ > pid; exec sleep 30'], cwd: {} }}).{call};\n\
          return 'started';",
         serde_json::to_string(folder.to_str().unwrap()).unwrap()
     );
@@ -42,4 +42,14 @@ async fn the_end_of_the_runtime_stops_a_running_program() {
         .unwrap();
 
     assert!(gone(pid).await, "the program still runs");
+}
+
+#[tokio::test(flavor = "local")]
+async fn the_end_of_the_runtime_stops_a_running_program() {
+    assert_ends_with_the_runtime("the_end_of_the_runtime_stops_a_running_program", "output()").await;
+}
+
+#[tokio::test(flavor = "local")]
+async fn the_end_of_the_runtime_stops_a_spawned_program() {
+    assert_ends_with_the_runtime("the_end_of_the_runtime_stops_a_spawned_program", "spawn()").await;
 }
