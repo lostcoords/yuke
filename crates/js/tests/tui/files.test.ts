@@ -4,7 +4,7 @@ import type { ChatService, CompletionList, CompletionProvider } from "yuke:chat"
 import { mkdir, writeTextFile } from "yuke:fs";
 import { apply } from "yuke:internal/bundled/files";
 import type { PluginContext } from "yuke:plugins";
-import { Command } from "yuke:process";
+import { Command, env } from "yuke:process";
 import { assertEquals, folder, test } from "yuke:test";
 
 /** The provider that the plugin adds. */
@@ -127,4 +127,50 @@ test("a path with a quote stays plain, and a path with whitespace and a quote st
   const files = provider();
 
   assertEquals(await complete(files, "@b.m", root), { from: 0, items: [['@a"b.md', '@a"b.md ']] });
+});
+
+test("an @ word that starts as a path lists the entries of the folder that it names", async () => {
+  const root = folder();
+  await write(root, ["work/a.md", "work/.env", "work/sub/b.md", "work/my dir/c.md", "other/notes.md"]);
+  const files = provider();
+  const work = `${root}/work`;
+
+  assertEquals(
+    [
+      await complete(files, "see @./", work),
+      await complete(files, "@./.e", work),
+      await complete(files, "@../other/no", work),
+      await complete(files, `@${root}/other/`, work),
+    ],
+    [
+      {
+        from: 4,
+        items: [
+          ["@./a.md", "@./a.md "],
+          ["@./sub/", "@./sub/"],
+          ['@"./my dir/"', '@"./my dir/'],
+        ],
+      },
+      { from: 0, items: [["@./.env", "@./.env "]] },
+      { from: 0, items: [["@../other/notes.md", "@../other/notes.md "]] },
+      { from: 0, items: [[`@${root}/other/notes.md`, `@${root}/other/notes.md `]] },
+    ],
+  );
+});
+
+test("an @~/ word lists the home folder like its absolute path", async () => {
+  const files = provider();
+  const home = env.get("HOME") ?? "";
+  const absolute = await complete(files, `@${home}/`, folder());
+
+  assertEquals(
+    await complete(files, "@~/", folder()),
+    absolute && { from: 0, items: absolute.items.map((item) => item.map((text) => text.replace(home, "~"))) },
+  );
+});
+
+test("an @ path to a missing folder lists nothing", async () => {
+  const files = provider();
+
+  assertEquals(await complete(files, "@./missing/", folder()), undefined);
 });

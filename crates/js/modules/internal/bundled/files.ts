@@ -1,18 +1,23 @@
 /**
  * The bundled plugin `files`: the `@` completion of the paths in the folder of a chat session. A word that starts with
  * `@` lists the files and folders that match it. A Git folder lists what `git ls-files` gives, so ignored files stay
- * out. Another folder lists a walk that skips hidden entries, `node_modules`, and `target`. The draft keeps the path as
- * plain text, and the model reads the file with its tools. A path with whitespace goes in double quotes.
+ * out. Another folder lists a walk that skips hidden entries, `node_modules`, and `target`. A word that starts with
+ * `@./`, `@../`, `@~/`, or `@/` lists the entries of the folder that it names, also outside the session folder. The
+ * draft keeps the path as plain text, and the model reads the file with its tools. A path with whitespace goes in
+ * double quotes.
  */
 
 import type { CompletionItem, CompletionList } from "yuke:chat";
 import { readDir } from "yuke:fs";
 import type { PluginContext } from "yuke:plugins";
-import { Command } from "yuke:process";
+import { Command, env } from "yuke:process";
 import { fuzzyMatch } from "yuke:tui";
 
 /** An `@` word at the start of the draft or after whitespace, up to the caret: an open quote with a path, or a word. */
 const MENTION = /(?:^|\s)@(?:"([^"]*)|(\S*))$/;
+
+/** An `@` word that names its folder: it starts with `./`, `../`, `~/`, or `/`. */
+const PATH = /^(?:\.\.?|~)?\//;
 
 /** The list keeps the best of the matches. */
 const MOST_ITEMS = 50;
@@ -120,6 +125,21 @@ function listOf(entries: readonly Entry[], query: string, from: number): Complet
   };
 }
 
+/** The list of the entries of the folder that the path `query` names, or `undefined` when yuke cannot read it. */
+async function listFolder(query: string, from: number, workspace: string): Promise<CompletionList | undefined> {
+  const folder = query.slice(0, query.lastIndexOf("/") + 1);
+  // `readDir` resolves `./`, `../`, and `/`. Only `~/` needs the home folder.
+  const path = folder.startsWith("~/") ? `${env.get("HOME")}${folder.slice(1)}` : folder;
+  const found = await Array.fromAsync(readDir(path, { folder: workspace })).catch(() => undefined);
+  if (found === undefined) return undefined;
+  // Hidden entries show only when the name starts with `.`, so `@~/` does not open on dotfiles.
+  const hidden = query.startsWith(".", folder.length);
+  const entries = found
+    .filter((entry) => hidden || !entry.name.startsWith("."))
+    .map((entry) => ({ path: `${folder}${entry.name}${entry.isDirectory ? "/" : ""}`, folder: entry.isDirectory }));
+  return listOf(entries, query, from);
+}
+
 export function apply(ctx: PluginContext): undefined {
   const indexes = new Map<string, Index>();
   /** The index of `workspace`. A stale index answers while the next one builds. */
@@ -146,6 +166,7 @@ export function apply(ctx: PluginContext): undefined {
       if (word === null) return undefined;
       const query = word[1] ?? word[2] ?? "";
       const from = context.caret - word[0].trimStart().length;
+      if (PATH.test(query)) return listFolder(query, from, context.folder);
       const index = indexOf(context.folder);
       if (index.entries !== undefined) return listOf(index.entries, query, from);
       return index.ready.then((entries) => listOf(entries, query, from));

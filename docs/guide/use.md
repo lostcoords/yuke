@@ -41,6 +41,8 @@ A path with whitespace goes in double quotes. The draft keeps the path as plain 
 
 In a Git folder, the list holds the tracked files and the untracked files that no ignore rule takes. In another folder, the list holds the files below it. It skips hidden entries, `node_modules`, and `target`. The list shows at most 50 items.
 
+To mention a file in another folder, start the path with `./`, `../`, `~/`, or `/`: for example `@../other-repo/` or `@~/notes/`. The list then shows the entries of that folder. To show hidden entries, type a `.` after the last `/`.
+
 ## Run a slash command
 
 Type `/` at the start of the draft. A list shows the commands that match. `up` and `down` select a command. `tab` writes its word, and `enter` runs it.

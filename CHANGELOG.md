@@ -4,6 +4,10 @@ Each release has one section. The release job publishes the section of each tag 
 
 ## Unreleased
 
+### Features
+
+- An `@` path that starts with `./`, `../`, `~/`, or `/` lists the entries of that folder, also outside the session folder.
+
 ### Fixes and speed
 
 - `read`, `write`, and `edit` resolve a path that starts with `~/` against the home folder, not the workspace.
