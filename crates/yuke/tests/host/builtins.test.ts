@@ -1,6 +1,7 @@
 // The built-in tools `read`, `write`, and `edit` of yuke, called in the folder of the test.
 
 import { readFile, readTextFile, writeFile, writeTextFile } from "yuke:fs";
+import { env } from "yuke:process";
 import { assertEquals, createHost, folder, reply, type TestSession, test } from "yuke:test";
 
 /** The text of a call of `name` with `args` that succeeds. */
@@ -87,6 +88,27 @@ test("read of a missing file, a binary file, a FIFO, or a folder fails with the 
     `the path names a special file: ${folder()}/pipe`,
     `the path is a directory: ${folder()}/.`,
   ]);
+});
+
+test("a path that starts with ~/ resolves against the home folder in read and edit", async () => {
+  const { host, session } = await opened();
+  await using _host = host;
+  // A missing file makes each tool name its full path, and the test writes nothing in the real home folder.
+  const path = "~/yuke-test-missing/a.txt";
+  const missing = `the path does not exist: ${env.get("HOME")}/yuke-test-missing/a.txt`;
+
+  assertEquals(
+    [await error(session, "read", { path }), await error(session, "edit", { path, old_string: "a", new_string: "b" })],
+    [missing, missing],
+  );
+});
+
+test("a file name that starts with ~ stays in the workspace", async () => {
+  await writeTextFile(`${folder()}/~notes.txt`, "one\n");
+  const { host, session } = await opened();
+  await using _host = host;
+
+  assertEquals(await text(session, "read", { path: "~notes.txt" }), "1: one");
 });
 
 test("an image read answers media", async () => {

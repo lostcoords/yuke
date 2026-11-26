@@ -3,6 +3,7 @@ import { callOf } from "yuke:internal/call";
 import { defineTool } from "yuke:internal/define";
 import { TextEncoder } from "yuke:internal/encoding";
 import { readLines } from "yuke:internal/native";
+import { env } from "yuke:process";
 
 /** The most bytes of the output of `read` and `exec`. A cut adds one line that tells the model what the cut left out. */
 const OUTPUT_BYTES = 50 * 1024;
@@ -21,7 +22,14 @@ const DEFAULT_TIMEOUT = 120_000;
 const LONGEST_TIMEOUT = 600_000;
 
 /** The description of the `path` argument of each tool. */
-const PATH = "A relative path resolves against the workspace.";
+const PATH =
+  "A relative path resolves against the workspace. A path that starts with ~/ resolves against the home folder.";
+
+/** `path` with a leading `~/` as the home folder. Models and `@` mentions write `~/`, and no shell expands it here. */
+function homePath(path: string): string {
+  const home = env.get("HOME");
+  return home && path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
+}
 
 defineTool({
   name: "read",
@@ -40,7 +48,8 @@ defineTool({
   concurrency: "parallel",
   hints: { title: "Read", subject: { argument: "path", kind: "file" }, preview: "none" },
   async execute(args, context) {
-    const read = await readLines(args.path, context.folder, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
+    const path = homePath(args.path);
+    const read = await readLines(path, context.folder, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
     if ("image" in read) return { text: "The tool read the image.", media: [read.image] };
 
     // The native read ends each line with a line feed. The result drops the last one.
@@ -66,10 +75,11 @@ defineTool({
   hints: { title: "Write", subject: { argument: "path", kind: "file" } },
   async execute(args, context) {
     const options = { folder: context.folder, signal: context.signal };
+    const path = homePath(args.path);
     // The tool makes the missing parent folders, so the model can write a new file in a new folder.
-    const slash = args.path.lastIndexOf("/");
-    if (slash > 0) await mkdir(args.path.slice(0, slash), { ...options, recursive: true });
-    await writeTextFile(args.path, args.content, options);
+    const slash = path.lastIndexOf("/");
+    if (slash > 0) await mkdir(path.slice(0, slash), { ...options, recursive: true });
+    await writeTextFile(path, args.content, options);
     return `The tool wrote ${new TextEncoder().encode(args.content).length} bytes.`;
   },
 });
@@ -95,8 +105,9 @@ defineTool({
     if (oldString === newString) throw new Error("Set new_string to a value that differs from old_string.");
 
     const options = { folder: context.folder, signal: context.signal };
+    const file = homePath(path);
     // A replaced byte would reach the file at the write, so the read is fatal.
-    const before = await readTextFile(path, { ...options, fatal: true });
+    const before = await readTextFile(file, { ...options, fatal: true });
     const parts = before.split(oldString);
     const count = parts.length - 1;
     if (count === 0) throw new Error("The file has no match for old_string. Read the file and copy the exact text.");
@@ -104,7 +115,7 @@ defineTool({
       throw new Error("old_string matches more than one place. Add context to old_string, or set replace_all to true.");
     }
     const after = parts.join(newString);
-    await writeTextFile(path, after, options);
+    await writeTextFile(file, after, options);
     return {
       text: count === 1 ? "The tool replaced 1 match." : `The tool replaced ${count} matches.`,
       display: [{ kind: "diff", path, patch: patchOf(before, after, parts, oldString, newString) }],

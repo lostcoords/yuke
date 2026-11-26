@@ -2,6 +2,12 @@
 
 Each release has one section. The release job publishes the section of each tag as its release notes.
 
+## Unreleased
+
+### Fixes and speed
+
+- `read`, `write`, and `edit` resolve a path that starts with `~/` against the home folder, not the workspace.
+
 ## 0.3.0
 
 ### Breaking changes
